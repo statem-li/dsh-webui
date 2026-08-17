@@ -19,7 +19,8 @@
   },
   "files": [
     "lib",
-    "scripts/build.sh"
+    "scripts/build.sh",
+    "cordis.patch.yml"
   ],
   "license": "BSD-3-Clause",
   "dsh": {
