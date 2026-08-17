@@ -1,0 +1,67 @@
+{
+  "name": "@dsh-external/dsh-session-message-nav",
+  "version": "0.1.0",
+  "description": "会话消息导航：头部「消息」弹窗列出本会话全部已发送消息（点击滚动定位）+ 右侧滚动齿轮（每节悬停预览对话内容、点击/拖动跳转）",
+  "private": true,
+  "type": "module",
+  "main": "./lib/index.js",
+  "types": "./lib/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "types": "./lib/types/client/index.d.ts",
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "scripts/build.sh"
+  ],
+  "license": "BSD-3-Clause",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-slots"
+      ],
+      "platform": "web"
+    }
+  },
+  "peerDependencies": {
+    "cordis": ">=4.0.0-rc <5",
+    "@deepseek-ai/dsh-client-runtime": ">=0.0.1-rc <2",
+    "@deepseek-ai/dsh-client-ui-slots": ">=0.0.1-rc <2"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "@types/react": "~18.3.1",
+    "tsdown": "^0.22.14",
+    "typescript": "^5.9.3"
+  },
+  "scripts": {
+    "build": "bash scripts/build.sh",
+    "build:client": "tsdown",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck:client": "tsc -p tsconfig.client.json --noEmit"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/statem-li/dsh-session-message-nav.git"
+  },
+  "homepage": "https://github.com/statem-li/dsh-session-message-nav#readme",
+  "bugs": {
+    "url": "https://github.com/statem-li/dsh-session-message-nav/issues"
+  },
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "dsh"
+  ]
+}
