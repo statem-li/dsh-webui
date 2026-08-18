@@ -13,7 +13,7 @@ dsh plugin --profile web add github:statem-li/webui
 ```yaml
 - insert:
     - id: webui
-      name: "@dsh-external/webui"
+      name: "@dsh-external/dsh-webui"
 ```
 
 重启 DeepSeek Harness 即可。

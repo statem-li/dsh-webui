@@ -92,7 +92,7 @@ export function injectStyles(): () => void {
   if (!injected) {
     const tag = document.createElement('style')
     tag.id = STYLE_ID
-    tag.dataset.plugin = '@dsh-external/webui'
+    tag.dataset.plugin = '@dsh-external/dsh-webui'
     tag.dataset.pluginCss = 'webui/styles'
     tag.textContent = SHEET
     document.head.appendChild(tag)

@@ -3,7 +3,7 @@ import { basename, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { UserConfig } from 'tsdown'
 
-const PLUGIN_ID = '@dsh-external/webui'
+const PLUGIN_ID = '@dsh-external/dsh-webui'
 
 /**
  * 平台模块（loader 模块表可应答）：react 全家桶 + 全部 @deepseek-ai/* 平台包。

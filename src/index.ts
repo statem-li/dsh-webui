@@ -32,7 +32,7 @@ import {
 } from './provider.js'
 import type { AnySearchSearchProviderOptions } from './provider.js'
 
-export const name = 'webui'
+export const name = 'dsh-webui'
 export const inject = ['settings', 'tools', 'web', 'systemPrompt', 'webServer', 'sandboxPolicy', 'fs', 'workspaceRegistry', 'credentials', 'sessions', 'sessionPersistence', 'llm', 'shell']
 
 // ── 推理等级补全 ────────────────────────────────────────────────────────────

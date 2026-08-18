@@ -1,5 +1,5 @@
 /**
- * @dsh-external/webui — provider-hub 模块：供应商设置页（合并自 @dsh-external/dsh-provider-hub）。
+ * @dsh-external/dsh-webui — provider-hub 模块：供应商设置页（合并自 @dsh-external/dsh-provider-hub）。
  *
  * 槽位：settings.section（设置 → 供应商页）。统一管理对话供应商 + 辅助视觉 + 生图。
  * 同时隐藏官方「模型」导航项。
@@ -18,7 +18,7 @@ export function applyProviderHub(ctx: ClientContext): void {
     const removeStyles = injectStyles()
     const stopHide = hideOfficialModelsNav()
     return () => { removeStyles(); stopHide() }
-  }, '@dsh-external/webui: provider-hub styles + hide official models')
+  }, '@dsh-external/dsh-webui: provider-hub styles + hide official models')
 
   ctx.effect(() => {
     const connection = ctx.get('connection') as ConnectionHandle
@@ -46,5 +46,5 @@ export function applyProviderHub(ctx: ClientContext): void {
       unregister?.()
       for (const dispose of disposers) dispose()
     }
-  }, '@dsh-external/webui: provider section')
+  }, '@dsh-external/dsh-webui: provider section')
 }

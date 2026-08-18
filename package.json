@@ -1,5 +1,5 @@
 {
-  "name": "@dsh-external/webui",
+  "name": "@dsh-external/dsh-webui",
   "version": "0.4.0",
   "description": "webui：视图图块/消息导航 + 工具调用聚合 + Markdown 渲染 + 模型推理等级同步 + AnySearch 网页搜索（合并 dsh-tool-summary / dsh-better-markdown / dsh-web-search-anysearch）",
   "private": true,
