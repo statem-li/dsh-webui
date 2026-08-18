@@ -1,7 +1,7 @@
 import { fileURLToPath } from 'node:url'
 import type { UserConfig } from 'tsdown'
 
-const PLUGIN_ID = '@dsh-external/dsh-session-message-nav'
+const PLUGIN_ID = '@dsh-external/webui'
 
 /**
  * 平台模块（loader 模块表可应答）：react 全家桶、cordis、slots、runtime。

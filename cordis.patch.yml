@@ -1,4 +1,4 @@
-# dsh-session-message-nav 插件挂载声明(手动安装时追加到 profile 的 cordis.patch.yml)
+# webui 插件挂载声明(手动安装时追加到 profile 的 cordis.patch.yml)
 - insert:
-    - id: dsh-session-message-nav
-      name: "@dsh-external/dsh-session-message-nav"
+    - id: webui
+      name: "@dsh-external/webui"

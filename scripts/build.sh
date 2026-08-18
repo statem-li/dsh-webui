@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build dsh-session-message-nav: compile src/ → lib/ with the dsh checkout's tsc.
+# Build webui: compile src/ → lib/ with the dsh checkout's tsc.
 # Requires DSH_CHECKOUT pointing at a dsh source checkout.
 set -euo pipefail
 

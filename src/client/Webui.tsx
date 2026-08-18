@@ -1,19 +1,16 @@
 /**
- * SessionMessageNav — 会话消息导航 UI（client 半身核心组件）。
+ * Webui — 会话 Web UI 插件核心组件（client 半身）。
  *
- * 两大能力：
- *  1. 头部右上角「消息 N」按钮 → 弹出本会话全部已发送消息（user + steering）；
+ * 能力：
+ *  1. 右上角「对话/轨迹」图块按钮：接管原生标签页，做成图块并排放在
+ *     右上角 utilities 区（与 Session log 同行）；点击切换会话视图。
+ *  2. 右上角「消息 N」按钮 → 弹出本会话全部已发送消息（user + steering）；
  *     点击某条 → 会话自动滚动到该消息并高亮闪烁。
- *  2. 右侧中间「消息横条」：透明无背景的一列细横条，**每条横条 = 一条你发送
- *     的消息**：
- *     - 不显示文字；不在阅读位置 = 灰色，当前阅读位置（active）= 蓝色
- *       （蓝色横条加宽 1.5 倍）；
- *     - 点击某条 → 会话自动滚动到该消息并高亮闪烁；
- *     - 消息多时面板可滚动，当前阅读位置的消息自动滚入面板视野；
- *     - 按住面板空白处上下拖动 → 像拉滚轮一样滚动会话；
- *     - 列表随会话实时更新（新消息到达自动出现）。
+ *  3. 右侧中间「消息横条」：透明无背景的一列细横条，每条横条 = 一条你
+ *     发送的消息；点击跳转、悬停预览、按住空白处拖动滚动会话。
  *
  * 依赖 DOM 契约（ui-conversation 稳定提供）：
+ *  - [data-phase] — 会话根（含 [role="tablist"] 原生标签页）
  *  - [data-conversation-scroll] — 会话滚动容器（scrollport）
  *  - [data-chat-flow] — 聊天流列表
  *  - [data-chat-anchor-key] — 每个聊天节点行的稳定锚点（= node.key）
@@ -31,7 +28,7 @@ import type { ContentBlock } from '@deepseek-ai/dsh-llm/types'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import { css, injectStyles } from './styles'
 
-export type SessionMessageNavProps = PropsRuntime<'conversation.session.header.utilities'>
+export type WebuiProps = PropsRuntime<'conversation.session.header.utilities'>
 
 /** 面板上一条横条（一条我发送的消息）。 */
 interface Bar {
@@ -42,16 +39,16 @@ interface Bar {
   full: string
 }
 
-/** 面板位置（左上角 viewport 坐标）。 */
-interface PanelPos {
+/** 固定定位坐标（viewport 左上角）。 */
+interface FixedPos {
   x: number
   y: number
 }
 
-/** 按钮位置（左上角 viewport 坐标；会话区右上角）。 */
-interface ButtonPos {
-  x: number
-  y: number
+/** 原生视图标签页（对话/轨迹）投影。 */
+interface ViewTabInfo {
+  label: string
+  selected: boolean
 }
 
 const PANEL_WIDTH = 196
@@ -60,8 +57,8 @@ const PANEL_ROW_HEIGHT = 20
 const PANEL_PADDING = 16
 /** 面板默认最多同时显示的横条数（超出由滚轮平滑滚动）。 */
 const MAX_VISIBLE_ROWS = 10
-/** 数量徽标按钮的宽度估算（右对齐定位用）。 */
-const BUTTON_WIDTH = 44
+/** 消息弹窗最大宽度（右对齐定位用）。 */
+const POPUP_WIDTH = 420
 
 function clamp(value: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, value))
@@ -125,20 +122,23 @@ function truncate(text: string, max: number): string {
 }
 
 /**
- * 会话消息导航入口：渲染头部右上角「消息」按钮 + 右侧中间消息横条面板。
+ * 会话 Web UI 入口：右上角「对话/轨迹」图块 + 「消息」按钮 + 消息弹窗 +
+ * 右侧消息横条面板。
  * @param props - 会话标准套件（sessionId / useSession 等，框架注入）。
  */
-export function SessionMessageNav(props: SessionMessageNavProps): ReactNode {
+export function Webui(props: WebuiProps): ReactNode {
   const { sessionId, useSession } = props
   const snapshot = useSession(s => s)
 
   const hostRef = useRef<HTMLDivElement | null>(null)
+  const triggerRef = useRef<HTMLButtonElement | null>(null)
   const panelRef = useRef<HTMLDivElement | null>(null)
   const scrollerRef = useRef<HTMLDivElement | null>(null)
   const wrapRef = useRef<HTMLDivElement | null>(null)
   const [open, setOpen] = useState(false)
-  const [buttonPos, setButtonPos] = useState<ButtonPos | null>(null)
-  const [panelPos, setPanelPos] = useState<PanelPos | null>(null)
+  const [popupPos, setPopupPos] = useState<FixedPos | null>(null)
+  const [panelPos, setPanelPos] = useState<FixedPos | null>(null)
+  const [tabs, setTabs] = useState<ViewTabInfo[]>([])
   const [activeKey, setActiveKey] = useState<string | null>(null)
   const [hover, setHover] = useState<{ key: string; y: number } | null>(null)
   const measureRef = useRef<() => void>(() => {})
@@ -208,16 +208,54 @@ export function SessionMessageNav(props: SessionMessageNavProps): ReactNode {
     window.setTimeout(() => { row.classList.remove(css.flash) }, 2400)
   }, [scrollportOf, findRow])
 
+  /** 读取原生 tablist（对话/轨迹）投影为图块信息。 */
+  const readTabs = useCallback((): ViewTabInfo[] => {
+    const phase = hostRef.current?.closest('[data-phase]')
+    const tablist = phase?.querySelector('[role="tablist"]')
+    if (!(tablist instanceof HTMLElement)) return []
+    return [...tablist.querySelectorAll<HTMLElement>('[role="tab"]')].map(tab => ({
+      label: tab.textContent?.trim() ?? '',
+      selected: tab.getAttribute('aria-selected') === 'true',
+    }))
+  }, [])
+
+  /** 点击第 index 个图块 → 触发对应原生标签页的 click（复用视图切换逻辑）。 */
+  const selectView = useCallback((index: number): void => {
+    const phase = hostRef.current?.closest('[data-phase]')
+    const list = phase?.querySelectorAll<HTMLElement>('[role="tablist"] [role="tab"]')
+    const tab = list?.[index]
+    if (tab instanceof HTMLElement) tab.click()
+  }, [])
+
+  // 同步原生标签页（含 active 状态）：初始读取 + 观察 aria-selected/文案变化。
+  useLayoutEffect(() => {
+    const sync = (): void => {
+      setTabs(prev => {
+        const next = readTabs()
+        if (prev.length === next.length
+          && prev.every((t, i) => t.label === next[i]?.label && t.selected === next[i]?.selected)) {
+          return prev
+        }
+        return next
+      })
+    }
+    sync()
+    const phase = hostRef.current?.closest('[data-phase]')
+    const tablist = phase?.querySelector('[role="tablist"]')
+    if (!(tablist instanceof HTMLElement)) return
+    const observer = new MutationObserver(sync)
+    observer.observe(tablist, { attributes: true, childList: true, subtree: true })
+    return () => { observer.disconnect() }
+  }, [sessionId, readTabs])
+
   /**
-   * 重新测量：按钮锚点（与「对话/轨迹」标签页同一行、右侧）+ 面板锚点
-   * （右侧垂直居中）+ 当前阅读位置对应的我的消息（视口内第一条可见的我的
-   * 消息；否则视口上方最近一条）。
+   * 重新测量：右侧垂直居中的横条面板 + 当前阅读位置对应的我的消息
+   * （视口内第一条可见的我的消息；否则视口上方最近一条）。
    */
   const measure = useCallback((): void => {
     const scrollport = scrollportOf()
     if (scrollport === null || bars.length === 0) {
       setPanelPos(null)
-      setButtonPos(null)
       return
     }
     const sr = scrollport.getBoundingClientRect()
@@ -245,21 +283,6 @@ export function SessionMessageNav(props: SessionMessageNavProps): ReactNode {
     }
     const active = firstVisibleUser ?? lastAbove
     setActiveKey(prev => (prev === active ? prev : active))
-
-    // 按钮：与 header 的「对话/轨迹」标签页同一行（垂直居中对齐），仍靠右侧
-    // （右缘内侧避开滚动条）；无标签页时回落到滚动区顶部。
-    const buttonX = sr.left + scrollport.clientWidth - BUTTON_WIDTH - 12
-    const phase = hostRef.current?.closest('[data-phase]')
-    const tablist = phase?.querySelector('[role="tablist"]')
-    const tabRect = tablist instanceof HTMLElement ? tablist.getBoundingClientRect() : null
-    const buttonY = tabRect !== null && tabRect.height > 0
-      ? tabRect.top + Math.max(0, (tabRect.height - 28) / 2) + 28
-      : sr.top + 10
-    setButtonPos(prev => (
-      prev !== null && Math.abs(prev.x - buttonX) < 0.5 && Math.abs(prev.y - buttonY) < 0.5
-        ? prev
-        : { x: buttonX, y: buttonY }
-    ))
 
     const panelHeight = clamp(
       bars.length * PANEL_ROW_HEIGHT + PANEL_PADDING,
@@ -314,6 +337,22 @@ export function SessionMessageNav(props: SessionMessageNavProps): ReactNode {
       removeStyles()
     }
   }, [sessionId, scrollportOf])
+
+  // 消息弹窗定位：打开时按消息按钮位置右对齐 + 下方展开。
+  useEffect(() => {
+    if (!open) {
+      setPopupPos(null)
+      return
+    }
+    const trigger = triggerRef.current
+    if (trigger === null) return
+    const rect = trigger.getBoundingClientRect()
+    const width = Math.min(POPUP_WIDTH, window.innerWidth - 24)
+    setPopupPos({
+      x: Math.max(8, Math.min(rect.right, window.innerWidth - 12) - width),
+      y: rect.bottom + 8,
+    })
+  }, [open])
 
   // 弹窗外点关闭 / Esc 关闭。
   useEffect(() => {
@@ -486,62 +525,74 @@ export function SessionMessageNav(props: SessionMessageNavProps): ReactNode {
 
   return (
     <div ref={hostRef} className={css.host}>
-      {showButton && buttonPos !== null && createPortal(
+      {tabs.map((tab, index) => (
+        <button
+          key={`${index}-${tab.label}`}
+          type="button"
+          className={[css.viewTile, tab.selected ? css.viewTileActive : ''].filter(Boolean).join(' ')}
+          aria-pressed={tab.selected}
+          onClick={() => { selectView(index) }}
+        >
+          {tab.label}
+        </button>
+      ))}
+      {showButton && (
+        <button
+          ref={triggerRef}
+          type="button"
+          className={css.trigger}
+          aria-haspopup="listbox"
+          aria-expanded={open}
+          aria-label={`查看本会话已发送消息，共 ${totalCount} 条`}
+          title="查看本会话全部已发送消息"
+          onClick={() => { setOpen(prev => !prev) }}
+        >
+          <span className={css.triggerBadge}>{totalCount}</span>
+        </button>
+      )}
+      {open && popupPos !== null && createPortal(
         <div
           ref={wrapRef}
-          className={css.buttonWrap}
-          style={{ left: buttonPos.x, top: buttonPos.y, width: BUTTON_WIDTH }}
+          className={css.popup}
+          role="listbox"
+          aria-label="会话消息列表"
+          style={{ left: popupPos.x, top: popupPos.y }}
         >
-          <button
-            type="button"
-            className={css.trigger}
-            aria-haspopup="listbox"
-            aria-expanded={open}
-            aria-label={`查看本会话已发送消息，共 ${totalCount} 条`}
-            title="查看本会话全部已发送消息"
-            onClick={() => { setOpen(prev => !prev) }}
-          >
-            <span className={css.triggerBadge}>{totalCount}</span>
-          </button>
-          {open && (
-            <div className={css.popup} role="listbox" aria-label="会话消息列表">
-              <div className={css.popupHead}>
-                <span>消息列表</span>
-                <small>共 {totalCount} 条已发送 · {sessionId}</small>
-              </div>
-              <div className={css.popupList}>
-                {userMessages.map((entry, index) => {
-                  const node = entry.node
-                  return (
-                    <button
-                      key={entry.key}
-                      type="button"
-                      role="option"
-                      className={css.item}
-                      onClick={() => {
-                        jumpTo(entry.key)
-                        setOpen(false)
-                      }}
-                    >
-                      <span className={css.itemIndex}>{String(index + 1).padStart(2, '0')}</span>
-                      <span className={css.itemMeta}>{formatTime(messageTime(node))}</span>
-                      <span className={css.itemText}>{truncate(messageText(node), 160) || '(空消息)'}</span>
-                    </button>
-                  )
-                })}
-                {snapshot?.hasMore === true && (
-                  <button
-                    type="button"
-                    className={css.loadOlder}
-                    disabled={snapshot.loadingOlder === true}
-                    onClick={loadOlder}
-                  >
-                    {snapshot.loadingOlder === true ? '加载中…' : '更早的消息尚未加载 — 点击加载'}
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
+          <div className={css.popupHead}>
+            <span>消息列表</span>
+            <small>共 {totalCount} 条已发送 · {sessionId}</small>
+          </div>
+          <div className={css.popupList}>
+            {userMessages.map((entry, index) => {
+              const node = entry.node
+              return (
+                <button
+                  key={entry.key}
+                  type="button"
+                  role="option"
+                  className={css.item}
+                  onClick={() => {
+                    jumpTo(entry.key)
+                    setOpen(false)
+                  }}
+                >
+                  <span className={css.itemIndex}>{String(index + 1).padStart(2, '0')}</span>
+                  <span className={css.itemMeta}>{formatTime(messageTime(node))}</span>
+                  <span className={css.itemText}>{truncate(messageText(node), 160) || '(空消息)'}</span>
+                </button>
+              )
+            })}
+            {snapshot?.hasMore === true && (
+              <button
+                type="button"
+                className={css.loadOlder}
+                disabled={snapshot.loadingOlder === true}
+                onClick={loadOlder}
+              >
+                {snapshot.loadingOlder === true ? '加载中…' : '更早的消息尚未加载 — 点击加载'}
+              </button>
+            )}
+          </div>
         </div>,
         document.body,
       )}
