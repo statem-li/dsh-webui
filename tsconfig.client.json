@@ -9,7 +9,14 @@
     "skipLibCheck": true,
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
-    "noEmit": true
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "ignoreDeprecations": "6.0",
+    "baseUrl": ".",
+    "paths": {
+      "@deepseek-ai/dsh-client-ui-tool/client": ["../../deepseek-harness/node_modules/.pnpm/node_modules/@deepseek-ai/dsh-client-ui-tool/lib/types/client/index.d.ts"],
+      "@deepseek-ai/dsh-client-ui-attachment": ["../../deepseek-harness/node_modules/.pnpm/node_modules/@deepseek-ai/dsh-client-ui-attachment/lib/types/index.d.ts"]
+    }
   },
   "include": ["src/client"]
 }

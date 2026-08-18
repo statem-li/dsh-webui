@@ -1,7 +1,7 @@
 {
   "name": "@dsh-external/webui",
-  "version": "0.2.0",
-  "description": "webui：右上角「对话/轨迹」图块视图切换 + 会话消息导航（消息弹窗、右侧消息横条）",
+  "version": "0.3.0",
+  "description": "webui：右上角「对话/轨迹」视图切换 + 消息导航 + 工具调用聚合 + Markdown 渲染（合并 dsh-tool-summary / dsh-better-markdown）",
   "private": true,
   "type": "module",
   "main": "./lib/index.js",
@@ -26,19 +26,42 @@
     "client": {
       "inject": [
         "@deepseek-ai/dsh-client-runtime",
-        "@deepseek-ai/dsh-client-ui-slots"
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-primitives",
+        "@deepseek-ai/dsh-client-ui-tool",
+        "@deepseek-ai/dsh-client-ui-attachment",
+        "@deepseek-ai/dsh-client-ui-locale"
       ],
       "platform": "web"
     }
   },
+  "dependencies": {
+    "@shikijs/langs": "4.4.3",
+    "@shikijs/themes": "4.4.3",
+    "katex": "^0.18.4",
+    "markstream-react": "0.0.55",
+    "mermaid": "11.16.1",
+    "shiki": "4.4.3",
+    "stream-markdown": "0.0.16"
+  },
   "peerDependencies": {
     "cordis": ">=4.0.0-rc <5",
     "@deepseek-ai/dsh-client-runtime": ">=0.0.1-rc <2",
-    "@deepseek-ai/dsh-client-ui-slots": ">=0.0.1-rc <2"
+    "@deepseek-ai/dsh-client-ui-slots": ">=0.0.1-rc <2",
+    "@deepseek-ai/dsh-client-ui-conversation": ">=0.0.1-rc <2",
+    "@deepseek-ai/dsh-client-ui-primitives": ">=0.0.1-rc <2",
+    "@deepseek-ai/dsh-client-ui-tool": ">=0.0.1-rc <2",
+    "@deepseek-ai/dsh-client-ui-attachment": ">=0.0.1-rc <2",
+    "@deepseek-ai/dsh-client-ui-locale": ">=0.0.1-rc <2",
+    "react": ">=18",
+    "react-dom": ">=18"
   },
   "devDependencies": {
     "@types/node": "^24.13.3",
     "@types/react": "~18.3.1",
+    "@types/react-dom": "~18.3.0",
+    "stream-markdown-parser": "1.1.4",
     "tsdown": "^0.22.14",
     "typescript": "^5.9.3"
   },
