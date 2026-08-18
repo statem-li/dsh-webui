@@ -203,27 +203,56 @@ const ToolEntry = memo(function ToolEntry({
     return earliest
   }, [nodes])
   const elapsed = toolStart !== undefined ? Math.max(0, now - toolStart) : undefined
+  // 统计仍在运行的工具类型，决定是否在对话流外面直接显示下载/执行进度条。
+  const liveActivity = useMemo(() => {
+    let hasDownload = false
+    let hasCommand = false
+    for (const node of nodes) {
+      const block = node.data.root
+      if (!isRunning(block)) continue
+      const activity = classifyActivity(block)
+      if (activity === 'download') hasDownload = true
+      else if (activity === 'command') hasCommand = true
+    }
+    return { hasDownload, hasCommand }
+  }, [nodes])
+  const showDownload = running && liveActivity.hasDownload
+  const showCommand = running && !liveActivity.hasDownload && liveActivity.hasCommand && (elapsed ?? 0) > 1000
 
   return (
-    <button
-      type="button"
-      className={`${NS}__entry`}
-      data-running={running || undefined}
-      title="点击打开本轮思考与工具调用详情"
-      aria-label={`本轮工具调用 ${stats.total} 次，点击查看`}
-      onClick={() => { store.open(turn, 'tools') }}
-    >
-      <span className={`${NS}__entry-icon`} aria-hidden><IconApiOutline14 size={14} /></span>
-      <span className={`${NS}__entry-text`}>
-        {running
-          ? elapsed !== undefined
-            ? `工具调用中 · ${formatDuration(elapsed)}`
-            : '工具调用中'
-          : `工具 ×${stats.total}`}
-      </span>
-      {readOnly > 0 && <span className={`${NS}__entry-sub`}>只读 {readOnly}</span>}
-      {stats.errors > 0 && <span className={`${NS}__entry-err`}>⚠ {stats.errors}</span>}
-    </button>
+    <div className={`${NS}__entry-wrap`}>
+      <button
+        type="button"
+        className={`${NS}__entry`}
+        data-running={running || undefined}
+        title="点击打开本轮思考与工具调用详情"
+        aria-label={`本轮工具调用 ${stats.total} 次，点击查看`}
+        onClick={() => { store.open(turn, 'tools') }}
+      >
+        <span className={`${NS}__entry-icon`} aria-hidden><IconApiOutline14 size={14} /></span>
+        <span className={`${NS}__entry-text`}>
+          {running
+            ? elapsed !== undefined
+              ? `工具调用中 · ${formatDuration(elapsed)}`
+              : '工具调用中'
+            : `工具 ×${stats.total}`}
+        </span>
+        {readOnly > 0 && <span className={`${NS}__entry-sub`}>只读 {readOnly}</span>}
+        {stats.errors > 0 && <span className={`${NS}__entry-err`}>⚠ {stats.errors}</span>}
+      </button>
+      {showDownload && (
+        <div className={`${NS}__entry-live`} data-kind="download">
+          <span className={`${NS}__progress`} aria-hidden />
+          <span>下载中 · {formatDuration(elapsed ?? 0)}</span>
+        </div>
+      )}
+      {showCommand && (
+        <div className={`${NS}__entry-live`} data-kind="command">
+          <span className={`${NS}__progress`} aria-hidden />
+          <span>执行中 · {formatDuration(elapsed ?? 0)}</span>
+        </div>
+      )}
+    </div>
   )
 })
 

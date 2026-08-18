@@ -413,6 +413,29 @@ const CSS = `
   font-size: 11px;
 }
 
+/* 对话流外面的下载/执行进度条：紧贴工具 chip 下方，无需点开抽屉。 */
+.dts__entry-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  max-width: 100%;
+}
+
+.dts__entry-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 12px;
+  border: 1px solid color-mix(in srgb, var(--dsw-alias-state-business-primary, #3182ce) 45%, transparent);
+  border-radius: 999px;
+  background: var(--dsw-alias-bg-layer-1, rgba(127,127,127,.06));
+  color: var(--dsw-alias-state-business-primary, #3182ce);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 /* ---- centered activity modal (like the image lightbox) ---- */
 .dts__modal-backdrop {
   position: fixed;
