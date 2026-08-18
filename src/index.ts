@@ -25,6 +25,7 @@ import { applyBrowser } from './browser/index.js'
 import { applyMemory } from './memory/index.js'
 import { applyFileExplorer } from './file-explorer.js'
 import { applyUsageHost } from './usage-host.js'
+import { applyVisionHelper } from './vision-helper.js'
 import {
   AnySearchSearchProvider,
   ANYSEARCH_DEFAULT_BASE_URL,
@@ -32,7 +33,7 @@ import {
 import type { AnySearchSearchProviderOptions } from './provider.js'
 
 export const name = 'webui'
-export const inject = ['settings', 'tools', 'web', 'systemPrompt', 'webServer', 'sandboxPolicy', 'fs', 'workspaceRegistry', 'credentials', 'sessions', 'sessionPersistence', 'llm']
+export const inject = ['settings', 'tools', 'web', 'systemPrompt', 'webServer', 'sandboxPolicy', 'fs', 'workspaceRegistry', 'credentials', 'sessions', 'sessionPersistence', 'llm', 'shell']
 
 // ── 推理等级补全 ────────────────────────────────────────────────────────────
 
@@ -128,6 +129,8 @@ export interface WebuiConfig extends AnySearchConfig {
   memory?: Partial<import('./memory/types.js').MemoryConfig>
   /** 用量统计 + 技能管理配置（透传给 dsh-usage-skill 的 host）。 */
   usage?: any
+  /** 辅助视觉 + 生图配置（自 dsh-vision-helper 合并）。 */
+  visionHelper?: Partial<import('./vision-helper.js').Config>
 }
 
 /**
@@ -232,4 +235,7 @@ export async function apply(ctx: Context, config: WebuiConfig = {}): Promise<voi
 
   // 10) 用量统计 + 技能管理（自 dsh-usage-skill 融合；host 复用其 lib 产物）。
   await applyUsageHost(ctx, config.usage)
+
+  // 11) 辅助视觉 + 生图（自 dsh-vision-helper 合并）：vision_describe / generate_image / 图片降级 / HTTP 接口。
+  applyVisionHelper(ctx, config.visionHelper ?? {})
 }

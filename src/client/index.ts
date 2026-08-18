@@ -17,8 +17,8 @@ import 'markstream-react/index.css'
 import './markdown/styles.css'
 import { Webui } from './Webui'
 import { ProviderBadge, type ProviderBadgeInjected } from './ProviderBadge'
-// TODO(anysearch): AnySearchCard 合并未完成（createSnapshotStore 运行时导入与 CJS external 解析冲突），暂缓注册。
-// import { registerAnySearchCard } from './AnySearchCard'
+// AnySearchCard：外接网页搜索设置卡（settings.plugin.item）。
+import { registerAnySearchCard } from './AnySearchCard'
 import { apply as registerZhThinking } from './zh-thinking'
 import { apply as registerTaskDoneSound } from './task-done-sound'
 import { apply as registerUpdater } from './updater'
@@ -92,8 +92,7 @@ export function apply(ctx: ClientContext): void {
   }, BetterAssistantNodeView))
 
   // ---- dsh-web-search-anysearch：AnySearch 网页搜索设置卡片 ---------------
-  // TODO(anysearch): 见顶部注释，暂缓注册。
-  // registerAnySearchCard(ctx)
+  registerAnySearchCard(ctx)
 
   // ---- dsh-zh-thinking：设置页「中文思考」开关 ----------------------------
   registerZhThinking(ctx)
