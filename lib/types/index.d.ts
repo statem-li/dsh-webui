@@ -10,7 +10,7 @@
  *     到 `ctx.web`，替换内置 DeepSeek 搜索为 https://api.anysearch.com。
  */
 import type { Context } from 'cordis';
-export declare const name = "webui";
+export declare const name = "dsh-webui";
 export declare const inject: string[];
 /** AnySearch 插件配置（全部可选，apply 填环境变量与常量默认值）。 */
 export interface AnySearchConfig {
@@ -36,6 +36,8 @@ export interface WebuiConfig extends AnySearchConfig {
     memory?: Partial<import('./memory/types.js').MemoryConfig>;
     /** 用量统计 + 技能管理配置（透传给 dsh-usage-skill 的 host）。 */
     usage?: any;
+    /** 辅助视觉 + 生图配置（自 dsh-vision-helper 合并）。 */
+    visionHelper?: Partial<import('./vision-helper.js').Config>;
 }
 /**
  * 注册 `webui_sync_reasoning` 工具 + AnySearch 搜索 provider + 中文思考开关

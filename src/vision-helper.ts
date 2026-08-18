@@ -12,9 +12,10 @@
  * visionActive/vision[] > 内置默认 sensenova/sensenova-6.8-flash-lite。
  * 失败自动降级到列表里下一个可用模型。
  *
- * 传输：图片先落临时文件，PowerShell 读文件转 base64 调
- * POST {baseURL}/chat/completions（openai-completions 兼容），
- * 避开命令行长度上限（~32K 字符），沿用 dsh-image-gen 已验证的通道。
+ * 传输：请求体在 TS 侧拼好（含 base64 图片）写入临时 JSON 文件，
+ * PowerShell 只读文件字节并 POST {baseURL}/chat/completions
+ * （openai-completions 兼容），完全避开命令行长度上限（~32K 字符），
+ * 沿用 dsh-image-gen 已验证的通道。
  */
 import fs from 'node:fs'
 import os from 'node:os'
@@ -95,13 +96,6 @@ function splitKey(key: string): { provider: string; model: string } | null {
 
 function psEscape(value: string): string {
   return String(value).replace(/'/g, "''")
-}
-
-function imageFileExt(dataUrlPrefix: string): string {
-  const m = /^data:image\/(png|jpe?g|webp|gif)/.exec(dataUrlPrefix)
-  if (!m) return 'png'
-  const ext = m[1]
-  return ext === 'jpeg' ? 'jpg' : ext === 'jpe' ? 'jpg' : ext
 }
 
 function isBase64Like(value: string): boolean {
@@ -226,41 +220,75 @@ async function resolveVisionModels(ctx: PluginContext, config: Config): Promise<
   return [DEFAULT_VISION]
 }
 
+/** 网关是否以「content 数组不被接受」为由拒绝（OpenAI 多模态数组格式不适配）。 */
+function isContentFormatRejection(res: { error?: string; detail?: string }): boolean {
+  const text = `${res.error || ''} ${res.detail || ''}`
+  return /unexpected item type|invalid content/i.test(text)
+}
+
+/** 该模型在 provider 配置里声明的 reasoningEfforts.off 线值（如 sensenova → "none"）；未声明返回 null。 */
+function reasoningOffWire(profile: any, model: string): string | null {
+  const models = Array.isArray(profile?.models) ? profile.models : []
+  const entry = models.find((m: any) => m && typeof m === 'object' && m.id === model)
+  const efforts = entry && typeof entry.reasoningEfforts === 'object' ? entry.reasoningEfforts : null
+  if (efforts && 'off' in efforts && typeof efforts.off === 'string' && efforts.off) return efforts.off
+  return null
+}
+
 /**
  * 调 chat/completions（PowerShell Invoke-RestMethod，danger-full-access 沙箱）。
- * 图片 base64 在 PS 侧从临时文件读，命令行只传路径，避免 32K 长度上限。
+ * 请求体在 TS 侧拼好写入临时 JSON 文件，PS 只读文件字节并 POST，
+ * 避开命令行长度上限（~32K 字符）与引号转义问题。
+ *
+ * 图片格式：OpenAI 标准网关接受 content 数组
+ * [{type:'text'},{type:'image_url',image_url:{url}}]；部分网关（如
+ * sensenova token 网关）不接受数组、只认 message 级平铺字段，此时用
+ * flatImage=true 发送 { role:'user', content: 提示词, image_url: dataURL }。
+ * reasoningOff 传入网关线值（sensenova 为 "none"）可关掉默认推理链，
+ * 避免 finish=length 且正文为空的「推理吃满配额」。
  */
 async function callVisionChat(
   ctx: PluginContext,
   baseURL: string,
   apiKey: string,
   model: string,
-  imageBase64: string,
-  prefix: string,
+  dataUrl: string,
   prompt: string,
-  maxTokens: number,
   timeoutMs: number,
-  signal?: AbortSignal,
+  signal: AbortSignal | undefined,
+  opts: { flatImage: boolean; reasoningOff?: string | null; maxTokens: number },
 ): Promise<{ ok: boolean; content?: string; finish?: string; model?: string; error?: string; detail?: string }> {
-  // 图片落临时文件
-  const tmpFile = path.join(os.tmpdir(), `dsh-vision-${process.pid}-${crypto.randomBytes(6).toString('hex')}.${imageFileExt(prefix)}`)
-  fs.writeFileSync(tmpFile, Buffer.from(imageBase64, 'base64'))
+  const userMessage: Record<string, unknown> = { role: 'user' }
+  if (opts.flatImage) {
+    userMessage.content = prompt
+    userMessage.image_url = dataUrl
+  } else {
+    userMessage.content = [
+      { type: 'text', text: prompt },
+      { type: 'image_url', image_url: { url: dataUrl } },
+    ]
+  }
+  const body: Record<string, unknown> = {
+    model,
+    messages: [userMessage],
+    max_tokens: opts.maxTokens,
+  }
+  if (opts.reasoningOff) body.reasoning_effort = opts.reasoningOff
+
+  const bodyFile = path.join(os.tmpdir(), `dsh-vision-body-${process.pid}-${crypto.randomBytes(6).toString('hex')}.json`)
+  fs.writeFileSync(bodyFile, JSON.stringify(body), 'utf8')
 
   const base = String(baseURL).replace(/[\\/]+$/, '')
   const escaped = {
-    model: psEscape(model),
-    prompt: psEscape(prompt),
     key: psEscape(apiKey),
-    file: psEscape(tmpFile),
+    file: psEscape(bodyFile),
     url: psEscape(`${base}/chat/completions`),
   }
   const command = [
     "$ErrorActionPreference = 'Stop'",
     "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12",
-    `$b64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes('${escaped.file}'))`,
-    `$body = @{ model = '${escaped.model}'; messages = @(@{ role = 'user'; content = @(@{ type = 'text'; text = '${escaped.prompt}' }, @{ type = 'image_url'; image_url = @{ url = "data:image/png;base64,$b64" } }) }); max_tokens = ${maxTokens} } | ConvertTo-Json -Depth 8 -Compress`,
     'try {',
-    `  $r = Invoke-RestMethod -UseBasicParsing -Uri '${escaped.url}' -Method Post -Headers @{ Authorization = 'Bearer ${escaped.key}'; 'Content-Type' = 'application/json' } -Body $body -TimeoutSec ${Math.floor(timeoutMs / 1000)}`,
+    `  $r = Invoke-RestMethod -UseBasicParsing -Uri '${escaped.url}' -Method Post -Headers @{ Authorization = 'Bearer ${escaped.key}'; 'Content-Type' = 'application/json' } -Body ([IO.File]::ReadAllBytes('${escaped.file}')) -TimeoutSec ${Math.floor(timeoutMs / 1000)}`,
     '  $m = $r.choices[0].message',
     "  @{ ok = $true; content = $m.content; finish = $r.choices[0].finish_reason; model = $r.model } | ConvertTo-Json -Depth 4 -Compress",
     '} catch {',
@@ -289,13 +317,20 @@ async function callVisionChat(
   } catch (error: any) {
     return { ok: false, error: String(error?.message ?? error) }
   } finally {
-    try { fs.rmSync(tmpFile, { force: true }) } catch { /* 清理失败忽略 */ }
+    try { fs.rmSync(bodyFile, { force: true }) } catch { /* 清理失败忽略 */ }
   }
 }
 
 // ── 插件主体 ────────────────────────────────────────────
 
 export function applyVisionHelper(ctx: PluginContext, config: Config): void {
+  // 配置契约校验：调用方（webui apply）直接透传未解析的 Partial<Config>，
+  // 未显式配置的字段（visionModels / timeoutMs / maxTokens / fallbackCacheSize
+  // 等）在这里补上 schemastery 默认值，避免后续 resolveVisionModels 等读到
+  // undefined 而抛出 `Cannot read properties of undefined (reading 'length')`。
+  // schemastery 的 schema 是函数形态：调用即解析（含默认值），非 zod 的 .parse。
+  config = Config(config)
+
   // ═══ 生图能力（自 dsh-image-gen 合并；模型配置存 model-router.json 的 imageActive）═══
   let imageActive = ''
   async function loadImageConfig(): Promise<void> {
@@ -434,25 +469,31 @@ export function applyVisionHelper(ctx: PluginContext, config: Config): void {
         failures.push(`${key}: 未找到 API 凭据（${profile.apiKeyEnv || '未知 env'}），请先在凭据设置中配置`)
         continue
       }
+      const dataUrl = prefix + base64
+      const reasoningOff = reasoningOffWire(profile, active.model)
       let res = await callVisionChat(
-        ctx,
-        profile.baseURL,
-        apiKey,
-        active.model,
-        base64,
-        prefix,
-        prompt,
-        config.maxTokens,
-        config.timeoutMs,
-        signal,
+        ctx, profile.baseURL, apiKey, active.model, dataUrl, prompt,
+        config.timeoutMs, signal,
+        { flatImage: false, reasoningOff: null, maxTokens: config.maxTokens },
       )
-      // 推理链吃满配额（finish=length 且无正文）：加大 max_tokens 重试一次
+      let flatImage = false
+      // 网关拒绝 OpenAI content 数组（如 sensenova token 网关）→ 换 message 级 image_url 平铺格式
+      if (!res.ok && isContentFormatRejection(res)) {
+        flatImage = true
+        res = await callVisionChat(
+          ctx, profile.baseURL, apiKey, active.model, dataUrl, prompt,
+          config.timeoutMs, signal,
+          { flatImage: true, reasoningOff, maxTokens: config.maxTokens },
+        )
+      }
+      // 推理链吃满配额（finish=length 且无正文）：关推理 + 加大 max_tokens 重试一次
       if (res.ok && !res.content && res.finish === 'length') {
         const bigger = Math.min(config.maxTokens * 4, 16384)
         if (bigger > config.maxTokens) {
           res = await callVisionChat(
-            ctx, profile.baseURL, apiKey, active.model, base64, prefix, prompt,
-            bigger, config.timeoutMs, signal,
+            ctx, profile.baseURL, apiKey, active.model, dataUrl, prompt,
+            config.timeoutMs, signal,
+            { flatImage, reasoningOff, maxTokens: bigger },
           )
         }
       }
