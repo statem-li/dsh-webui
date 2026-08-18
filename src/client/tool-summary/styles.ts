@@ -436,6 +436,64 @@ const CSS = `
   white-space: nowrap;
 }
 
+/* 对话流外面的下载卡片：标题 + URL + 保存路径 + 进度条 + 时长。 */
+.dts__download-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 100%;
+  min-width: 260px;
+  padding: 8px 12px;
+  border: 1px solid var(--dsw-alias-border-base, rgba(127,127,127,.22));
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-layer-2, rgba(127,127,127,.04));
+}
+
+.dts__download-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--dsw-alias-state-business-primary, #3182ce);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.dts__download-title {
+  font-variant-numeric: tabular-nums;
+}
+
+.dts__download-url {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dsw-alias-label-secondary);
+  font-family: var(--ds-font-family-code, monospace);
+  font-size: 11px;
+}
+
+.dts__download-dest {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+}
+
+.dts__download-dest code {
+  color: var(--dsw-alias-label-secondary);
+  font-family: var(--ds-font-family-code, monospace);
+}
+
+.dts__download-progress {
+  margin-top: 2px;
+}
+
+.dts__download-progress .dts__progress {
+  width: 100%;
+}
+
 /* ---- centered activity modal (like the image lightbox) ---- */
 .dts__modal-backdrop {
   position: fixed;

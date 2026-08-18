@@ -14,8 +14,8 @@ import type { ChatNode, ChatNodeViewProps } from '@deepseek-ai/dsh-client-ui-con
 // Type-only: activates the ui-conversation SlotMap augmentation so ChatNodeViewProps
 // resolves its owner/keyed share (selectedCallId, cwd, openFile, inspectCall…).
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
-import { IconApiOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
-import { callDurationMs, callName, callSummary, classifyActivity, computeStats, formatDuration, isRunning, READONLY_TOOLS, resultText, shortenPath } from './tool-stats.ts'
+import { IconApiOutline14, IconDownloadOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { callDurationMs, callName, callSummary, classifyActivity, computeStats, formatDuration, isRunning, parseDownload, READONLY_TOOLS, resultText, shortenPath, type DownloadInfo } from './tool-stats.ts'
 import { useNow } from './use-now.ts'
 import { activityStore, type ActivityHandlers, type ActivityStore } from './activity-drawer.tsx'
 
@@ -203,18 +203,23 @@ const ToolEntry = memo(function ToolEntry({
     return earliest
   }, [nodes])
   const elapsed = toolStart !== undefined ? Math.max(0, now - toolStart) : undefined
-  // 统计仍在运行的工具类型，决定是否在对话流外面直接显示下载/执行进度条。
+  // 统计仍在运行的工具类型，决定是否在对话流外面直接显示下载/执行进度卡片。
   const liveActivity = useMemo(() => {
     let hasDownload = false
     let hasCommand = false
+    let downloadInfo: DownloadInfo | undefined
     for (const node of nodes) {
       const block = node.data.root
       if (!isRunning(block)) continue
       const activity = classifyActivity(block)
-      if (activity === 'download') hasDownload = true
-      else if (activity === 'command') hasCommand = true
+      if (activity === 'download') {
+        hasDownload = true
+        if (downloadInfo === undefined) downloadInfo = parseDownload(block)
+      } else if (activity === 'command') {
+        hasCommand = true
+      }
     }
-    return { hasDownload, hasCommand }
+    return { hasDownload, hasCommand, downloadInfo }
   }, [nodes])
   const showDownload = running && liveActivity.hasDownload
   const showCommand = running && !liveActivity.hasDownload && liveActivity.hasCommand && (elapsed ?? 0) > 1000
@@ -241,9 +246,18 @@ const ToolEntry = memo(function ToolEntry({
         {stats.errors > 0 && <span className={`${NS}__entry-err`}>⚠ {stats.errors}</span>}
       </button>
       {showDownload && (
-        <div className={`${NS}__entry-live`} data-kind="download">
-          <span className={`${NS}__progress`} aria-hidden />
-          <span>下载中 · {formatDuration(elapsed ?? 0)}</span>
+        <div className={`${NS}__download-card`}>
+          <div className={`${NS}__download-head`}>
+            <IconDownloadOutline16 size={14} aria-hidden />
+            <span className={`${NS}__download-title`}>下载中 · {formatDuration(elapsed ?? 0)}</span>
+          </div>
+          {liveActivity.downloadInfo?.url !== undefined && liveActivity.downloadInfo.url !== '' && (
+            <div className={`${NS}__download-url`} title={liveActivity.downloadInfo.url}>{liveActivity.downloadInfo.url}</div>
+          )}
+          {liveActivity.downloadInfo?.output !== undefined && liveActivity.downloadInfo.output !== '' && (
+            <div className={`${NS}__download-dest`} title={liveActivity.downloadInfo.output}>保存到 <code>{liveActivity.downloadInfo.output}</code></div>
+          )}
+          <div className={`${NS}__download-progress`}><span className={`${NS}__progress`} aria-hidden /></div>
         </div>
       )}
       {showCommand && (

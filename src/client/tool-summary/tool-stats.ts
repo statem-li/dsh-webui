@@ -153,3 +153,25 @@ export function classifyActivity(block: ToolCallBlock): ToolActivity {
   if (/^(bash|sh|pwsh|powershell|cmd|zsh)$/i.test(name)) return 'command'
   return 'other'
 }
+
+/** 一个下载调用的展示信息：来源 URL + 保存路径。 */
+export interface DownloadInfo {
+  readonly url: string
+  readonly output: string
+}
+
+/** 从 curl/wget 命令参数解析下载 URL 与保存路径（都拿不到返回 undefined）。 */
+export function parseDownload(block: ToolCallBlock): DownloadInfo | undefined {
+  const raw = 'kind' in block ? (block.call?.argsRaw ?? '') : block.argsRaw
+  if (raw === '') return undefined
+  // 保存路径：curl -o/--output，wget -O/--output-document（支持引号包裹）。
+  let output = ''
+  const out = /(?:--output-document|--output|-o|-O)\s+(?:"([^"]+)"|'([^']+)'|(\S+))/i.exec(raw)
+  if (out !== null) output = out[1] ?? out[2] ?? out[3] ?? ''
+  // 下载地址：最后一个 http(s):// 参数。
+  let url = ''
+  const urls = raw.match(/https?:\/\/[^\s"']+/gi)
+  if (urls !== null && urls.length > 0) url = urls[urls.length - 1] ?? ''
+  if (url === '' && output === '') return undefined
+  return { url, output }
+}
