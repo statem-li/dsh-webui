@@ -2,3 +2,8 @@ node_modules/
 *.tsbuildinfo
 *.tgz
 *.map
+# 构建/诊断临时产物
+_build-webui.log
+lib/lib-*.mjs
+# SDD 工作区
+.superpowers/

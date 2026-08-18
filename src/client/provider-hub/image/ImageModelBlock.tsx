@@ -1,0 +1,105 @@
+/**
+ * ImageModelBlock — 生图模型区块。
+ * 交互：两级下拉——先选供应商，再选该供应商下的模型。
+ * 复用 dsh-vision-helper 的 HTTP 接口：/api/image-gen/snapshot + /config。
+ */
+import { useEffect, useState } from 'react'
+
+interface ModelInfo { id: string; name: string }
+interface ProviderInfo { id: string; name: string; models: ModelInfo[] }
+
+const BLOCK_TITLE: React.CSSProperties = { fontSize: 14, fontWeight: 600, marginBottom: 6 }
+const HINT: React.CSSProperties = { fontSize: 12, color: 'var(--dsw-alias-label-secondary)', marginBottom: 10 }
+const ROW: React.CSSProperties = { display: 'flex', gap: 8, alignItems: 'center', marginBottom: 10 }
+const SELECT: React.CSSProperties = {
+  padding: '6px 10px', borderRadius: 6,
+  border: '1px solid var(--dsw-alias-border-l2)',
+  background: 'var(--dsw-alias-bg-layer-2, transparent)',
+  color: 'var(--dsw-alias-label-primary)', fontSize: 13, cursor: 'pointer',
+}
+const ACTIVE_HINT: React.CSSProperties = { fontSize: 12, color: 'var(--dsw-alias-label-secondary)' }
+
+export function ImageModelBlock(): React.ReactElement {
+  const [providers, setProviders] = useState<ProviderInfo[]>([])
+  const [active, setActive] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [selectedProvider, setSelectedProvider] = useState('')
+
+  useEffect(() => {
+    let alive = true
+    fetch('/api/image-gen/snapshot', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((d: any) => {
+        if (!alive) return
+        if (d && d.ok !== false) {
+          setProviders(d.providers || [])
+          setActive(d.imageActive || '')
+        } else {
+          setError((d && d.error) || '加载失败')
+        }
+      })
+      .catch(() => { if (alive) setError('接口不可用') })
+    return () => { alive = false }
+  }, [])
+
+  const slash = active.indexOf('/')
+  const activeProvider = slash > 0 ? active.slice(0, slash) : ''
+  const activeModel = slash > 0 ? active.slice(slash + 1) : ''
+
+  const currentProvider = selectedProvider || activeProvider || providers[0]?.id || ''
+  const currentModels = providers.find(p => p.id === currentProvider)?.models ?? []
+  const modelValue = currentProvider === activeProvider ? activeModel : ''
+
+  const pick = (key: string): void => {
+    if (saving) return
+    setSaving(true)
+    fetch('/api/image-gen/config', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ imageActive: key }),
+    })
+      .then((r) => r.json())
+      .then((d: any) => { if (d && d.ok) setActive(key) })
+      .finally(() => setSaving(false))
+  }
+
+  return (
+    <div>
+      <div style={BLOCK_TITLE}>生图模型</div>
+      <div style={HINT}>generate_image 使用的模型（提示词 → 图片生成）。</div>
+      {error && <div style={{ color: '#d33', marginBottom: 8 }}>{error}</div>}
+      {providers.length === 0 && !error
+        ? <div style={{ color: '#888' }}>加载中…</div>
+        : (
+          <>
+            <div style={ROW}>
+              <select
+                style={SELECT}
+                value={currentProvider}
+                aria-label="供应商"
+                onChange={(e) => { setSelectedProvider(e.target.value) }}
+              >
+                {providers.map(p => (
+                  <option key={p.id} value={p.id}>{p.name || p.id}</option>
+                ))}
+              </select>
+              <select
+                style={SELECT}
+                value={modelValue}
+                aria-label="模型"
+                disabled={saving || currentModels.length === 0}
+                onChange={(e) => { if (e.target.value) pick(`${currentProvider}/${e.target.value}`) }}
+              >
+                <option value="">{currentModels.length === 0 ? '无模型' : '选择模型'}</option>
+                {currentModels.map(m => (
+                  <option key={m.id} value={m.id}>{m.name || m.id}</option>
+                ))}
+              </select>
+            </div>
+            {active && <div style={ACTIVE_HINT}>当前：{active}</div>}
+          </>
+        )}
+    </div>
+  )
+}

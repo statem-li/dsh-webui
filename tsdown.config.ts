@@ -16,6 +16,11 @@ const CLIENT_EXTERNALS = [
   '@antv/infographic',
 ]
 
+/** 判断一个模块是否应 external（支持 `scope/*` glob 与精确名）。 */
+function isExternal(id: string): boolean {
+  return CLIENT_EXTERNALS.some(ext => ext.endsWith('/*') ? id.startsWith(ext.slice(0, -1)) : id === ext)
+}
+
 // CSS 内联约定：把 .css 变成「注入 <style> 标签」的 JS（与原 dsh-better-markdown 一致）。
 const CSS_PREFIX = '\0webui-css:'
 const CSS_SUFFIX = '.mjs'
@@ -36,7 +41,7 @@ const clientBundle: UserConfig = {
   },
   deps: {
     neverBundle: [...CLIENT_EXTERNALS],
-    alwaysBundle: (id: string) => !CLIENT_EXTERNALS.includes(id),
+    alwaysBundle: (id: string) => !isExternal(id),
   },
   plugins: [{
     name: 'webui-code-block-dependencies',

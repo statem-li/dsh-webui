@@ -1,7 +1,7 @@
 {
   "name": "@dsh-external/webui",
-  "version": "0.3.0",
-  "description": "webui：右上角「对话/轨迹」视图切换 + 消息导航 + 工具调用聚合 + Markdown 渲染（合并 dsh-tool-summary / dsh-better-markdown）",
+  "version": "0.4.0",
+  "description": "webui：视图图块/消息导航 + 工具调用聚合 + Markdown 渲染 + 模型推理等级同步 + AnySearch 网页搜索（合并 dsh-tool-summary / dsh-better-markdown / dsh-web-search-anysearch）",
   "private": true,
   "type": "module",
   "main": "./lib/index.js",
@@ -19,7 +19,10 @@
   },
   "files": [
     "lib",
-    "scripts/build.sh"
+    "scripts/build.sh",
+    "scripts/conversation-done-card.ps1",
+    "assets/task-done.wav",
+    "assets/updater.ps1"
   ],
   "license": "BSD-3-Clause",
   "dsh": {
@@ -31,7 +34,9 @@
         "@deepseek-ai/dsh-client-ui-primitives",
         "@deepseek-ai/dsh-client-ui-tool",
         "@deepseek-ai/dsh-client-ui-attachment",
-        "@deepseek-ai/dsh-client-ui-locale"
+        "@deepseek-ai/dsh-client-ui-locale",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-schema-form"
       ],
       "platform": "web"
     }
@@ -43,7 +48,8 @@
     "markstream-react": "0.0.55",
     "mermaid": "11.16.1",
     "shiki": "4.4.3",
-    "stream-markdown": "0.0.16"
+    "stream-markdown": "0.0.16",
+    "dsh-usage-skill": "link:D:/AI/Dsh/dsh-usage-skill"
   },
   "peerDependencies": {
     "cordis": ">=4.0.0-rc <5",
@@ -54,6 +60,19 @@
     "@deepseek-ai/dsh-client-ui-tool": ">=0.0.1-rc <2",
     "@deepseek-ai/dsh-client-ui-attachment": ">=0.0.1-rc <2",
     "@deepseek-ai/dsh-client-ui-locale": ">=0.0.1-rc <2",
+    "@deepseek-ai/dsh-client-ui-settings": ">=0.0.1-rc <2",
+    "@deepseek-ai/dsh-client-connection": ">=0.0.1-rc <2",
+    "@deepseek-ai/dsh-client-ui-model-selection": ">=0.0.1-rc <2",
+    "@deepseek-ai/dsh-settings": ">=0.0.1-rc <2",
+    "@deepseek-ai/dsh-tools": ">=0.0.1-rc <2",
+    "@deepseek-ai/dsh-web": ">=0.0.1-rc <2",
+    "@deepseek-ai/dsh-credentials": ">=0.0.1-rc <2",
+    "@deepseek-ai/dsh-launch-environment": ">=0.0.1-rc <2",
+    "@deepseek-ai/dsh-agent": ">=0.0.1-rc <2",
+    "@deepseek-ai/dsh-llm": ">=0.0.1-rc <2",
+    "@deepseek-ai/dsh-api-remotes": ">=0.0.1-rc <2",
+    "@deepseek-ai/dsh-client-schema-form": ">=0.0.1-rc <2",
+    "@deepseek-ai/schemastery": ">=3",
     "react": ">=18",
     "react-dom": ">=18"
   },
@@ -63,7 +82,27 @@
     "@types/react-dom": "~18.3.0",
     "stream-markdown-parser": "1.1.4",
     "tsdown": "^0.22.14",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "codemirror": "^6.0.0",
+    "@codemirror/state": "^6.0.0",
+    "@codemirror/view": "^6.0.0",
+    "@codemirror/language": "^6.0.0",
+    "@codemirror/theme-one-dark": "^6.0.0",
+    "@codemirror/lang-javascript": "^6.0.0",
+    "@codemirror/lang-python": "^6.0.0",
+    "@codemirror/lang-json": "^6.0.0",
+    "@codemirror/lang-markdown": "^6.0.0",
+    "@codemirror/lang-html": "^6.0.0",
+    "@codemirror/lang-css": "^6.0.0",
+    "@codemirror/lang-xml": "^6.0.0",
+    "@codemirror/lang-yaml": "^6.0.0",
+    "@codemirror/lang-sql": "^6.0.0",
+    "@codemirror/lang-rust": "^6.0.0",
+    "@codemirror/lang-cpp": "^6.0.0",
+    "@codemirror/lang-java": "^6.0.0",
+    "@codemirror/lang-go": "^6.0.0",
+    "@codemirror/lang-sass": "^6.0.0",
+    "@codemirror/lang-less": "^6.0.0"
   },
   "scripts": {
     "build": "bash scripts/build.sh",

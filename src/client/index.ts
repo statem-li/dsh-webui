@@ -17,6 +17,18 @@ import 'markstream-react/index.css'
 import './markdown/styles.css'
 import { Webui } from './Webui'
 import { ProviderBadge, type ProviderBadgeInjected } from './ProviderBadge'
+// TODO(anysearch): AnySearchCard 合并未完成（createSnapshotStore 运行时导入与 CJS external 解析冲突），暂缓注册。
+// import { registerAnySearchCard } from './AnySearchCard'
+import { apply as registerZhThinking } from './zh-thinking'
+import { apply as registerTaskDoneSound } from './task-done-sound'
+import { apply as registerUpdater } from './updater'
+import { apply as registerProxy } from './proxy'
+import { applyBrowserClient } from './browser'
+import { applyMemoryClient } from './memory'
+import { applyImageGallery } from './image-gallery'
+import { applyProviderHub } from './provider-hub'
+import { applyFileExplorerClient } from './file-explorer'
+import { apply as applyUsageEntries } from './usage/entry'
 import {
   BetterAssistantNodeView, DshCodeBlockNode, DshImageNode, DshInlineCodeNode, DshLinkNode,
 } from './markdown/renderer'
@@ -26,7 +38,7 @@ import { injectStyles as injectToolSummaryStyles } from './tool-summary/styles'
 
 const CUSTOM_COMPONENT_SCOPE = 'dsh-better-markdown'
 
-export const inject = ['slots']
+export const inject = ['slots', 'settingsScope', 'connection', 'conversationEvents', 'locale', 'remote']
 
 export function apply(ctx: ClientContext): void {
   // ---- 原生 webui：右上角「对话/轨迹」图块 + 消息入口 --------------------
@@ -78,4 +90,38 @@ export function apply(ctx: ClientContext): void {
     priority: -100,
     locale: 'conversation',
   }, BetterAssistantNodeView))
+
+  // ---- dsh-web-search-anysearch：AnySearch 网页搜索设置卡片 ---------------
+  // TODO(anysearch): 见顶部注释，暂缓注册。
+  // registerAnySearchCard(ctx)
+
+  // ---- dsh-zh-thinking：设置页「中文思考」开关 ----------------------------
+  registerZhThinking(ctx)
+
+  // ---- dsh-task-done-sound：提示音开关 + 回合结束上报 ---------------------
+  registerTaskDoneSound(ctx)
+
+  // ---- dsh-image-gallery：生图画廊（generate_image 结果渲染）----------------
+  applyImageGallery(ctx)
+
+  // ---- dsh-updater：基础设置页签（宽度/自启/版本/更新）--------------------
+  registerUpdater(ctx)
+
+  // ---- dsh-proxy：网络代理设置行 -----------------------------------------
+  registerProxy(ctx)
+
+  // ---- dsh-browser：设置页「允许 AI 使用浏览器」开关 ---------------------
+  applyBrowserClient(ctx)
+
+  // ---- dsh-memory：侧边栏记忆面板 + 注入开关 ----------------------------
+  applyMemoryClient(ctx)
+
+  // ---- dsh-provider-hub：供应商设置页（对话 + 视觉 + 生图）---------------
+  applyProviderHub(ctx)
+
+  // ---- dsh-file-explorer：右上角文件浏览器（抽屉 + 树 + 编辑器）-----------
+  applyFileExplorerClient(ctx)
+
+  // ---- 用量工作台 + 技能面板（自 dsh-usage-skill 融合）：footer 独立入口 ---
+  applyUsageEntries(ctx)
 }

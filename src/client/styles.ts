@@ -42,6 +42,10 @@ const SHEET = `
 .webui-view-tile-active:hover{border-color:var(--dsw-alias-state-business-primary,#4a9eff);color:var(--dsw-alias-state-business-primary,#4a9eff)}
 /* 隐藏原生「对话/轨迹」标签页行（视图切换改由右上角图块接管） */
 [data-slot="conversation.session.header"] [role="tablist"]{display:none}
+/* Session log 按钮移到右侧：webui 的对话/轨迹/消息按钮排在其左侧 */
+[data-slot="conversation.session.header"] [class*="sessionLogButton"]{order:1}
+/* 右上角按钮组（对话/轨迹/消息/Session log）左移：titleRow 右侧 padding 让出空间，flex:1 的标题区自动收缩（200-100=100px 净左移） */
+[data-slot="conversation.session.header"] [class*="titleRow"]{padding-right:100px}
 /* 原生标签页行移除后 header 变矮，补底部留白避免图块贴住分割线 */
 [data-slot="conversation.session.header"] > header{padding-bottom:10px}
 /* 供应商标签（模型选择器旁） */

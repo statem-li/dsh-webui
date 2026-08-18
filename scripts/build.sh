@@ -46,8 +46,26 @@ link_pkg @deepseek-ai/dsh-client-runtime packages/client/runtime
 link_pkg @deepseek-ai/dsh-client-ui-slots packages/client/ui-slots
 link_pkg @deepseek-ai/dsh-client-ui-conversation packages/client/ui-conversation
 link_pkg @deepseek-ai/dsh-client-ui-primitives packages/client/ui-primitives
+link_pkg @deepseek-ai/dsh-client-ui-layout packages/client/ui-layout
 link_pkg @deepseek-ai/dsh-client-locale packages/client/locale
 link_pkg @deepseek-ai/dsh-llm packages/llm/llm
+# 其余源码 import 的 @deepseek-ai 包（webui 全量编译/打包所需）
+link_pkg @deepseek-ai/dsh-agent packages/core/agent
+link_pkg @deepseek-ai/dsh-api-remotes packages/api/remotes
+link_pkg @deepseek-ai/dsh-client-connection packages/client/connection
+link_pkg @deepseek-ai/dsh-client-schema-form packages/client/schema-form
+link_pkg @deepseek-ai/dsh-client-ui-attachment packages/client/ui-attachment
+link_pkg @deepseek-ai/dsh-client-ui-model-selection packages/client/ui-model-selection
+link_pkg @deepseek-ai/dsh-client-ui-settings packages/client/ui-settings
+link_pkg @deepseek-ai/dsh-client-ui-sidebar packages/client/ui-sidebar
+link_pkg @deepseek-ai/dsh-client-ui-tool packages/client/ui-tool
+link_pkg @deepseek-ai/dsh-credentials packages/credentials/credentials
+link_pkg @deepseek-ai/dsh-launch-environment packages/util/launch-environment
+link_pkg @deepseek-ai/dsh-settings packages/settings/settings
+link_pkg @deepseek-ai/dsh-tools packages/core/tools
+link_pkg @deepseek-ai/dsh-web packages/web/web
+link_pkg @deepseek-ai/schemastery vendor/schemastery
+link_pkg dsh-usage-skill D:/AI/Dsh/dsh-usage-skill
 
 # 浏览器端类型/运行时（react 全家桶在 pnpm store 里，root node_modules 没有）
 link_store_pkg() {
