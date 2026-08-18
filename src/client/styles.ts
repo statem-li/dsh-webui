@@ -27,6 +27,7 @@ export const css = {
   tipMeta: 'webui-tip-meta',
   tipBody: 'webui-tip-body',
   flash: 'webui-flash',
+  providerBadge: 'webui-provider-badge',
 } as const
 
 const STYLE_ID = 'dsh-webui-styles'
@@ -43,6 +44,8 @@ const SHEET = `
 [data-slot="conversation.session.header"] [role="tablist"]{display:none}
 /* 原生标签页行移除后 header 变矮，补底部留白避免图块贴住分割线 */
 [data-slot="conversation.session.header"] > header{padding-bottom:10px}
+/* 供应商标签（模型选择器旁） */
+.webui-provider-badge{display:inline-flex;align-items:center;height:22px;padding:0 10px;border:1px solid var(--dsw-alias-border-l2,#333);border-radius:11px;background:var(--dsw-alias-bg-layer-2,transparent);color:var(--dsw-alias-label-secondary,#bbb);font-size:12px;line-height:1;white-space:nowrap}
 /* 消息数量按钮（内联，仅数量徽标） */
 .webui-trigger{display:inline-flex;align-items:center;justify-content:center;height:28px;padding:0 2px;border:none;background:transparent;cursor:pointer}
 .webui-trigger-badge{flex:0 0 auto;min-width:20px;height:20px;padding:0 6px;border-radius:10px;background:var(--dsw-alias-state-business-primary,#4a9eff);color:#fff;font-size:11px;line-height:20px;text-align:center;font-weight:600;transition:transform 120ms, box-shadow 120ms}
