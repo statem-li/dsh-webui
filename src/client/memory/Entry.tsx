@@ -3,7 +3,7 @@
  * 图标用「大脑/记忆」线性 SVG（无 emoji），wide 时显示文字；右上角 badge 显示当日未读变更数。
  */
 
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 import { Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { InjectFace, PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import type { MemoryApi } from './api.js'
@@ -22,35 +22,7 @@ export function MemoryEntry({ wide, t, ...panel }: MemoryEntryProps): JSX.Elemen
   ensureStyles()
   const [open, setOpen] = useState(false)
   const [initialTab, setInitialTab] = useState<MemoryTab>('all')
-  const buttonRef = useRef<HTMLButtonElement>(null)
   const unread = useUnreadChanges(panel)
-
-  // footer 插槽 wrapper 是 display:contents，把它变成横向 flex（与技能入口同款处理）。
-  useEffect(() => {
-    const button = buttonRef.current
-    const wrapper = button?.parentElement
-    if (wrapper === undefined || wrapper === null) return
-    const previousDisplay = wrapper.style.display
-    const previousDirection = wrapper.style.flexDirection
-    const previousWidth = wrapper.style.width
-    wrapper.style.display = 'flex'
-    wrapper.style.flexDirection = 'row'
-    wrapper.style.alignItems = 'center'
-    wrapper.style.gap = '4px'
-    // wrapper 与 usg_layer（用量技能）各占 footer 一半；不设 width:100%，
-    // 否则会占满整行把 usg 挤出。
-    wrapper.style.flex = '1 1 50%'
-    wrapper.style.minWidth = '0'
-    return () => {
-      wrapper.style.display = previousDisplay
-      wrapper.style.flexDirection = previousDirection
-      wrapper.style.width = previousWidth
-      wrapper.style.flex = ''
-      wrapper.style.minWidth = ''
-      wrapper.style.alignItems = ''
-      wrapper.style.gap = ''
-    }
-  }, [])
 
   const openPanel = (tab: MemoryTab): void => {
     setInitialTab(tab)
@@ -62,7 +34,6 @@ export function MemoryEntry({ wide, t, ...panel }: MemoryEntryProps): JSX.Elemen
     <>
       <Tooltip label={t('entry')} side="right" delayMs={500} disabled={wide}>
         <button
-          ref={buttonRef}
           type="button"
           className={css.entry}
           aria-label={t('entry')}

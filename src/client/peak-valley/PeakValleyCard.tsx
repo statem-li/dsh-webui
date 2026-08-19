@@ -11,8 +11,9 @@ export interface PeakValleyCardProps {
   wide: boolean
 }
 
-const PEAK_COLOR = 'var(--dsw-alias-state-warn-primary, #e8a33d)'
-const OFF_COLOR = 'var(--dsw-alias-state-success-primary, #4caf7d)'
+/** 峰时=红（高峰/贵），谷时=绿（低谷/便宜）——对应峰谷电价惯例。 */
+const PEAK_COLOR = '#ef4444'
+const OFF_COLOR = '#22c55e'
 
 const shell: CSSProperties = {
   flex: '0 0 100%',
