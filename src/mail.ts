@@ -99,7 +99,7 @@ function bodyLimit(body: Record<string, unknown>): number {
 
 // ── 路由 ────────────────────────────────────────────────────────────────────
 
-async function handle(ctx: Context, req: IncomingMessage, res: ServerResponse): Promise<void> {
+async function handle(ctx: Context, req: IncomingMessage, res: ServerResponse, current: () => MailConfig): Promise<void> {
   if (!loopbackAllowed(req)) {
     json(res, 403, { ok: false, error: 'loopback-only' })
     return
@@ -113,10 +113,17 @@ async function handle(ctx: Context, req: IncomingMessage, res: ServerResponse): 
       return
     }
     const body = await readJsonBody(req)
-    const email = bodyString(body, 'email')
-    const authCode = bodyString(body, 'authCode')
+    // 输入框为空时回退到已保存配置（settings 的邮箱 + 凭据域的安全码），
+    // 让「测试连接/查看邮箱」在已绑定后无需重新填写。
+    let email = bodyString(body, 'email')
+    let authCode = bodyString(body, 'authCode')
+    if (email === '' && authCode === '') {
+      const saved = await resolveMailCredentials(ctx, current())
+      email = saved.email
+      authCode = saved.authCode
+    }
     if (email === '' || authCode === '') {
-      json(res, 400, { ok: false, error: '邮箱与安全码不能为空' })
+      json(res, 400, { ok: false, error: '未配置邮箱或安全码：请在 设置 → 插件 → 邮箱验证码 中绑定后再试' })
       return
     }
     const opts = { host: DEFAULT_IMAP_HOST, port: DEFAULT_IMAP_PORT, user: email, pass: authCode }
@@ -195,6 +202,6 @@ export function applyMail(ctx: Context, config: MailConfig = {}): void {
   ctx.effect(() => webServer.register({
     kind: 'prefix',
     path: '/api/webui-mail',
-    handler: (req, res) => { void handle(ctx, req, res) },
+    handler: (req, res) => { void handle(ctx, req, res, current) },
   }), 'webui: mail routes')
 }

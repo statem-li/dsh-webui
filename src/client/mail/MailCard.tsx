@@ -6,7 +6,7 @@
  * 邮箱写 settings；安全码走凭据域（MAIL_IMAP_AUTH_CODE）；「测试连接」与
  * 「查看邮箱」走 host 的 /api/webui-mail 路由。日期在展示层格式化为相对/绝对时间。
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ClientContext, SettingsScope } from '@deepseek-ai/dsh-client-runtime/client'
 import { IconChevronDownOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ConnectionHandle, IApiClient } from '@deepseek-ai/dsh-client-connection/client'
@@ -126,15 +126,26 @@ function MailCardView(props: MailCardViewProps): React.ReactElement | null {
   const [popup, setPopup] = useState(false)
   const [mails, setMails] = useState<MailMessage[]>([])
 
+  const seededEmail = useRef(false)
+  const [snap, setSnap] = useState(() => scope.getSnapshot())
+
+  useEffect(() => scope.subscribe(() => { setSnap(scope.getSnapshot()) }), [scope])
+
   useEffect(() => {
-    const snap = scope.getSnapshot()
     setAvailable(snap.status === 'ready')
     setWritable(snap.writable)
-    setEmailDraft((snap.value as MailSettings | undefined)?.email ?? '')
+    // 就绪后只回填一次已保存邮箱；之后用户的编辑不被快照覆盖。
+    if (!seededEmail.current && snap.status === 'ready') {
+      seededEmail.current = true
+      setEmailDraft((snap.value as MailSettings | undefined)?.email ?? '')
+    }
+  }, [snap])
+
+  useEffect(() => {
     void api.credentials.describe({ refs: [DEFAULT_AUTH_CODE_REF] }).then((r) => {
       if (r.result.ok) setCodeConfigured(r.result.value.credentials[DEFAULT_AUTH_CODE_REF]?.configured ?? false)
     }).catch(() => { /* ignore */ })
-  }, [scope, api])
+  }, [api])
 
   async function save(): Promise<void> {
     setBusy(true); setNote(''); setError('')
@@ -165,10 +176,8 @@ function MailCardView(props: MailCardViewProps): React.ReactElement | null {
   async function testConn(): Promise<void> {
     setBusy(true); setNote(''); setError(''); setTestResult('')
     try {
-      const email = emailDraft.trim()
-      const code = codeDraft.trim()
-      if (email === '' || code === '') throw new Error('请先填写邮箱与安全码')
-      const r = await postJson<{ ok: boolean; exists: number | null; uidNext: number | null }>('/test', { email, authCode: code })
+      // 输入框为空时 host 端自动回退到已保存的邮箱 + 凭据域安全码。
+      const r = await postJson<{ ok: boolean; exists: number | null; uidNext: number | null }>('/test', { email: emailDraft.trim(), authCode: codeDraft.trim() })
       setTestResult(`连接成功：收件箱共 ${r.exists ?? '?'} 封邮件（UIDNEXT ${r.uidNext ?? '?'}）`)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -180,10 +189,8 @@ function MailCardView(props: MailCardViewProps): React.ReactElement | null {
   async function fetchMails(): Promise<void> {
     setBusy(true); setError('')
     try {
-      const email = emailDraft.trim()
-      const code = codeDraft.trim()
-      if (email === '' || code === '') throw new Error('请先填写邮箱与安全码')
-      const r = await postJson<{ ok: boolean; messages: MailMessage[] }>('/fetch', { email, authCode: code, limit: 10 })
+      // 输入框为空时 host 端自动回退到已保存的邮箱 + 凭据域安全码。
+      const r = await postJson<{ ok: boolean; messages: MailMessage[] }>('/fetch', { email: emailDraft.trim(), authCode: codeDraft.trim(), limit: 10 })
       setMails(r.messages ?? [])
       setPopup(true)
     } catch (e) {
