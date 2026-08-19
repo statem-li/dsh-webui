@@ -25,7 +25,7 @@ export function MemoryEntry({ wide, t, ...panel }: MemoryEntryProps): JSX.Elemen
   const [open, setOpen] = useState(false)
   const [initialTab, setInitialTab] = useState<MemoryTab>('all')
   const unread = useUnreadChanges(panel)
-  const { closing, requestClose } = useModalClose(() => { setOpen(false) })
+  const { closing, requestClose } = useModalClose(open, () => { setOpen(false) })
 
   const openPanel = (tab: MemoryTab): void => {
     setInitialTab(tab)

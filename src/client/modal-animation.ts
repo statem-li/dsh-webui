@@ -7,10 +7,10 @@
  * 弹窗把 closing 映射成 pop-out class（卡片）与 mask 的淡出 class。
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 /** 动画时长（ms），CSS 与 hook 计时保持一致。 */
-export const MODAL_ANIM_MS = 180
+export const MODAL_ANIM_MS = 240
 
 const STYLE_ID = 'dsh-modal-animation-styles'
 
@@ -60,18 +60,32 @@ export function modalMaskAnimClass(closing: boolean): string {
   return closing ? 'dsh-modal-mask-out' : 'dsh-modal-mask-in'
 }
 
-/** 弹窗关闭动画状态机：先置 closing 播放收回动画，结束后再真正 onClose。 */
-export function useModalClose(onClose: () => void, durationMs = MODAL_ANIM_MS): { closing: boolean; requestClose: () => void } {
+/**
+ * 弹窗关闭动画状态机：先置 closing 播放收回动画，结束后再真正 onClose。
+ * `open` 由入口传入：弹窗再次打开时重置 closing（否则上一次收回动画会把
+ * closing 卡在 true，重开后弹窗透明且遮罩挡住整页）。
+ */
+export function useModalClose(open: boolean, onClose: () => void, durationMs = MODAL_ANIM_MS): { closing: boolean; requestClose: () => void } {
   const [closing, setClosing] = useState(false)
   const timerRef = useRef<number | null>(null)
+  const closingRef = useRef(false)
+
+  // 打开（含重新打开）时重置关闭态：在绘制前同步复位，避免一帧透明闪现。
+  useLayoutEffect(() => {
+    if (open) {
+      closingRef.current = false
+      setClosing(false)
+    }
+  }, [open])
 
   const requestClose = useCallback(() => {
-    if (closing) return
+    if (closingRef.current) return
+    closingRef.current = true
     setClosing(true)
     timerRef.current = window.setTimeout(() => {
       onClose()
     }, durationMs)
-  }, [closing, onClose, durationMs])
+  }, [onClose, durationMs])
 
   useEffect(() => () => {
     if (timerRef.current !== null) window.clearTimeout(timerRef.current)

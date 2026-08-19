@@ -31,7 +31,7 @@ const footerBtn: React.CSSProperties = {
 function UsageWorkbenchEntry(): JSX.Element {
   ensureModalAnimStyles()
   const [open, setOpen] = useState(false)
-  const { closing, requestClose } = useModalClose(() => { setOpen(false) })
+  const { closing, requestClose } = useModalClose(open, () => { setOpen(false) })
   useEffect(() => {
     if (!open || closing) return
     const onKey = (e: KeyboardEvent): void => { if (e.key === 'Escape') requestClose() }
@@ -47,7 +47,7 @@ function UsageWorkbenchEntry(): JSX.Element {
 function SkillsEntry(): JSX.Element {
   ensureModalAnimStyles()
   const [open, setOpen] = useState(false)
-  const { closing, requestClose } = useModalClose(() => { setOpen(false) })
+  const { closing, requestClose } = useModalClose(open, () => { setOpen(false) })
   useEffect(() => {
     if (!open || closing) return
     const onKey = (e: KeyboardEvent): void => { if (e.key === 'Escape') requestClose() }
