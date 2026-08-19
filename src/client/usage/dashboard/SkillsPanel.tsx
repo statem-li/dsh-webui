@@ -11,6 +11,7 @@ import {
   Button, IconChevronDownOutline14, IconEditOutline16, IconFolderOpenOutline16,
   IconPlusOutline16, IconRefreshOutline14, IconTrashOutline16, Modal, Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { modalAnimClass } from '../../modal-animation'
 
 /** ---------------------------------------------------------------- 数据模型 */
 
@@ -473,7 +474,7 @@ type ViewerState = { skill: SkillInfo; file: string; loading: boolean; error?: s
 
 const SKILL_NAME_PATTERN = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/
 
-export function SkillsPanel({ onClose }: { onClose: () => void }): JSX.Element {
+export function SkillsPanel({ onClose, closing = false }: { onClose: () => void; closing?: boolean }): JSX.Element {
   ensureStyles()
   const [state, setState] = useState<PanelState>({ status: 'loading' })
   const [reload, setReload] = useState(0)
@@ -727,7 +728,7 @@ export function SkillsPanel({ onClose }: { onClose: () => void }): JSX.Element {
       }}
       closeLabel={t('close')}
       title={t('panelTitle')}
-      className={css.modal}
+      className={`${css.modal} ${modalAnimClass(closing)}`}
       contentClassName={css.modalBody}
     >
       <div className={css.panel} aria-busy={state.status === 'loading'}>

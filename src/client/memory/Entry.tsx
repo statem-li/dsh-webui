@@ -10,6 +10,7 @@ import type { MemoryApi } from './api.js'
 import { MemoryPanel, BrainIcon, type MemoryTab } from './Panel.tsx'
 import { useUnreadChanges } from './Notify.tsx'
 import { css, ensureStyles } from './styles.js'
+import { ensureModalAnimStyles, useModalClose } from '../modal-animation.js'
 
 /** 完整入口 props：footer 所有者共享部分 + 注入 API 面 + locale。 */
 export type MemoryEntryProps =
@@ -20,9 +21,11 @@ export type MemoryEntryProps =
 /** 渲染记忆入口与面板。 */
 export function MemoryEntry({ wide, t, ...panel }: MemoryEntryProps): JSX.Element {
   ensureStyles()
+  ensureModalAnimStyles()
   const [open, setOpen] = useState(false)
   const [initialTab, setInitialTab] = useState<MemoryTab>('all')
   const unread = useUnreadChanges(panel)
+  const { closing, requestClose } = useModalClose(() => { setOpen(false) })
 
   const openPanel = (tab: MemoryTab): void => {
     setInitialTab(tab)
@@ -51,7 +54,8 @@ export function MemoryEntry({ wide, t, ...panel }: MemoryEntryProps): JSX.Elemen
       </Tooltip>
       <MemoryPanel
         open={open}
-        onClose={() => { setOpen(false) }}
+        closing={closing}
+        onClose={requestClose}
         initialTab={initialTab}
         t={t}
         list={panel.list}

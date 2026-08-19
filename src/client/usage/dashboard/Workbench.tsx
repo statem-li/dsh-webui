@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { OverviewTab } from './OverviewTab'
 import { UsageTab } from './UsageTab'
 import { AccountsTab } from './AccountsTab'
+import { modalAnimClass, modalMaskAnimClass } from '../../modal-animation'
 
 export type TabKey = 'overview' | 'usage' | 'accounts'
 
@@ -29,10 +30,12 @@ const css = {
 
 export interface WorkbenchProps {
   onClose?: () => void
+  /** 正在播放收回动画（此时弹窗仍挂载，播放 pop-out）。 */
+  closing?: boolean
   renderTab?: (tab: TabKey) => ReactNode
 }
 
-export function Workbench({ onClose, renderTab }: WorkbenchProps): JSX.Element {
+export function Workbench({ onClose, closing = false, renderTab }: WorkbenchProps): JSX.Element {
   const [tab, setTab] = useState<TabKey>('overview')
 
   // prefers-reduced-motion：检测并注入 CSS 变量（已知限制：图表内联 transition 未逐处改造，见任务报告）
@@ -61,8 +64,8 @@ export function Workbench({ onClose, renderTab }: WorkbenchProps): JSX.Element {
     accounts: <AccountsTab />,
   }
   return (
-    <div style={css.shell}>
-      <div style={css.modal} onClick={e => e.stopPropagation()}>
+    <div style={css.shell} className={modalMaskAnimClass(closing)}>
+      <div style={css.modal} className={modalAnimClass(closing)} onClick={e => e.stopPropagation()}>
         <div style={css.topbar}>
           <span style={css.title}>用量工作台</span>
           <button type="button" style={css.close} aria-label="关闭" onClick={onClose}>✕</button>

@@ -19,6 +19,7 @@ import type { InjectFace, PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ChangeView, MemoryApi, MemoryEntryView, MemoryListResponse, ProjectView } from './api.js'
 import { css, ensureStyles } from './styles.js'
 import { changeActionLabel } from './Notify.tsx'
+import { modalAnimClass } from '../modal-animation.js'
 
 /** 面板 Tab。 */
 export type MemoryTab = 'all' | 'changes'
@@ -54,6 +55,8 @@ interface MoveState {
 /** 面板 props。 */
 export type MemoryPanelProps = {
   open: boolean
+  /** 正在播放收回动画（此时 Modal 仍挂载，播放 pop-out）。 */
+  closing?: boolean
   onClose: () => void
   initialTab?: MemoryTab
 } & InjectFace<MemoryApi> & PropsLocale<'dshMemory'>
@@ -155,7 +158,7 @@ export function PinIcon({ size = 16, filled = false }: { size?: number; filled?:
 }
 
 /** 主面板。 */
-export function MemoryPanel({ open, onClose, initialTab, t, ...api }: MemoryPanelProps): JSX.Element {
+export function MemoryPanel({ open, closing = false, onClose, initialTab, t, ...api }: MemoryPanelProps): JSX.Element {
   ensureStyles()
   // slots 的 inject 函数每次渲染返回新 api 对象；用 ref 固定引用，
   // 否则 load 的 useCallback 依赖 api 每次变化 → useEffect 无限重触发请求风暴。
@@ -558,7 +561,7 @@ export function MemoryPanel({ open, onClose, initialTab, t, ...api }: MemoryPane
       onClose={onClose}
       closeLabel={t('close')}
       title={t('panelTitle')}
-      className={css.modal ?? ''}
+      className={`${css.modal ?? ''} ${modalAnimClass(closing)}`}
       contentClassName={css.modalBody ?? ''}
     >
       <div className={css.panel} aria-busy={state.status === 'loading'}>
