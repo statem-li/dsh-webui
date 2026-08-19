@@ -64,7 +64,7 @@ export function Workbench({ onClose, closing = false, renderTab }: WorkbenchProp
     accounts: <AccountsTab />,
   }
   return (
-    <div style={css.shell} className={modalMaskAnimClass(closing)}>
+    <div style={css.shell} className={modalMaskAnimClass(closing)} onClick={onClose}>
       <div style={css.modal} className={modalAnimClass(closing)} onClick={e => e.stopPropagation()}>
         <div style={css.topbar}>
           <span style={css.title}>用量工作台</span>
