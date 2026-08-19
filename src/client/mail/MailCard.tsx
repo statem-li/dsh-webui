@@ -207,7 +207,8 @@ function MailCardView(props: MailCardViewProps): React.ReactElement | null {
     try {
       // 输入框为空时 host 端自动回退到已保存的邮箱 + 凭据域安全码。
       const r = await postJson<{ ok: boolean; messages: MailMessage[] }>('/fetch', { email: emailDraft.trim(), authCode: codeDraft.trim(), limit: 10 })
-      const msgs = r.messages ?? []
+      // 倒序：最新邮件在最上；默认选中最新一封。
+      const msgs = [...(r.messages ?? [])].reverse()
       setMails(msgs)
       setSelectedUid(msgs[0]?.uid ?? null)
       setPopup(true)
