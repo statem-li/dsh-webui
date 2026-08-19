@@ -49,6 +49,16 @@ export const chatCopy = {
   modelNameInvalid: '显示名称不能为空。',
   modelContextInvalid: '上下文窗口必须是正数，例如 131072、256K 或 1M。',
   modelMaxTokensInvalid: '最大输出 token 数必须是正数，例如 8192、64K 或 1M。',
+  reasoningEfforts: '推理等级',
+  effortStateInherit: '继承',
+  effortStateDisabled: '禁用',
+  effortStateCustom: '自定义',
+  effortLevel: '等级',
+  effortWire: '线上值',
+  effortOffWire: '留空表示不发送该参数',
+  effortHint: '模型选择器中可选的等级；线上值即发送给提供方的参数。',
+  modelEffortsInvalid: '推理等级必须是 off、minimal、low、medium、high、xhigh、max 之一，且每个等级需映射到非空的线上值。',
+  modelEffortsOnlyOff: '至少声明一个 off 之外的推理等级。',
   fetchModels: '获取可用模型',
   fetching: '正在询问提供方…',
   fetchNeedsBaseUrl: '请先填写 API 地址，再获取。',
@@ -153,13 +163,47 @@ export function formatCapacity(value: number): string {
   return String(value)
 }
 
+/**
+ * 一个模型 profile 可声明的全部推理等级，按升级顺序。与官方 llm-pi-ai 的
+ * `THINKING_LEVELS` 镜像；适配器 schema 拒绝任何其他键，因此编辑器只提供
+ * 这些。
+ */
+export const REASONING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const
+
 /** 一条用户自有模型数组的本地化校验失败。 */
 export interface ModelsValidationFailure {
   /** 从 0 计的模型位置。 */
   index: number
   /** 消息键。 */
   key: 'modelIdRequired' | 'modelIdDuplicate' | 'modelNameInvalid' | 'modelContextInvalid'
-  | 'modelMaxTokensInvalid'
+  | 'modelMaxTokensInvalid' | 'modelEffortsInvalid' | 'modelEffortsOnlyOff'
+}
+
+/**
+ * 校验一个模型声明的 `reasoningEfforts`，规则与 pi-ai 适配器解析时强制的一
+ * 致：集合之外的等级、非 `null` 且非非空字符串的值、除 `off` 外留空的
+ * `null`、以及没有 off 之外思考等级的映射，全部拒绝。
+ * @param value - 模型的 `reasoningEfforts`（若有声明）。
+ * @returns 失败键；适配器可接受时 undefined。
+ */
+export function validateModelReasoningEfforts(value: unknown): 'modelEffortsInvalid' | 'modelEffortsOnlyOff' | undefined {
+  if (value === undefined || value === false) return undefined
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return 'modelEffortsInvalid'
+  const entries = Object.entries(value as Record<string, unknown>)
+  if (entries.length === 0) return 'modelEffortsOnlyOff'
+  let thinking = false
+  for (const [level, wire] of entries) {
+    if (!(REASONING_LEVELS as readonly string[]).includes(level)) return 'modelEffortsInvalid'
+    if (wire === null) {
+      // 只有 off 允许留空（wire 参数缺席）；声明的思考等级必须点名发送的值。
+      if (level !== 'off') return 'modelEffortsInvalid'
+    } else if (typeof wire !== 'string' || wire.length === 0) {
+      return 'modelEffortsInvalid'
+    } else if (level !== 'off') {
+      thinking = true
+    }
+  }
+  return thinking ? undefined : 'modelEffortsOnlyOff'
 }
 
 /** 把 schema 校验过的 catalog 值转成 records，不丢隐藏字段。 */
@@ -203,6 +247,8 @@ export function validateModels(value: unknown): ModelsValidationFailure | undefi
       && (typeof maxTokens !== 'number' || !Number.isInteger(maxTokens) || maxTokens <= 0)) {
       return { index, key: 'modelMaxTokensInvalid' }
     }
+    const effortsFailure = validateModelReasoningEfforts(model['reasoningEfforts'])
+    if (effortsFailure !== undefined) return { index, key: effortsFailure }
   }
   return undefined
 }
@@ -304,7 +350,7 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
   /** 一个容量字段的 buffer 键；行移动时行号半段随之移动。 */
   const bufferKey = (index: number, field: CapacityField): string => `${String(index)}:${field}`
 
-  const patch = (index: number, next: Record<string, string | number | undefined>): void => {
+  const patch = (index: number, next: Record<string, unknown>): void => {
     onChange(models.map((model, at) => {
       if (at !== index) return model
       // 重建而非展开覆盖：被清空的可选字段必须离开 profile，而不是存成
@@ -317,6 +363,62 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
         Object.entries({ ...model, ...next }).filter(([key]) => !cleared.has(key)),
       )
     }))
+  }
+
+  /** 一行的 `reasoningEfforts` 字段被推理等级编辑器对待的方式。 */
+  type EffortState = 'inherit' | 'disabled' | 'custom'
+
+  /** 一行的已声明等级映射；无声明时为空映射。 */
+  const effortMapOf = (model: ModelDraft): Record<string, string | null> => {
+    const efforts = model['reasoningEfforts']
+    return typeof efforts === 'object' && efforts !== null && !Array.isArray(efforts)
+      ? efforts as Record<string, string | null>
+      : {}
+  }
+
+  /** 一行所处的推理等级模式：已声明映射为 custom，`false` 为禁用。 */
+  const effortStateOf = (model: ModelDraft): EffortState => {
+    const efforts = model['reasoningEfforts']
+    if (efforts === false) return 'disabled'
+    if (typeof efforts === 'object' && efforts !== null && !Array.isArray(efforts)) return 'custom'
+    return 'inherit'
+  }
+
+  /** 一个等级的线上值字段显示什么：存储值，省略的 off 显示为空。 */
+  const effortWire = (map: Record<string, string | null>, level: string): string => {
+    const value = map[level]
+    return value === null || value === undefined ? '' : String(value)
+  }
+
+  /** 勾选/取消一个已声明等级，勾选时线上值从等级名播种。 */
+  const toggleEffort = (index: number, level: string, on: boolean): void => {
+    const current = effortMapOf(models[index]!)
+    const next: Record<string, string | null> = { ...current }
+    if (on) next[level] = level === 'off' ? null : level
+    else delete next[level]
+    patch(index, { reasoningEfforts: next })
+  }
+
+  /** 编辑一个等级的线上值；清空 off 表示「不发送该参数」。 */
+  const setEffortWire = (index: number, level: string, text: string): void => {
+    const current = effortMapOf(models[index]!)
+    const next: Record<string, string | null> = { ...current }
+    next[level] = text.length === 0 ? (level === 'off' ? null : '') : text
+    patch(index, { reasoningEfforts: next })
+  }
+
+  /** 切换一行在继承、禁用、声明之间。 */
+  const setEffortState = (index: number, state: EffortState): void => {
+    if (state === 'inherit') {
+      patch(index, { reasoningEfforts: undefined })
+      return
+    }
+    if (state === 'disabled') {
+      patch(index, { reasoningEfforts: false })
+      return
+    }
+    const current = effortMapOf(models[index]!)
+    patch(index, { reasoningEfforts: Object.keys(current).length > 0 ? current : {} })
   }
 
   const editCapacity = (index: number, field: CapacityField, text: string): void => {
@@ -508,34 +610,86 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
           </div>
           {expanded.has(index)
             ? (
-              <div style={{ display: 'flex', gap: 12, paddingLeft: 4 }}>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1 }}>
-                  <span style={fieldLabelStyle}>{chatCopy.contextWindow}</span>
-                  <input
-                    style={inputStyle}
-                    type="text"
-                    inputMode="numeric"
-                    value={capacityText(model, index, 'contextWindow')}
-                    placeholder={CAPACITY_HINT.contextWindow}
-                    aria-label={`${chatCopy.contextWindow} ${index + 1}`}
-                    disabled={disabled}
-                    onChange={(event) => { editCapacity(index, 'contextWindow', event.target.value) }}
-                  />
-                </label>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1 }}>
-                  <span style={fieldLabelStyle}>{chatCopy.maxTokens}</span>
-                  <input
-                    style={inputStyle}
-                    type="text"
-                    inputMode="numeric"
-                    value={capacityText(model, index, 'maxTokens')}
-                    placeholder={CAPACITY_HINT.maxTokens}
-                    aria-label={`${chatCopy.maxTokens} ${index + 1}`}
-                    disabled={disabled}
-                    onChange={(event) => { editCapacity(index, 'maxTokens', event.target.value) }}
-                  />
-                </label>
-              </div>
+              <>
+                <div style={{ display: 'flex', gap: 12, paddingLeft: 4 }}>
+                  <label style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1 }}>
+                    <span style={fieldLabelStyle}>{chatCopy.contextWindow}</span>
+                    <input
+                      style={inputStyle}
+                      type="text"
+                      inputMode="numeric"
+                      value={capacityText(model, index, 'contextWindow')}
+                      placeholder={CAPACITY_HINT.contextWindow}
+                      aria-label={`${chatCopy.contextWindow} ${index + 1}`}
+                      disabled={disabled}
+                      onChange={(event) => { editCapacity(index, 'contextWindow', event.target.value) }}
+                    />
+                  </label>
+                  <label style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1 }}>
+                    <span style={fieldLabelStyle}>{chatCopy.maxTokens}</span>
+                    <input
+                      style={inputStyle}
+                      type="text"
+                      inputMode="numeric"
+                      value={capacityText(model, index, 'maxTokens')}
+                      placeholder={CAPACITY_HINT.maxTokens}
+                      aria-label={`${chatCopy.maxTokens} ${index + 1}`}
+                      disabled={disabled}
+                      onChange={(event) => { editCapacity(index, 'maxTokens', event.target.value) }}
+                    />
+                  </label>
+                </div>
+                <div style={effortBlockStyle}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                    <span style={fieldLabelStyle}>{chatCopy.reasoningEfforts}</span>
+                    <select
+                      style={{ ...inputStyle, maxWidth: 140, height: 28, padding: '3px 8px' }}
+                      value={effortStateOf(model)}
+                      aria-label={`${chatCopy.reasoningEfforts} ${index + 1}`}
+                      disabled={disabled}
+                      onChange={(event) => { setEffortState(index, event.target.value as EffortState) }}
+                    >
+                      <option value="inherit">{chatCopy.effortStateInherit}</option>
+                      <option value="disabled">{chatCopy.effortStateDisabled}</option>
+                      <option value="custom">{chatCopy.effortStateCustom}</option>
+                    </select>
+                  </div>
+                  {effortStateOf(model) === 'custom'
+                    ? (
+                      <>
+                        <p style={hintStyle}>{chatCopy.effortHint}</p>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                          {REASONING_LEVELS.map(level => {
+                            const map = effortMapOf(model)
+                            const checked = level in map
+                            return (
+                              <label key={level} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  disabled={disabled}
+                                  aria-label={`${chatCopy.effortLevel} ${level} ${index + 1}`}
+                                  onChange={(event) => { toggleEffort(index, level, event.target.checked) }}
+                                />
+                                <span style={effortLevelNameStyle}>{level}</span>
+                                <input
+                                  style={inputStyle}
+                                  type="text"
+                                  value={effortWire(map, level)}
+                                  placeholder={level === 'off' ? chatCopy.effortOffWire : level}
+                                  aria-label={`${chatCopy.effortWire} ${level} ${index + 1}`}
+                                  disabled={disabled || !checked}
+                                  onChange={(event) => { setEffortWire(index, level, event.target.value) }}
+                                />
+                              </label>
+                            )
+                          })}
+                        </div>
+                      </>
+                    )
+                    : null}
+                </div>
+              </>
             )
             : null}
         </div>
@@ -643,6 +797,24 @@ const addModelButtonStyle: CSSProperties = {
 const fieldLabelStyle: CSSProperties = {
   fontSize: 12,
   color: 'var(--dsw-alias-label-secondary, #4e5969)',
+}
+
+/* 推理等级区块：容量之下、全宽、带顶部分隔线。 */
+const effortBlockStyle: CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 6,
+  paddingTop: 10,
+  marginTop: 2,
+  borderTop: '1px solid var(--dsw-alias-border-l2, #dcdfe6)',
+}
+
+/* 等级名：wire 标识，等宽字体，与候选 id 一致。 */
+const effortLevelNameStyle: CSSProperties = {
+  fontFamily: 'var(--ds-font-family-code, ui-monospace, SFMono-Regular, monospace)',
+  fontSize: 13,
+  minWidth: 64,
+  color: 'var(--dsw-alias-label-primary, #1f2329)',
 }
 
 const hintStyle: CSSProperties = {
