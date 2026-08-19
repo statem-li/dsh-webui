@@ -46,12 +46,25 @@ export function UsageTab({ refreshTick }: UsageTabProps): JSX.Element {
   const monthCells = Array.from({ length: daysInMonth }, (_, i) => {
     const dateStr = `${monthPrefix}-${String(i + 1).padStart(2, '0')}`
     const hit = monthDays.find(d => d.date === dateStr)
-    return { key: dateStr, label: dateStr, value: hit?.tokens ?? 0 }
+    return {
+      key: dateStr, label: dateStr, value: hit?.tokens ?? 0,
+      input: hit?.inputTokens ?? 0,
+      output: hit?.outputTokens ?? 0,
+      cache: hit ? (hit.cacheReadTokens ?? 0) + (hit.cacheWriteTokens ?? 0) : 0,
+      hitRate: hit?.cacheHitRate,
+    }
   })
   const yearCells = Array.from({ length: 12 }, (_, i) => {
     const key = `${year}-${String(i + 1).padStart(2, '0')}`
-    const sum = sumTokens(usage.filter(d => d.date.startsWith(key))).total
-    return { key, label: `${i + 1} 月`, value: sum }
+    const days = usage.filter(d => d.date.startsWith(key))
+    const sum = sumTokens(days)
+    return {
+      key, label: `${i + 1} 月`, value: sum.total,
+      input: sum.input,
+      output: sum.output,
+      cache: sum.cache,
+      hitRate: days.length > 0 ? Math.round(days.reduce((acc, d) => acc + (d.cacheHitRate ?? 0), 0) / days.length) : undefined,
+    }
   })
   const models = new Map<string, number>()
   for (const d of usage) for (const m of d.models ?? []) models.set(m.model, (models.get(m.model) ?? 0) + m.tokens)
@@ -82,7 +95,7 @@ export function UsageTab({ refreshTick }: UsageTabProps): JSX.Element {
         </div>
         <div style={{ flex: '1 1 45%', border: '1px solid var(--dsw-alias-border-l1)', borderRadius: 12, background: 'var(--dsw-alias-bg-layer-2)', padding: 16, minWidth: 0, overflow: 'hidden' }}>
           <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12, color: 'var(--dsw-alias-label-primary)' }}>{year} 年度热力</div>
-          <div style={{ overflowX: 'auto' }}><Heatmap cells={yearCells} /></div>
+          <div style={{ overflowX: 'auto' }}><Heatmap cells={yearCells} rows={1} /></div>
         </div>
       </div>
       <div style={{ border: '1px solid var(--dsw-alias-border-l1)', borderRadius: 12, background: 'var(--dsw-alias-bg-layer-2)', padding: 16 }}>
