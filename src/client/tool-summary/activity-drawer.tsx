@@ -13,6 +13,7 @@ import { createRoot } from 'react-dom/client'
 import type { ChatNode } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { ToolCallBlock } from '@deepseek-ai/dsh-client-runtime/client'
 import { computeStats, formatDuration, isRunning, shortenPath, type ToolStats } from './tool-stats.ts'
+import { kindByToolName, type ActivityKind } from './activity-kind.ts'
 import { useNow } from './use-now.ts'
 import { groupReasoning } from './reasoning-classify.ts'
 import { ToolCallTreeList } from './ToolGroupNodeView.tsx'
@@ -95,10 +96,11 @@ export function activityStore(): ActivityStore {
 }
 
 /** Summary card for the drawer's tool section. */
-function DrawerToolSummary({ stats, cwd, openFile }: {
+function DrawerToolSummary({ stats, cwd, openFile, kinds }: {
   readonly stats: ToolStats
   readonly cwd?: string | undefined
   readonly openFile: (path: string) => void
+  readonly kinds: ReadonlyMap<string, ActivityKind>
 }) {
   return (
     <div className="dts__summary">
@@ -111,7 +113,7 @@ function DrawerToolSummary({ stats, cwd, openFile }: {
       {stats.byTool.length > 0 && (
         <div className="dts__chips">
           {stats.byTool.map(({ name, count }) => (
-            <span key={name} className="dts__chip" data-tool={name}>{name} ×{count}</span>
+            <span key={name} className="dts__chip" data-tool={name} data-kind={kinds.get(name)?.key}>{name} ×{count}</span>
           ))}
         </div>
       )}
@@ -187,6 +189,7 @@ function DrawerPanel({ turn, data, store, openFile, inspectCall }: {
   const toolNodes = data?.tools ?? []
   const blocks = useMemo(() => toolNodes.map(node => node.data.root), [toolNodes])
   const stats = useMemo(() => computeStats(blocks), [blocks])
+  const kinds = useMemo(() => kindByToolName(blocks), [blocks])
   const close = (): void => { store.close() }
   const mode = store.activeMode
 
@@ -268,7 +271,7 @@ function DrawerPanel({ turn, data, store, openFile, inspectCall }: {
                 )}
                 <span className="dts__modal-panel-count">{toolNodes.length}</span>
               </header>
-              <DrawerToolSummary stats={stats} cwd={data?.toolsCwd} openFile={openFile} />
+              <DrawerToolSummary stats={stats} cwd={data?.toolsCwd} openFile={openFile} kinds={kinds} />
               <div className="dts__modal-tools">
                 {toolNodes.map(node => (
                   <ToolCallTreeList

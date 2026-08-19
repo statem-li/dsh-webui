@@ -227,6 +227,89 @@ const CSS = `
   font-size: 11px;
 }
 
+/* ---- activity-kind badges（git 推送 / 安装 / 构建 / …） ---- */
+.dts__badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: none;
+  max-width: 96px;
+  border-radius: 999px;
+  padding: 0 7px;
+  background: color-mix(in srgb, var(--dts-kind-color, #64748b) 16%, transparent);
+  color: var(--dts-kind-color, #64748b);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 17px;
+  white-space: nowrap;
+}
+
+.dts__badge-icon {
+  font-size: 10px;
+  line-height: 1;
+}
+
+.dts__badge-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* icon-only mini badge used inside the one-line entry chip */
+.dts__badge--mini {
+  gap: 0;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  justify-content: center;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--dts-kind-color, #64748b) 18%, transparent);
+  color: var(--dts-kind-color, #64748b);
+  font-size: 10px;
+  line-height: 16px;
+}
+
+.dts__entry-kinds {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: none;
+}
+
+/* summary chips inherit their tool's kind color */
+.dts__chip[data-kind] {
+  background: color-mix(in srgb, var(--dts-kind-color, #64748b) 14%, transparent);
+  color: var(--dts-kind-color, #64748b);
+}
+
+/* per-kind color palette（badge + chip 共用同一个 CSS 变量） */
+:where(.dts__badge, .dts__chip)[data-kind="git-push"] { --dts-kind-color: #a855f7; }
+:where(.dts__badge, .dts__chip)[data-kind="git-commit"] { --dts-kind-color: #22c55e; }
+:where(.dts__badge, .dts__chip)[data-kind="git-pull"] { --dts-kind-color: #3b82f6; }
+:where(.dts__badge, .dts__chip)[data-kind="git-clone"] { --dts-kind-color: #0ea5e9; }
+:where(.dts__badge, .dts__chip)[data-kind="git"] { --dts-kind-color: #16a34a; }
+:where(.dts__badge, .dts__chip)[data-kind="gh"] { --dts-kind-color: #8b5cf6; }
+:where(.dts__badge, .dts__chip)[data-kind="install"] { --dts-kind-color: #f97316; }
+:where(.dts__badge, .dts__chip)[data-kind="build"] { --dts-kind-color: #f59e0b; }
+:where(.dts__badge, .dts__chip)[data-kind="test"] { --dts-kind-color: #06b6d4; }
+:where(.dts__badge, .dts__chip)[data-kind="run"] { --dts-kind-color: #6366f1; }
+:where(.dts__badge, .dts__chip)[data-kind="read"] { --dts-kind-color: #64748b; }
+:where(.dts__badge, .dts__chip)[data-kind="write"] { --dts-kind-color: #10b981; }
+:where(.dts__badge, .dts__chip)[data-kind="edit"] { --dts-kind-color: #14b8a6; }
+:where(.dts__badge, .dts__chip)[data-kind="delete"] { --dts-kind-color: #ef4444; }
+:where(.dts__badge, .dts__chip)[data-kind="search"] { --dts-kind-color: #8b5cf6; }
+:where(.dts__badge, .dts__chip)[data-kind="fetch"] { --dts-kind-color: #0ea5e9; }
+:where(.dts__badge, .dts__chip)[data-kind="download"] { --dts-kind-color: #0ea5e9; }
+:where(.dts__badge, .dts__chip)[data-kind="browser"] { --dts-kind-color: #14b8a6; }
+:where(.dts__badge, .dts__chip)[data-kind="image"] { --dts-kind-color: #ec4899; }
+:where(.dts__badge, .dts__chip)[data-kind="vision"] { --dts-kind-color: #d946ef; }
+:where(.dts__badge, .dts__chip)[data-kind="memory"] { --dts-kind-color: #eab308; }
+:where(.dts__badge, .dts__chip)[data-kind="todo"] { --dts-kind-color: #84cc16; }
+:where(.dts__badge, .dts__chip)[data-kind="subagent"] { --dts-kind-color: #0ea5e9; }
+:where(.dts__badge, .dts__chip)[data-kind="question"] { --dts-kind-color: #f43f5e; }
+:where(.dts__badge, .dts__chip)[data-kind="command"] { --dts-kind-color: #94a3b8; }
+:where(.dts__badge, .dts__chip)[data-kind="other"] { --dts-kind-color: #94a3b8; }
+
 .dts__row-time {
   flex: none;
   color: var(--dsw-alias-label-caption, #94a3b8);

@@ -16,12 +16,23 @@ import type { ChatNode, ChatNodeViewProps } from '@deepseek-ai/dsh-client-ui-con
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import { IconApiOutline14, IconDownloadOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { callDurationMs, callName, callSummary, classifyActivity, computeStats, formatDuration, isRunning, parseDownload, READONLY_TOOLS, resultText, shortenPath, type DownloadInfo } from './tool-stats.ts'
+import { classifyKind, distinctKinds, type ActivityKind } from './activity-kind.ts'
 import { useNow } from './use-now.ts'
 import { activityStore, type ActivityHandlers, type ActivityStore } from './activity-drawer.tsx'
 
 const NS = 'dts'
 
 const EMPTY: readonly ChatNode<'tool-call'>[] = []
+
+/** One colored activity badge (icon + label), keyed by `data-kind` for CSS. */
+function KindBadge({ kind }: { readonly kind: ActivityKind }) {
+  return (
+    <span className={`${NS}__badge`} data-kind={kind.key} title={kind.label}>
+      <span className={`${NS}__badge-icon`} aria-hidden>{kind.icon}</span>
+      <span className={`${NS}__badge-text`}>{kind.label}</span>
+    </span>
+  )
+}
 
 /** Turn number owning one chat node, or undefined outside a turn/step location. */
 function turnNumber(node: {
@@ -61,6 +72,7 @@ export const SimpleToolRow = memo(function SimpleToolRow({
   const now = useNow(running)
   const duration = callDurationMs(block, now)
   const activity = classifyActivity(block)
+  const kind = classifyKind(block)
 
   return (
     <div
@@ -83,6 +95,7 @@ export const SimpleToolRow = memo(function SimpleToolRow({
       >
         <span className={`${NS}__dot`} data-state={state} aria-hidden />
         <span className={`${NS}__row-name`}>{name || block.callId}</span>
+        <KindBadge kind={kind} />
         <span className={`${NS}__row-summary`} title={summary}>{summary}</span>
         {running && duration !== undefined && activity === 'download' && (
           <span className={`${NS}__row-live`} data-kind="download" title="下载中">
@@ -191,6 +204,7 @@ const ToolEntry = memo(function ToolEntry({
   }, [store, turn, nodes, cwd, turnStart, openFile, inspectCall])
   const stats = useMemo(() => computeStats(nodes.map(node => node.data.root)), [nodes])
   const readOnly = useMemo(() => nodes.filter(node => READONLY_TOOLS.has(callName(node.data.root))).length, [nodes])
+  const kinds = useMemo(() => distinctKinds(nodes.map(node => node.data.root)).slice(0, 3), [nodes])
   const running = stats.running > 0
   const now = useNow(running)
   // "当前工具"的时长：取仍在运行的最早一个 tool/call 时间，而不是整轮 turn 开始时间。
@@ -242,6 +256,20 @@ const ToolEntry = memo(function ToolEntry({
               : '工具调用中'
             : `工具 ×${stats.total}`}
         </span>
+        {!running && kinds.length > 0 && (
+          <span className={`${NS}__entry-kinds`}>
+            {kinds.map(kind => (
+              <span
+                key={kind.key}
+                className={`${NS}__badge ${NS}__badge--mini`}
+                data-kind={kind.key}
+                title={kind.label}
+              >
+                <span aria-hidden>{kind.icon}</span>
+              </span>
+            ))}
+          </span>
+        )}
         {readOnly > 0 && <span className={`${NS}__entry-sub`}>只读 {readOnly}</span>}
         {stats.errors > 0 && <span className={`${NS}__entry-err`}>⚠ {stats.errors}</span>}
       </button>
