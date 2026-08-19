@@ -29,6 +29,7 @@ import { applyImageGallery } from './image-gallery'
 import { applyProviderHub } from './provider-hub'
 import { applyFileExplorerClient } from './file-explorer'
 import { apply as applyUsageEntries } from './usage/entry'
+import { applyPeakValley } from './peak-valley'
 import {
   BetterAssistantNodeView, DshCodeBlockNode, DshImageNode, DshInlineCodeNode, DshLinkNode,
 } from './markdown/renderer'
@@ -123,4 +124,7 @@ export function apply(ctx: ClientContext): void {
 
   // ---- 用量工作台 + 技能面板（自 dsh-usage-skill 融合）：footer 独立入口 ---
   applyUsageEntries(ctx)
+
+  // ---- DeepSeek 峰谷时刻卡片（footer 首行，位于用量/技能/记忆上方）--------
+  applyPeakValley(ctx)
 }
