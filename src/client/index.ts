@@ -17,6 +17,8 @@ import 'markstream-react/index.css'
 import './markdown/styles.css'
 import { Webui } from './Webui'
 import { ProviderBadge, type ProviderBadgeInjected } from './ProviderBadge'
+// 模型选择增强：接管模型座位（纯模型弹出）+ 推理等级滑动式弹出。
+import { applyModelSeats } from './model-selection'
 // AnySearchCard：外接网页搜索设置卡（settings.plugin.item）。
 import { registerAnySearchCard } from './AnySearchCard'
 // MailCard：邮箱验证码设置卡（settings.plugin.item，紧随 AnySearchCard 之后）。
@@ -66,6 +68,9 @@ export function apply(ctx: ClientContext): void {
       },
     }, ProviderBadge))
   })
+
+  // ---- 模型选择增强：接管模型座位（纯模型弹出）+ 推理等级滑动弹出 ----------
+  applyModelSeats(ctx)
 
   // ---- dsh-tool-summary：工具调用聚合 + 活动抽屉 -------------------------
   injectToolSummaryStyles()
