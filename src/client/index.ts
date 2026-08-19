@@ -30,6 +30,7 @@ import { applyProviderHub } from './provider-hub'
 import { applyFileExplorerClient } from './file-explorer'
 import { apply as applyUsageEntries } from './usage/entry'
 import { applyPeakValley } from './peak-valley'
+import { applyApprovalNotifier } from './approval-notify'
 import {
   BetterAssistantNodeView, DshCodeBlockNode, DshImageNode, DshInlineCodeNode, DshLinkNode,
 } from './markdown/renderer'
@@ -127,4 +128,7 @@ export function apply(ctx: ClientContext): void {
 
   // ---- DeepSeek 峰谷时刻卡片（footer 首行，位于用量/技能/记忆上方）--------
   applyPeakValley(ctx)
+
+  // ---- 审批提醒：有工具调用等待审批时顶部弹 toast ---------------------------
+  applyApprovalNotifier(ctx)
 }
