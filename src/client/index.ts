@@ -19,6 +19,8 @@ import { Webui } from './Webui'
 import { ProviderBadge, type ProviderBadgeInjected } from './ProviderBadge'
 // AnySearchCard：外接网页搜索设置卡（settings.plugin.item）。
 import { registerAnySearchCard } from './AnySearchCard'
+// MailCard：邮箱验证码设置卡（settings.plugin.item，紧随 AnySearchCard 之后）。
+import { registerMailCard } from './mail/MailCard'
 import { apply as registerZhThinking } from './zh-thinking'
 import { apply as registerTaskDoneSound } from './task-done-sound'
 import { apply as registerUpdater } from './updater'
@@ -95,6 +97,9 @@ export function apply(ctx: ClientContext): void {
 
   // ---- dsh-web-search-anysearch：AnySearch 网页搜索设置卡片 ---------------
   registerAnySearchCard(ctx)
+
+  // ---- dsh-mail：邮箱验证码设置卡片（紧随「外接网页搜索」之下）--------------
+  registerMailCard(ctx)
 
   // ---- dsh-zh-thinking：设置页「中文思考」开关 ----------------------------
   registerZhThinking(ctx)

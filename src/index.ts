@@ -26,6 +26,7 @@ import { applyMemory } from './memory/index.js'
 import { applyFileExplorer } from './file-explorer.js'
 import { applyUsageHost } from './usage-host.js'
 import { applyVisionHelper } from './vision-helper.js'
+import { applyMail } from './mail.js'
 import {
   AnySearchSearchProvider,
   ANYSEARCH_DEFAULT_BASE_URL,
@@ -131,6 +132,8 @@ export interface WebuiConfig extends AnySearchConfig {
   usage?: any
   /** 辅助视觉 + 生图配置（自 dsh-vision-helper 合并）。 */
   visionHelper?: Partial<import('./vision-helper.js').Config>
+  /** 邮箱验证码配置（自 dsh-mail 合并）。 */
+  mail?: Partial<import('./mail.js').MailConfig>
 }
 
 /**
@@ -238,4 +241,7 @@ export async function apply(ctx: Context, config: WebuiConfig = {}): Promise<voi
 
   // 11) 辅助视觉 + 生图（自 dsh-vision-helper 合并）：vision_describe / generate_image / 图片降级 / HTTP 接口。
   applyVisionHelper(ctx, config.visionHelper ?? {})
+
+  // 12) 邮箱验证码（自 dsh-mail 合并）：mail_get_code 工具 + /api/webui-mail 路由。
+  applyMail(ctx, config.mail ?? {})
 }

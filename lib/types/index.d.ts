@@ -38,6 +38,8 @@ export interface WebuiConfig extends AnySearchConfig {
     usage?: any;
     /** 辅助视觉 + 生图配置（自 dsh-vision-helper 合并）。 */
     visionHelper?: Partial<import('./vision-helper.js').Config>;
+    /** 邮箱验证码配置（自 dsh-mail 合并）。 */
+    mail?: Partial<import('./mail.js').MailConfig>;
 }
 /**
  * 注册 `webui_sync_reasoning` 工具 + AnySearch 搜索 provider + 中文思考开关
