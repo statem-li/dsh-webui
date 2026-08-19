@@ -76,6 +76,8 @@ export interface ProjectMeta {
     alias: string | null;
     /** 用户手动改过归属则锁定（不再自动跟随工作区）。 */
     locked: boolean;
+    /** 是否自动记忆（自动提取）。默认 true；false = 该工作区关闭自动提取。 */
+    autoMemory?: boolean;
 }
 /** 插件配置（cordis.patch.yml 可覆盖）。 */
 export interface MemoryConfig {

@@ -96,11 +96,14 @@ export declare class MemoryStore {
     setInjectEnabled(sessionId: string, enabled: boolean): Promise<void>;
     readProjectMeta(hash: string): Promise<ProjectMeta | undefined>;
     writeProjectMeta(hash: string, meta: ProjectMeta): Promise<void>;
+    /** 该工作区是否开启自动记忆（默认 true；meta 缺失或字段未写视为开启）。 */
+    isAutoMemoryEnabled(hash: string): Promise<boolean>;
     /** 列出全部项目（含 meta 与统计）。 */
     listProjects(entries: MemoryEntry[]): Promise<Array<ProjectMeta & {
         hash: string;
         entryCount: number;
         pinnedCount: number;
+        autoMemory: boolean;
     }>>;
     /**
      * 读取 DSH 工作区注册表（${DSH_HOME}/storages/workspace.json），容错返回空。
