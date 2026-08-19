@@ -4,9 +4,9 @@
  * `classifyActivity` in tool-stats.ts already buckets a call into the coarse
  * live-activity axes (`download` / `command` / `other`) used for progress UI.
  * This module answers a different question: WHAT does this call actually do?
- * It turns one call into a short labelled badge (icon + text + stable color
- * key) so a shell command like `git push` reads as「⬆️ 推送」instead of a
- * generic `pwsh` row.
+ * It turns one call into a short labelled badge (key + text + stable color
+ * key; the vector glyph lives in icons.tsx) so a shell command like
+ * `git push` reads as「⬆️ 推送」instead of a generic `pwsh` row.
  *
  * Priority order (most specific signal wins):
  *   1. The shell command text (terminal card title / `command` arg) — so
@@ -18,45 +18,44 @@
 
 import type { ToolCallBlock } from '@deepseek-ai/dsh-client-runtime/client'
 
-/** A badge the drawer renders beside a tool row: icon + label + stable color key. */
+/** A badge the drawer renders beside a tool row: key + label (+ SVG glyph via icons.tsx). */
 export interface ActivityKind {
   readonly key: string
   readonly label: string
-  readonly icon: string
 }
 
-function kind(key: string, label: string, icon: string): ActivityKind {
-  return { key, label, icon }
+function kind(key: string, label: string): ActivityKind {
+  return { key, label }
 }
 
 /** Every badge the drawer can show. `key` doubles as the CSS `data-kind` value. */
 const K = {
-  gitPush: kind('git-push', '推送', '⬆️'),
-  gitCommit: kind('git-commit', '提交', '💾'),
-  gitPull: kind('git-pull', '拉取', '⬇️'),
-  gitClone: kind('git-clone', '克隆', '📥'),
-  git: kind('git', 'Git', '🌿'),
-  gh: kind('gh', 'GitHub', '🐙'),
-  install: kind('install', '安装', '📦'),
-  build: kind('build', '构建', '🔨'),
-  test: kind('test', '测试', '🧪'),
-  run: kind('run', '运行', '▶️'),
-  read: kind('read', '读取', '📖'),
-  write: kind('write', '写入', '✏️'),
-  edit: kind('edit', '编辑', '📝'),
-  delete: kind('delete', '删除', '🗑️'),
-  search: kind('search', '搜索', '🔍'),
-  fetch: kind('fetch', '抓取', '🌐'),
-  download: kind('download', '下载', '⏬'),
-  browser: kind('browser', '浏览器', '🧭'),
-  image: kind('image', '生图', '🎨'),
-  vision: kind('vision', '识图', '👁️'),
-  memory: kind('memory', '记忆', '🧠'),
-  todo: kind('todo', '待办', '✅'),
-  subagent: kind('subagent', '子代理', '🤖'),
-  question: kind('question', '询问', '❓'),
-  command: kind('command', '命令', '⌨️'),
-  other: kind('other', '工具', '🧩'),
+  gitPush: kind('git-push', '推送'),
+  gitCommit: kind('git-commit', '提交'),
+  gitPull: kind('git-pull', '拉取'),
+  gitClone: kind('git-clone', '克隆'),
+  git: kind('git', 'Git'),
+  gh: kind('gh', 'GitHub'),
+  install: kind('install', '安装'),
+  build: kind('build', '构建'),
+  test: kind('test', '测试'),
+  run: kind('run', '运行'),
+  read: kind('read', '读取'),
+  write: kind('write', '写入'),
+  edit: kind('edit', '编辑'),
+  delete: kind('delete', '删除'),
+  search: kind('search', '搜索'),
+  fetch: kind('fetch', '抓取'),
+  download: kind('download', '下载'),
+  browser: kind('browser', '浏览器'),
+  image: kind('image', '生图'),
+  vision: kind('vision', '识图'),
+  memory: kind('memory', '记忆'),
+  todo: kind('todo', '待办'),
+  subagent: kind('subagent', '子代理'),
+  question: kind('question', '询问'),
+  command: kind('command', '命令'),
+  other: kind('other', '工具'),
 } as const
 
 /** Exact tool-name → badge (names with no shell command to inspect). */

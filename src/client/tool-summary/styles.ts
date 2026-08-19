@@ -245,8 +245,10 @@ const CSS = `
 }
 
 .dts__badge-icon {
-  font-size: 10px;
-  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
 }
 
 .dts__badge-text {

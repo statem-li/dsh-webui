@@ -17,6 +17,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import { IconApiOutline14, IconDownloadOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { callDurationMs, callName, callSummary, classifyActivity, computeStats, formatDuration, isRunning, parseDownload, READONLY_TOOLS, resultText, shortenPath, type DownloadInfo } from './tool-stats.ts'
 import { classifyKind, distinctKinds, type ActivityKind } from './activity-kind.ts'
+import { KindIcon } from './icons.tsx'
 import { useNow } from './use-now.ts'
 import { activityStore, type ActivityHandlers, type ActivityStore } from './activity-drawer.tsx'
 
@@ -24,11 +25,11 @@ const NS = 'dts'
 
 const EMPTY: readonly ChatNode<'tool-call'>[] = []
 
-/** One colored activity badge (icon + label), keyed by `data-kind` for CSS. */
+/** One colored activity badge (SVG glyph + label), keyed by `data-kind` for CSS. */
 function KindBadge({ kind }: { readonly kind: ActivityKind }) {
   return (
     <span className={`${NS}__badge`} data-kind={kind.key} title={kind.label}>
-      <span className={`${NS}__badge-icon`} aria-hidden>{kind.icon}</span>
+      <span className={`${NS}__badge-icon`} aria-hidden><KindIcon kind={kind.key} size={12} /></span>
       <span className={`${NS}__badge-text`}>{kind.label}</span>
     </span>
   )
@@ -265,7 +266,7 @@ const ToolEntry = memo(function ToolEntry({
                 data-kind={kind.key}
                 title={kind.label}
               >
-                <span aria-hidden>{kind.icon}</span>
+                <KindIcon kind={kind.key} size={12} />
               </span>
             ))}
           </span>
