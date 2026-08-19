@@ -41,7 +41,9 @@ import {
 import { ToolGroupNodeView } from './tool-summary/ToolGroupNodeView'
 import { mountActivityDrawer } from './tool-summary/activity-drawer'
 import { injectStyles as injectToolSummaryStyles } from './tool-summary/styles'
-
+// StatsLine shadow：对话流下方统计条，缓存命中率保留两位小数。
+import { StatsLineShadow } from './chat-stats/StatsLineShadow'
+import { injectStatsStyles } from './chat-stats/styles'
 const CUSTOM_COMPONENT_SCOPE = 'dsh-better-markdown'
 
 export const inject = ['slots', 'settingsScope', 'connection', 'conversationEvents', 'locale', 'remote']
@@ -81,6 +83,18 @@ export function apply(ctx: ClientContext): void {
     priority: -100,
     locale: 'conversation',
   }, ToolGroupNodeView))
+
+  // ---- 对话统计条 shadow：缓存命中率精确到小数点后两位 -------------------
+  // 原生 ui-conversation 的 StatsLine 注册于 conversation.composer.dock / id=stats
+  // （priority 默认 0）；同 id + 更低 priority 覆盖原生条目，仅改动命中率显示。
+  injectStatsStyles()
+  ctx.slots.inject('conversation.composer.dock', () => ctx.slots.register({
+    name: 'conversation.composer.dock',
+    id: 'stats',
+    order: 0,
+    priority: -100,
+    locale: 'conversation',
+  }, StatsLineShadow))
 
   // ---- dsh-better-markdown：markstream 渲染 + 思考 chip -------------------
   ctx.effect(() => {

@@ -19,7 +19,9 @@ const css = {
   tabNav: { flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, padding: '0 12px', height: 44, borderBottom: '1px solid var(--dsw-alias-border-l1)', background: 'var(--dsw-alias-bg-base)' } as React.CSSProperties,
   tabItem: (active: boolean): React.CSSProperties => ({
     height: 32, display: 'flex', alignItems: 'center', padding: '0 14px', borderRadius: 8, cursor: 'pointer',
-    border: 'none', background: active ? 'var(--dsw-alias-raised)' : 'transparent',
+    border: 'none',
+    // 选中态用 ghost 按钮选中填充(浅色 bluish-100 / 深色 bluish-750),禁用不存在的 --dsw-alias-raised。
+    background: active ? 'var(--dsw-alias-button-ghost-active-fill)' : 'transparent',
     color: active ? 'var(--dsw-alias-label-primary)' : 'var(--dsw-alias-label-secondary)',
     fontSize: 13, fontWeight: active ? 600 : 400,
   }),

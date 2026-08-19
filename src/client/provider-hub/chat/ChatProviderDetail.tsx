@@ -440,7 +440,7 @@ export function ChatProviderDetail(props: ChatProviderDetailProps): ReactNode {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12, flex: 1, minWidth: 0 }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
-        <span style={{ fontSize: 15, fontWeight: 600, color: 'var(--dsw-alias-label-primary, #1f2329)' }}>
+        <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--dsw-alias-label-primary, #1f2329)' }}>
           {target.mode === 'custom' ? chatCopy.addCustom : target.displayName}
         </span>
         {target.mode !== 'custom' && target.provider !== target.displayName
@@ -525,7 +525,7 @@ export function ChatProviderDetail(props: ChatProviderDetailProps): ReactNode {
       {target.mode === 'custom' || (target.declared === true && layout === 'pi-ai') ? (
         <Field label={chatCopy.apiProtocol}>
           <select
-            style={inputStyle}
+            style={selectInputStyle}
             value={target.mode === 'custom' ? customProtocol : probeApi ?? ''}
             aria-label={chatCopy.apiProtocol}
             disabled={disabled}
@@ -613,16 +613,32 @@ function Field({ label, children }: { label: string; children: ReactNode }): Rea
 
 /* ---------- 内联样式（主题令牌 + fallback） ---------- */
 
+/* 官方 .input 规格：32px 高、14px 字、8px 圆角、0 10px 内边距。 */
 const inputStyle: CSSProperties = {
+  boxSizing: 'border-box',
   width: '100%',
-  padding: '7px 10px',
-  fontSize: 13,
-  borderRadius: 6,
+  height: 32,
+  padding: '0 10px',
+  fontSize: 14,
+  lineHeight: '22px',
+  borderRadius: 8,
   border: '1px solid var(--dsw-alias-border-l2, #dcdfe6)',
   background: 'var(--dsw-alias-bg-layer-1, #fff)',
   color: 'var(--dsw-alias-label-primary, #1f2329)',
   outline: 'none',
-  boxSizing: 'border-box',
+}
+
+/* 官方 .selectInput：隐藏原生箭头，改用共享 chevron（右 12px 内嵌）。 */
+const selectInputStyle: CSSProperties = {
+  ...inputStyle,
+  appearance: 'none',
+  paddingRight: 32,
+  backgroundImage: 'url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'12\' height=\'12\' viewBox=\'0 0 12 12\' fill=\'none\'%3E%3Cpath d=\'M3 4.5L6 7.5L9 4.5\' stroke=\'%2381858C\' stroke-width=\'1.5\' stroke-linecap=\'round\' stroke-linejoin=\'round\'/%3E%3C/svg%3E")',
+  backgroundRepeat: 'no-repeat',
+  backgroundPosition: 'right 12px center',
+  backgroundSize: '12px 12px',
+  cursor: 'pointer',
+  maxWidth: 240,
 }
 
 const fieldLabelStyle: CSSProperties = {
@@ -644,9 +660,10 @@ const errorStyle: CSSProperties = {
 
 const primaryButtonStyle: CSSProperties = {
   marginLeft: 'auto',
-  padding: '7px 18px',
-  fontSize: 13,
-  borderRadius: 6,
+  height: 36,
+  padding: '0 18px',
+  fontSize: 14,
+  borderRadius: 18,
   border: 'none',
   background: 'var(--dsw-alias-button-primary-fill, #165dff)',
   color: 'var(--dsw-alias-label-primary-foreground, #fff)',
@@ -654,9 +671,10 @@ const primaryButtonStyle: CSSProperties = {
 }
 
 const secondaryButtonStyle: CSSProperties = {
-  padding: '7px 14px',
-  fontSize: 13,
-  borderRadius: 6,
+  height: 36,
+  padding: '0 16px',
+  fontSize: 14,
+  borderRadius: 18,
   border: '1px solid var(--dsw-alias-border-l2, #dcdfe6)',
   background: 'transparent',
   color: 'var(--dsw-alias-label-primary, #1f2329)',
@@ -664,9 +682,10 @@ const secondaryButtonStyle: CSSProperties = {
 }
 
 const dangerButtonStyle: CSSProperties = {
-  padding: '7px 14px',
-  fontSize: 13,
-  borderRadius: 6,
+  height: 36,
+  padding: '0 16px',
+  fontSize: 14,
+  borderRadius: 18,
   border: '1px solid var(--dsw-alias-state-error-primary, #d54941)',
   background: 'transparent',
   color: 'var(--dsw-alias-state-error-primary, #d54941)',

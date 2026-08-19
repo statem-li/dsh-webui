@@ -91,7 +91,8 @@ export function OverviewTab({ onJumpAccounts, refreshTick }: OverviewTabProps): 
         {(['day', 'month', 'year'] as ViewMode[]).map(m => (
           <button key={m} type="button" onClick={() => setViewMode(m)}
             style={{ padding: '4px 12px', fontSize: 12, borderRadius: 6, border: '1px solid var(--dsw-alias-border-l1)', cursor: 'pointer',
-              background: viewMode === m ? 'var(--dsw-alias-raised)' : 'transparent', color: 'var(--dsw-alias-label-primary)' }}>
+              background: viewMode === m ? 'var(--dsw-alias-button-ghost-active-fill)' : 'transparent',
+              color: viewMode === m ? 'var(--dsw-alias-label-primary)' : 'var(--dsw-alias-label-secondary)' }}>
             {m === 'day' ? '日' : m === 'month' ? '月' : '年'}
           </button>
         ))}

@@ -52,7 +52,7 @@ export function CredentialModal({ providerName, onClose, onSave }: {
                 setSaving(true); setError(null)
                 try { await onSave(value.trim()); onClose() } catch (e: unknown) { setError(e instanceof Error ? e.message : String(e)) } finally { setSaving(false) }
               }}
-              style={{ ...btnBase, background: saving ? 'var(--dsw-alias-border-l2)' : 'var(--dsw-alias-brand-primary)', color: '#fff', border: 'none', opacity: value.trim() === '' ? 0.6 : 1 }}>
+              style={{ ...btnBase, background: saving ? 'var(--dsw-alias-border-l2)' : 'var(--dsw-alias-state-business-primary)', color: '#fff', border: 'none', opacity: value.trim() === '' ? 0.6 : 1 }}>
               {saving ? '保存中…' : '保存'}
             </button>
           </div>

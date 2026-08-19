@@ -1,10 +1,10 @@
 /**
- * 「对话供应商」左列表：已配置行 + 未配置的目录预设 + 添加自定义入口。
+ * 「对话供应商」区块：整页行卡片列表（对齐官方 ui-settings-models 的
+ * ModelsSection 布局——行卡片 + 行内展开编辑器，而非左右分栏）。
  *
- * 一行已配置提供方显示：显示名、凭据状态点（绿=已配置 / 红=缺失）、模型
- * 数徽标，以及选中态。目录预设行（适配器知道但尚未配置）点击进入创建；
- * 「添加自定义提供方」声明适配器不发货的路由。选中态由父组件持有
- * （selected = provider route id），详情侧据此切换编辑/创建模式。
+ * 行卡片显示：显示名、自定义/未配置标签、凭据状态点、右侧编辑/配置按钮；
+ * 选中行的卡片内展开详情（由父组件 renderDetail 提供，包在官方 editor 填充面里）。
+ * 已配置行 → 编辑；目录预设行 → 配置（创建）；底部「添加自定义提供方」。
  */
 
 import type { ReactNode } from 'react'
@@ -17,7 +17,7 @@ import type { ModelsSettingsState, ProviderRow } from './store.ts'
 export interface ChatProviderListProps {
   /** 当前页面快照（由父组件注入，父组件负责 load）。 */
   state: ModelsSettingsState
-  /** 当前选中的提供方 route id（详情侧正在编辑的那个）。 */
+  /** 当前选中的提供方 route id（详情正在编辑的那个）。 */
   selected: string | undefined
   /** 点击一行提供方（已配置或目录预设）。 */
   onSelect: (provider: string) => void
@@ -25,6 +25,8 @@ export interface ChatProviderListProps {
   onAddCustom: () => void
   /** 整页加载失败后的重试。 */
   onRetry: () => void
+  /** 选中行卡片内展开的详情内容（父组件渲染，含关闭）。 */
+  renderDetail?: (provider: string) => ReactNode
 }
 
 /** 一行提供方解析出的 profile 中 `models` 数组的长度（无则 0）。 */
@@ -36,76 +38,86 @@ export function modelsCountOf(state: ModelsSettingsState, row: ProviderRow): num
 }
 
 /**
- * 渲染「对话供应商」左列表。
+ * 渲染「对话供应商」区块。
  * @param props - 快照、选中态与回调。
- * @returns 左列表。
+ * @returns 行卡片列表。
  */
 export function ChatProviderList(props: ChatProviderListProps): ReactNode {
-  const { state, selected, onSelect, onAddCustom, onRetry } = props
+  const { state, selected, onSelect, onAddCustom, onRetry, renderDetail } = props
   const configured = state.rows.filter(row => row.configured)
   const addable = state.rows.filter(row => !row.configured && row.entry.settingsNs !== '')
 
   if (state.status === 'loading' && state.rows.length === 0) {
     return (
-      <div style={listColumnStyle}>
-        <ListTitle />
+      <section style={sectionStyle}>
+        <SectionTitle />
         <p style={hintStyle}>加载中…</p>
-      </div>
+      </section>
     )
   }
   if (state.status === 'error') {
     return (
-      <div style={listColumnStyle}>
-        <ListTitle />
+      <section style={sectionStyle}>
+        <SectionTitle />
         <p style={errorStyle}>{`${chatCopy.loadFailed}: ${state.error ?? ''}`}</p>
-        <button type="button" style={secondaryButtonStyle} onClick={onRetry}>
+        <button type="button" style={smButtonStyle} onClick={onRetry}>
           {chatCopy.retry}
         </button>
-      </div>
+      </section>
     )
   }
 
   return (
-    <div style={listColumnStyle}>
-      <ListTitle />
+    <section style={sectionStyle}>
+      <SectionTitle />
       {!state.writable && state.status === 'ready' ? <p style={hintStyle}>{chatCopy.readOnly}</p> : null}
-      <GroupLabel>{chatCopy.configuredGroup}</GroupLabel>
+
+      <p style={groupLabelStyle}>{chatCopy.configuredGroup}</p>
       {configured.length === 0 ? <p style={hintStyle}>暂无已配置的提供方。</p> : null}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {configured.map(row => (
-          <ProviderRowButton
+          <ProviderRowCard
             key={row.entry.provider}
             row={row}
             count={modelsCountOf(state, row)}
             selected={selected === row.entry.provider}
-            onClick={() => { onSelect(row.entry.provider) }}
+            onSelect={() => { onSelect(row.entry.provider) }}
+            renderDetail={renderDetail}
           />
         ))}
       </div>
-      <GroupLabel>{chatCopy.presetGroup}</GroupLabel>
+
+      <p style={groupLabelStyle}>{chatCopy.presetGroup}</p>
       {addable.length === 0 ? <p style={hintStyle}>目录中暂无其他提供方。</p> : null}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {addable.map(row => (
-          <ProviderRowButton
+          <ProviderRowCard
             key={row.entry.provider}
             row={row}
             preset
             count={modelsCountOf(state, row)}
             selected={selected === row.entry.provider}
-            onClick={() => { onSelect(row.entry.provider) }}
+            onSelect={() => { onSelect(row.entry.provider) }}
+            renderDetail={renderDetail}
           />
         ))}
       </div>
+
       <button
         type="button"
-        style={addCustomButtonStyle}
+        style={addButtonStyle}
         disabled={!state.writable}
         onClick={onAddCustom}
       >
         + {chatCopy.addCustom}
       </button>
-    </div>
+    </section>
   )
+}
+
+/** 区块标题。 */
+function SectionTitle(): ReactNode {
+  return <p style={titleStyle}>{chatCopy.chatTitle}</p>
 }
 
 /** 分组小标题。 */
@@ -113,48 +125,56 @@ function GroupLabel({ children }: { children: ReactNode }): ReactNode {
   return <p style={groupLabelStyle}>{children}</p>
 }
 
-/** 列表区标题。 */
-function ListTitle(): ReactNode {
-  return <p style={titleStyle}>{chatCopy.chatTitle}</p>
-}
-
-/** 一行提供方按钮（已配置行或目录预设行）。 */
-function ProviderRowButton({
-  row, preset, count, selected, onClick,
+/** 一行提供方卡片（已配置行或目录预设行），选中时卡片内展开详情。 */
+function ProviderRowCard({
+  row, preset, count, selected, onSelect, renderDetail,
 }: {
   row: ProviderRow
-  /** 目录预设行（未配置）时加「未配置」标记。 */
+  /** 目录预设行（未配置）时加「未配置」标记并显示「配置」按钮。 */
   preset?: boolean
   /** 该 profile 当前的模型数。 */
   count: number
   selected: boolean
-  onClick: () => void
+  onSelect: () => void
+  renderDetail?: (provider: string) => ReactNode
 }): ReactNode {
   return (
-    <button
-      type="button"
-      style={selected ? rowButtonSelectedStyle : rowButtonStyle}
-      onClick={onClick}
-    >
-      <span style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, flex: 1 }}>
-        <span
-          style={{
-            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 13,
-            color: 'var(--dsw-alias-label-primary, #1f2329)',
-          }}
-        >
-          {row.entry.displayName}
+    <div style={selected ? rowCardSelectedStyle : rowCardStyle}>
+      <div
+        style={rowHeadStyle}
+        role="button"
+        tabIndex={0}
+        aria-expanded={selected}
+        onClick={onSelect}
+        onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onSelect() } }}
+      >
+        <span style={rowIdentityStyle}>
+          <span style={rowNameStyle}>{row.entry.displayName}</span>
+          {row.entry.declared === true
+            ? <span style={tagStyle}>{chatCopy.customTag}</span>
+            : null}
+          {preset === true ? <span style={tagStyle}>{chatCopy.unconfigured}</span> : null}
+          {preset !== true ? <CredentialDot row={row} /> : null}
+          <span style={countBadgeStyle} title={`${count} 模型`}>{count}</span>
         </span>
-        {row.entry.declared === true
-          ? <span style={tagStyle}>{chatCopy.customTag}</span>
-          : null}
-        {preset === true ? <span style={tagStyle}>{chatCopy.unconfigured}</span> : null}
-        {preset !== true ? <CredentialDot row={row} /> : null}
-      </span>
-      <span style={countBadgeStyle} title={`${count} 模型`}>
-        {count}
-      </span>
-    </button>
+        <span style={rowActionsStyle}>
+          <button
+            type="button"
+            style={smButtonStyle}
+            onClick={(event) => { event.stopPropagation(); onSelect() }}
+          >
+            {preset === true ? '配置' : '编辑'}
+          </button>
+        </span>
+      </div>
+      {selected && renderDetail !== undefined
+        ? (
+          <div style={editorStyle}>
+            {renderDetail(row.entry.provider)}
+          </div>
+        )
+        : null}
+    </div>
   )
 }
 
@@ -191,99 +211,107 @@ function CredentialDot({ row }: { row: ProviderRow }): ReactNode {
   return null
 }
 
-/* ---------- 内联样式（主题令牌 + fallback） ---------- */
+/* ---------- 内联样式（对齐官方 ModelsSection.module.css） ---------- */
 
-const listColumnStyle: CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: 8,
-  minWidth: 0,
-  maxWidth: '100%',
+const sectionStyle: CSSProperties = {
+  display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0, maxWidth: 760,
 }
 
 const titleStyle: CSSProperties = {
-  margin: 0,
-  fontSize: 14,
-  fontWeight: 600,
+  margin: 0, fontSize: 14, fontWeight: 600,
   color: 'var(--dsw-alias-label-primary, #1f2329)',
 }
 
 const groupLabelStyle: CSSProperties = {
-  margin: '8px 0 0',
-  fontSize: 12,
+  margin: '6px 0 0', fontSize: 12,
   color: 'var(--dsw-alias-label-tertiary, #8f959e)',
 }
 
 const hintStyle: CSSProperties = {
-  margin: 0,
-  fontSize: 12,
-  color: 'var(--dsw-alias-label-tertiary, #8f959e)',
+  margin: 0, fontSize: 12, color: 'var(--dsw-alias-label-tertiary, #8f959e)',
 }
 
 const errorStyle: CSSProperties = {
-  margin: 0,
-  fontSize: 12,
-  color: 'var(--dsw-alias-state-error-primary, #d54941)',
+  margin: 0, fontSize: 12, color: 'var(--dsw-alias-state-error-primary, #d54941)',
 }
 
-const rowButtonStyle: CSSProperties = {
+/* 官方 .rowCard：细边框、12px 圆角、无底色，面板上以描边呈现。 */
+const rowCardStyle: CSSProperties = {
+  border: '1px solid var(--dsw-alias-border-l2, #dcdfe6)',
+  borderRadius: 12,
+  padding: '12px 14px',
   display: 'flex',
-  alignItems: 'center',
-  gap: 8,
-  width: '100%',
-  padding: '7px 10px',
-  borderRadius: 8,
-  border: '1px solid transparent',
-  background: 'transparent',
-  cursor: 'pointer',
-  textAlign: 'left',
+  flexDirection: 'column',
+  gap: 12,
 }
 
-const rowButtonSelectedStyle: CSSProperties = {
-  ...rowButtonStyle,
-  borderColor: 'var(--dsw-alias-brand-primary, #165dff)',
-  background: 'var(--dsw-alias-interactive-bg-hover, rgba(22,93,255,0.08))',
+const rowCardSelectedStyle: CSSProperties = {
+  ...rowCardStyle,
+  borderColor: 'var(--dsw-alias-state-business-primary, #165dff)',
 }
 
+/* 官方 .rowHead。 */
+const rowHeadStyle: CSSProperties = {
+  display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', minWidth: 0,
+}
+
+const rowIdentityStyle: CSSProperties = {
+  display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0, flex: 1,
+}
+
+/* 官方 .rowName：14px / 500。 */
+const rowNameStyle: CSSProperties = {
+  fontSize: 14, lineHeight: '22px', fontWeight: 500,
+  color: 'var(--dsw-alias-label-primary, #1f2329)',
+  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+}
+
+/* 官方 .rowTag：细边框小标签。 */
 const tagStyle: CSSProperties = {
-  flexShrink: 0,
-  padding: '1px 6px',
-  fontSize: 11,
-  borderRadius: 4,
-  background: 'var(--dsw-alias-interactive-bg-hover, rgba(22,93,255,0.08))',
+  flexShrink: 0, padding: '1px 6px',
+  border: '1px solid var(--dsw-alias-border-l3, #c9cdd4)',
+  borderRadius: 4, fontSize: 11, lineHeight: '16px',
   color: 'var(--dsw-alias-label-secondary, #4e5969)',
 }
 
 const countBadgeStyle: CSSProperties = {
-  flexShrink: 0,
-  minWidth: 22,
-  padding: '1px 5px',
-  fontSize: 11,
-  borderRadius: 10,
-  textAlign: 'center',
-  background: 'var(--dsw-alias-bg-layer-1, #f2f3f5)',
+  flexShrink: 0, minWidth: 20, padding: '1px 5px',
+  fontSize: 11, borderRadius: 10, textAlign: 'center',
+  background: 'var(--dsw-alias-interactive-bg-hover, rgba(22,93,255,0.08))',
   color: 'var(--dsw-alias-label-tertiary, #8f959e)',
 }
 
-const secondaryButtonStyle: CSSProperties = {
-  alignSelf: 'flex-start',
-  padding: '5px 12px',
-  fontSize: 12,
-  borderRadius: 6,
-  border: '1px solid var(--dsw-alias-border-l2, #dcdfe6)',
-  background: 'transparent',
-  color: 'var(--dsw-alias-label-primary, #1f2329)',
-  cursor: 'pointer',
+const rowActionsStyle: CSSProperties = {
+  display: 'inline-flex', alignItems: 'center', gap: 6, flex: 'none',
 }
 
-const addCustomButtonStyle: CSSProperties = {
-  marginTop: 4,
-  alignSelf: 'flex-start',
-  padding: '5px 12px',
-  fontSize: 12,
-  borderRadius: 6,
-  border: '1px dashed var(--dsw-alias-border-l3, #c9cdd4)',
+/* 官方行内小胶囊：28px 高、14px 圆角、12px 字。 */
+const smButtonStyle: CSSProperties = {
+  boxSizing: 'border-box',
+  height: 28, padding: '0 12px',
+  border: '1px solid var(--dsw-alias-border-l2, #dcdfe6)',
+  borderRadius: 14,
   background: 'transparent',
-  color: 'var(--dsw-alias-label-secondary, #4e5969)',
-  cursor: 'pointer',
+  color: 'var(--dsw-alias-label-primary, #1f2329)',
+  fontSize: 12, lineHeight: '18px', cursor: 'pointer',
+}
+
+/* 官方 .addButton：36px 高、18px 圆角胶囊。 */
+const addButtonStyle: CSSProperties = {
+  alignSelf: 'flex-start',
+  boxSizing: 'border-box',
+  height: 36, padding: '0 14px', marginTop: 4,
+  border: '1px solid var(--dsw-alias-border-l2, #dcdfe6)',
+  borderRadius: 18,
+  background: 'transparent',
+  color: 'var(--dsw-alias-label-primary, #1f2329)',
+  fontSize: 14, lineHeight: '22px', cursor: 'pointer',
+}
+
+/* 官方 .editor：填充面。 */
+const editorStyle: CSSProperties = {
+  borderRadius: 12,
+  background: 'var(--dsw-alias-bg-module-platform, #f2f3f5)',
+  padding: '14px 16px',
+  display: 'flex', flexDirection: 'column', gap: 12,
 }

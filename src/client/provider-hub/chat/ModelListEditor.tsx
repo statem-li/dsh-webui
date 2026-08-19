@@ -495,7 +495,7 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
   return (
     <section style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--dsw-alias-label-primary, #1f2329)' }}>
+        <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--dsw-alias-label-primary, #1f2329)' }}>
           {chatCopy.models}
         </span>
         <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -700,12 +700,16 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
 
 /* ---------- 内联样式（主题令牌 + fallback） ---------- */
 
+/* 官方 .input 规格：32px 高、14px 字、8px 圆角、0 10px 内边距。 */
 const inputStyle: CSSProperties = {
   flex: 1,
   minWidth: 0,
-  padding: '6px 8px',
-  fontSize: 13,
-  borderRadius: 6,
+  boxSizing: 'border-box',
+  height: 32,
+  padding: '0 10px',
+  fontSize: 14,
+  lineHeight: '22px',
+  borderRadius: 8,
   border: '1px solid var(--dsw-alias-border-l2, #dcdfe6)',
   background: 'var(--dsw-alias-bg-layer-1, #fff)',
   color: 'var(--dsw-alias-label-primary, #1f2329)',
@@ -730,7 +734,7 @@ const linkButtonStyle: CSSProperties = {
   padding: '4px 8px',
   fontSize: 12,
   border: 'none',
-  borderRadius: 6,
+  borderRadius: 8,
   background: 'var(--dsw-alias-interactive-bg-hover, rgba(22,93,255,0.08))',
   color: 'var(--dsw-alias-brand-primary, #165dff)',
   cursor: 'pointer',
@@ -740,7 +744,7 @@ const addModelButtonStyle: CSSProperties = {
   alignSelf: 'flex-start',
   padding: '4px 10px',
   fontSize: 12,
-  borderRadius: 6,
+  borderRadius: 8,
   border: '1px dashed var(--dsw-alias-border-l3, #c9cdd4)',
   background: 'transparent',
   color: 'var(--dsw-alias-label-secondary, #4e5969)',
@@ -809,7 +813,7 @@ const modalStyle: CSSProperties = {
 const primaryButtonStyle: CSSProperties = {
   padding: '6px 14px',
   fontSize: 13,
-  borderRadius: 6,
+  borderRadius: 8,
   border: 'none',
   background: 'var(--dsw-alias-button-primary-fill, #165dff)',
   color: 'var(--dsw-alias-label-primary-foreground, #fff)',
@@ -819,7 +823,7 @@ const primaryButtonStyle: CSSProperties = {
 const secondaryButtonStyle: CSSProperties = {
   padding: '6px 14px',
   fontSize: 13,
-  borderRadius: 6,
+  borderRadius: 8,
   border: '1px solid var(--dsw-alias-border-l2, #dcdfe6)',
   background: 'transparent',
   color: 'var(--dsw-alias-label-primary, #1f2329)',

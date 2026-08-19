@@ -1,6 +1,7 @@
 /**
  * ProviderHubSection — 「供应商」设置页主布局。
- * 三区块：对话供应商（左列表 + 右详情）+ 辅助视觉模型 + 生图模型。
+ * 对齐官方 ui-settings-models 的 ModelsSection：整页行卡片列表，点击行内展开
+ * 编辑器；附加区块：辅助视觉模型 + 生图模型。
  * 对话供应商数据流复用官方 wire 链（ModelsSettingsStore）；视觉/生图复用
  * dsh-vision-helper 的 HTTP 接口。
  */
@@ -61,16 +62,17 @@ const CUSTOM_TARGET: ChatProviderTarget = {
   mode: 'custom',
 }
 
-const ROW_STYLE: CSSProperties = {
-  display: 'flex', gap: 16, alignItems: 'flex-start',
-}
-const LIST_COL_STYLE: CSSProperties = { flex: '0 0 200px', minWidth: 0 }
-const DETAIL_COL_STYLE: CSSProperties = { flex: 1, minWidth: 0 }
-const EMPTY_STYLE: CSSProperties = {
-  color: 'var(--dsw-alias-label-tertiary, #888)', padding: 24, fontSize: 13,
-}
 const SEP_STYLE: CSSProperties = {
-  height: 1, background: 'var(--dsw-alias-border-l2, #333)', margin: '8px 0',
+  height: 1, background: 'var(--dsw-alias-border-l2, #333)', margin: '4px 0',
+}
+
+/* 添加自定义提供方的编辑面（官方 .editor 填充面）。 */
+const editorStyle: CSSProperties = {
+  borderRadius: 12,
+  background: 'var(--dsw-alias-bg-module-platform, #f2f3f5)',
+  padding: '14px 16px',
+  display: 'flex', flexDirection: 'column', gap: 12,
+  maxWidth: 760,
 }
 
 /** 渲染「供应商」section；shell 未注入依赖时先渲染 null。 */
@@ -91,48 +93,51 @@ function Loaded({ injected }: { injected: ProviderHubInjected }): ReactNode {
     if (state.status === 'idle') void controller.load()
   }, [controller, state.status])
 
-  // 构造详情目标：自定义创建优先；否则选中行 → edit/adopt。
-  let target: ChatProviderTarget | undefined
-  if (addingCustom) {
-    target = CUSTOM_TARGET
-  } else if (selected !== undefined) {
-    const row = state.rows.find(r => r.entry.provider === selected)
-    if (row !== undefined) target = targetOf(row, row.configured ? 'edit' : 'adopt')
-  }
-
   const closeDetail = (changed: boolean): void => {
     setSelected(undefined)
     setAddingCustom(false)
     if (changed) void controller.load()
   }
 
+  /** 选中行在卡片内展开的详情（父组件包在行卡片的 editor 填充面里）。 */
+  const renderDetail = (provider: string): ReactNode => {
+    const row = state.rows.find(r => r.entry.provider === provider)
+    if (row === undefined) return null
+    return (
+      <ChatProviderDetail
+        key={provider}
+        state={state}
+        target={targetOf(row, row.configured ? 'edit' : 'adopt')}
+        api={api}
+        onClose={closeDetail}
+      />
+    )
+  }
+
   return (
     <div className="phub-host">
-      {/* 区块 1：对话供应商（左列表 + 右详情） */}
-      <div style={ROW_STYLE}>
-        <div style={LIST_COL_STYLE}>
-          <ChatProviderList
+      {/* 区块 1：对话供应商（行卡片列表，点击行内展开编辑器） */}
+      <ChatProviderList
+        state={state}
+        selected={selected}
+        onSelect={(p) => { setSelected(p); setAddingCustom(false) }}
+        onAddCustom={() => { setAddingCustom(true); setSelected(undefined) }}
+        onRetry={() => { void controller.load() }}
+        renderDetail={renderDetail}
+      />
+
+      {/* 添加自定义提供方：按钮下方的独立编辑卡片 */}
+      {addingCustom ? (
+        <div style={editorStyle}>
+          <ChatProviderDetail
+            key="custom"
             state={state}
-            selected={selected}
-            onSelect={(p) => { setSelected(p); setAddingCustom(false) }}
-            onAddCustom={() => { setAddingCustom(true); setSelected(undefined) }}
-            onRetry={() => { void controller.load() }}
+            target={CUSTOM_TARGET}
+            api={api}
+            onClose={closeDetail}
           />
         </div>
-        <div style={DETAIL_COL_STYLE}>
-          {target !== undefined ? (
-            <ChatProviderDetail
-              key={addingCustom ? 'custom' : target.provider}
-              state={state}
-              target={target}
-              api={api}
-              onClose={closeDetail}
-            />
-          ) : (
-            <div style={EMPTY_STYLE}>选择一个供应商查看详情</div>
-          )}
-        </div>
-      </div>
+      ) : null}
 
       <div style={SEP_STYLE} />
 

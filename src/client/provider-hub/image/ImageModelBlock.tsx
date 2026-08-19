@@ -8,14 +8,22 @@ import { useEffect, useState } from 'react'
 interface ModelInfo { id: string; name: string }
 interface ProviderInfo { id: string; name: string; models: ModelInfo[] }
 
-const BLOCK_TITLE: React.CSSProperties = { fontSize: 14, fontWeight: 600, marginBottom: 6 }
+const BLOCK_TITLE: React.CSSProperties = { fontSize: 14, fontWeight: 600, marginBottom: 6, color: 'var(--dsw-alias-label-primary)' }
 const HINT: React.CSSProperties = { fontSize: 12, color: 'var(--dsw-alias-label-secondary)', marginBottom: 10 }
 const ROW: React.CSSProperties = { display: 'flex', gap: 8, alignItems: 'center', marginBottom: 10 }
+/* 官方 .input/.selectInput 规格：32px 高、14px 字、8px 圆角、自定义 chevron。 */
 const SELECT: React.CSSProperties = {
-  padding: '6px 10px', borderRadius: 6,
+  boxSizing: 'border-box',
+  height: 32,
+  padding: '0 32px 0 10px',
+  borderRadius: 8,
   border: '1px solid var(--dsw-alias-border-l2)',
-  background: 'var(--dsw-alias-bg-layer-2, transparent)',
-  color: 'var(--dsw-alias-label-primary)', fontSize: 13, cursor: 'pointer',
+  backgroundImage: 'url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'12\' height=\'12\' viewBox=\'0 0 12 12\' fill=\'none\'%3E%3Cpath d=\'M3 4.5L6 7.5L9 4.5\' stroke=\'%2381858C\' stroke-width=\'1.5\' stroke-linecap=\'round\' stroke-linejoin=\'round\'/%3E%3C/svg%3E")',
+  backgroundRepeat: 'no-repeat',
+  backgroundPosition: 'right 12px center',
+  backgroundSize: '12px 12px',
+  appearance: 'none',
+  color: 'var(--dsw-alias-label-primary)', fontSize: 14, lineHeight: '22px', cursor: 'pointer',
 }
 const ACTIVE_HINT: React.CSSProperties = { fontSize: 12, color: 'var(--dsw-alias-label-secondary)' }
 
@@ -68,9 +76,9 @@ export function ImageModelBlock(): React.ReactElement {
     <div>
       <div style={BLOCK_TITLE}>生图模型</div>
       <div style={HINT}>generate_image 使用的模型（提示词 → 图片生成）。</div>
-      {error && <div style={{ color: '#d33', marginBottom: 8 }}>{error}</div>}
+      {error && <div style={{ color: 'var(--dsw-alias-state-error-primary)', marginBottom: 8 }}>{error}</div>}
       {providers.length === 0 && !error
-        ? <div style={{ color: '#888' }}>加载中…</div>
+        ? <div style={{ color: 'var(--dsw-alias-label-tertiary)' }}>加载中…</div>
         : (
           <>
             <div style={ROW}>
