@@ -258,6 +258,7 @@ async function handle(
         path: meta?.path ?? (typeof body.path === 'string' && body.path !== '' ? body.path : '手动归属'),
         alias: typeof body.alias === 'string' && body.alias !== '' ? body.alias.slice(0, 64) : (meta?.alias ?? null),
         locked: typeof body.locked === 'boolean' ? body.locked : (meta?.locked ?? true),
+        autoMemory: typeof body.autoMemory === 'boolean' ? body.autoMemory : (meta?.autoMemory ?? true),
       }
       await store.writeProjectMeta(hash, next)
       json(res, 200, { ok: true, meta: { ...next, hash } })
@@ -378,7 +379,7 @@ async function listView(store: MemoryStore, params: URLSearchParams): Promise<{ 
 }
 
 /** 项目视图类型（面板返回）。 */
-type ProjectView = { hash: string; path: string; alias: string | null; locked: boolean; entryCount: number; pinnedCount: number }
+type ProjectView = { hash: string; path: string; alias: string | null; locked: boolean; autoMemory: boolean; entryCount: number; pinnedCount: number }
 
 /**
  * 合并 DSH 工作区注册表：尚无记忆的新工作区也出现在项目列表（entryCount 0），
@@ -394,6 +395,7 @@ async function mergeWorkspaces(store: MemoryStore, projects: ProjectView[]): Pro
         path: workspace.path,
         alias: workspace.title,
         locked: false,
+        autoMemory: true,
         entryCount: 0,
         pinnedCount: 0,
       })

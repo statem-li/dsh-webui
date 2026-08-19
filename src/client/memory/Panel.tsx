@@ -705,14 +705,31 @@ export function MemoryPanel({ open, onClose, initialTab, t, ...api }: MemoryPane
               </button>
             ))}
           </div>
-          {/* 选中具体项目时显示「清空该项目全部记忆」 */}
-          {scope.startsWith('project:') && (
-            <Tooltip label={t('clearProject')} side="top" delayMs={500}>
-              <button type="button" className={css.iconAction} aria-label={t('clearProject')} disabled={busy} onClick={handleClearProject}>
-                <IconTrashOutline16 size={14} />
-              </button>
-            </Tooltip>
-          )}
+          {/* 选中具体项目时：自动记忆开关 + 清空该项目全部记忆 */}
+          {scope.startsWith('project:') && (() => {
+            const hash = scope.slice('project:'.length)
+            const project = projects.find(candidate => candidate.hash === hash)
+            return (
+              <>
+                <label className={css.check} title={t('autoMemory')}>
+                  <input
+                    type="checkbox"
+                    checked={project?.autoMemory ?? true}
+                    disabled={busy}
+                    onChange={(event) => {
+                      void run(() => api.meta(hash, { autoMemory: event.currentTarget.checked }))
+                    }}
+                  />
+                  {t('autoMemory')}
+                </label>
+                <Tooltip label={t('clearProject')} side="top" delayMs={500}>
+                  <button type="button" className={css.iconAction} aria-label={t('clearProject')} disabled={busy} onClick={handleClearProject}>
+                    <IconTrashOutline16 size={14} />
+                  </button>
+                </Tooltip>
+              </>
+            )
+          })()}
         </div>
 
         {/* 搜索 + 标签筛选（全部 Tab） */}

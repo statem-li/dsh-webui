@@ -386,8 +386,14 @@ export class MemoryStore {
     await atomicWriteJson(join(this.projectDir(hash), 'meta.json'), meta)
   }
 
+  /** 该工作区是否开启自动记忆（默认 true；meta 缺失或字段未写视为开启）。 */
+  async isAutoMemoryEnabled(hash: string): Promise<boolean> {
+    const meta = await this.readProjectMeta(hash)
+    return meta?.autoMemory !== false
+  }
+
   /** 列出全部项目（含 meta 与统计）。 */
-  async listProjects(entries: MemoryEntry[]): Promise<Array<ProjectMeta & { hash: string; entryCount: number; pinnedCount: number }>> {
+  async listProjects(entries: MemoryEntry[]): Promise<Array<ProjectMeta & { hash: string; entryCount: number; pinnedCount: number; autoMemory: boolean }>> {
     const dir = join(this.root, 'projects')
     let hashes: string[]
     try {
@@ -397,7 +403,7 @@ export class MemoryStore {
     } catch {
       hashes = []
     }
-    const projects: Array<ProjectMeta & { hash: string; entryCount: number; pinnedCount: number }> = []
+    const projects: Array<ProjectMeta & { hash: string; entryCount: number; pinnedCount: number; autoMemory: boolean }> = []
     for (const hash of hashes) {
       const meta = await this.readProjectMeta(hash)
       if (meta === undefined) continue
@@ -407,6 +413,7 @@ export class MemoryStore {
         path: meta.path,
         alias: meta.alias,
         locked: meta.locked,
+        autoMemory: meta.autoMemory !== false,
         entryCount: owned.length,
         pinnedCount: owned.filter(entry => entry.pinned).length,
       })

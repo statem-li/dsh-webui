@@ -59,6 +59,7 @@ export const zh = {
   clearProject: '清空该项目全部记忆',
   clearProjectConfirm: '确定清空项目「{name}」的全部 {count} 条记忆？此操作不可恢复。',
   addSaved: '已添加记忆',
+  autoMemory: '自动记忆',
 } satisfies Record<string, string>
 
 /** dsh-memory locale key union. */
@@ -126,4 +127,5 @@ export const en = {
   clearProject: 'Clear all memories in this project',
   clearProjectConfirm: 'Clear all {count} memories in project "{name}"? This cannot be undone.',
   addSaved: 'Memory added',
+  autoMemory: 'Auto-memory',
 } satisfies Record<MemoryLocaleKey, string>

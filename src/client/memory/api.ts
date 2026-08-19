@@ -26,6 +26,7 @@ export interface ProjectView {
   path: string
   alias: string | null
   locked: boolean
+  autoMemory: boolean
   entryCount: number
   pinnedCount: number
 }
@@ -104,7 +105,7 @@ export interface MemoryApi {
   move: (entryId: string, target: { scope?: string; projectHash?: string; path?: string }) => Promise<{ ok: boolean; entry: MemoryEntryView }>
   deleteEntry: (entryId: string) => Promise<{ ok: boolean }>
   deleteProject: (projectHash: string) => Promise<{ ok: boolean; deleted: number }>
-  meta: (projectHash: string, patch: { alias?: string; locked?: boolean; path?: string }) => Promise<{ ok: boolean; meta: ProjectView }>
+  meta: (projectHash: string, patch: { alias?: string; locked?: boolean; path?: string; autoMemory?: boolean }) => Promise<{ ok: boolean; meta: ProjectView }>
   remember: (input: {
     content: string
     scope?: 'global' | 'project'
