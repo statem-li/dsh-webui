@@ -146,6 +146,23 @@ async function handle(ctx: Context, req: IncomingMessage, res: ServerResponse, c
   }
 }
 
+// ── 展示辅助 ────────────────────────────────────────────────────────────────
+
+/** 从 From 头提取发件人名称（去 <email>），便于快速识别来源。 */
+function fromName(from: string): string {
+  const m = from.match(/^\s*(.*?)\s*<[^>]+>\s*$/)
+  if (m !== null && m[1] !== undefined && m[1] !== '') return m[1]
+  return from
+}
+
+/** 把 RFC 邮件日期格式化成 `MM-DD HH:mm`（失败时原样返回）。 */
+function shortDate(date: string): string {
+  const d = new Date(date)
+  if (Number.isNaN(d.getTime())) return date
+  const pad = (n: number): string => String(n).padStart(2, '0')
+  return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
 // ── 插件体 ──────────────────────────────────────────────────────────────────
 
 /** 注册 mail_get_code 工具 + /api/webui-mail 路由（webui 组合调用）。 */
@@ -170,9 +187,12 @@ export function applyMail(ctx: Context, config: MailConfig = {}): void {
         }
         const lines = [`邮箱 ${value.email ?? ''} 最近 ${value.count ?? 0} 封邮件`]
         if (value.latestCode) lines.push(`最新验证码: ${value.latestCode}`)
-        for (const m of value.messages ?? []) {
-          lines.push(`- [${m.date}] ${m.from} | ${m.subject} | 验证码: ${m.codes.length > 0 ? m.codes.join(', ') : '无'}`)
-        }
+        // 倒序展示（最新在最上）+ 发件人名称 + 短时间格式，便于浏览。
+        const msgs = [...(value.messages ?? [])].reverse()
+        msgs.forEach((m, index) => {
+          const code = m.codes.length > 0 ? m.codes.join(', ') : '无'
+          lines.push(`${index + 1}. [${shortDate(m.date)}] ${fromName(m.from)} | ${m.subject} | 验证码: ${code}`)
+        })
         return [{ type: 'text', text: lines.join('\n') }]
       },
     },
