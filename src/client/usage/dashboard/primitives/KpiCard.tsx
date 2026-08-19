@@ -1,5 +1,11 @@
-export function KpiCard({ title, value, unit, sub, tone }: {
-  title: string; value: string; unit?: string; sub?: string; tone?: 'default' | 'danger'
+export function KpiCard({ title, value, unit, sub, tone, exact }: {
+  title: string
+  value: string
+  unit?: string
+  sub?: string
+  tone?: 'default' | 'danger'
+  /** 精确数字副行（千分位），如 "2,500,000,000"。 */
+  exact?: string
 }): JSX.Element {
   return (
     <div style={{ border: '1px solid var(--dsw-alias-border-l1)', borderRadius: 12, background: 'var(--dsw-alias-bg-layer-2)', padding: 16 }}>
@@ -7,6 +13,11 @@ export function KpiCard({ title, value, unit, sub, tone }: {
       <div style={{ fontSize: 26, fontWeight: 600, color: tone === 'danger' ? 'var(--dsw-alias-state-error-primary)' : 'var(--dsw-alias-label-primary)', fontFamily: 'ui-monospace, monospace', marginTop: 4 }}>
         {value}{unit ? <span style={{ fontSize: 12, fontWeight: 400, marginLeft: 4 }}>{unit}</span> : null}
       </div>
+      {exact ? (
+        <div style={{ fontSize: 11, color: 'var(--dsw-alias-label-tertiary)', fontFamily: 'ui-monospace, monospace', marginTop: 2 }}>
+          {exact}
+        </div>
+      ) : null}
       {sub ? <div style={{ fontSize: 11, color: 'var(--dsw-alias-label-tertiary)', marginTop: 4 }}>{sub}</div> : null}
     </div>
   )

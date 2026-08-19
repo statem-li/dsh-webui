@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { usageApi, type ProviderInfo } from './api'
 import { averageCacheHitRate, monthTokens, providerShare, sumTokens, type UsageDay } from './aggregate'
-import { formatCompact } from './format'
+import { formatCompact, formatYiExact } from './format'
 import { providerPalette } from './theme'
 import { AreaChart } from './charts/AreaChart'
 import { DonutChart } from './charts/DonutChart'
@@ -109,10 +109,11 @@ export function OverviewTab({ onJumpAccounts, refreshTick }: OverviewTabProps): 
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}>
-        <KpiCard title={`${rangeLabel} Tokens`} value={formatCompact(sum.total)} sub={`输入 ${formatCompact(sum.input)} · 输出 ${formatCompact(sum.output)}`} />
-        <KpiCard title="输入" value={formatCompact(sum.input)} />
-        <KpiCard title="输出" value={formatCompact(sum.output)} />
-        <KpiCard title="缓存命中" value={formatCompact(sum.cache)} sub={`命中率 ${hitRate}%`} />
+        {/* 亿级数字：主值显示「X 亿」，副行显示千分位精确数字 */}
+        <KpiCard title={`${rangeLabel} Tokens`} value={formatYiExact(sum.total)?.yi ?? formatCompact(sum.total)} exact={formatYiExact(sum.total)?.exact} sub={`输入 ${formatCompact(sum.input)} · 输出 ${formatCompact(sum.output)}`} />
+        <KpiCard title="输入" value={formatYiExact(sum.input)?.yi ?? formatCompact(sum.input)} exact={formatYiExact(sum.input)?.exact} />
+        <KpiCard title="输出" value={formatYiExact(sum.output)?.yi ?? formatCompact(sum.output)} exact={formatYiExact(sum.output)?.exact} />
+        <KpiCard title="缓存命中" value={formatYiExact(sum.cache)?.yi ?? formatCompact(sum.cache)} exact={formatYiExact(sum.cache)?.exact} sub={`命中率 ${hitRate}%`} />
         <KpiCard title="活跃供应商" value={String(activeProviders)} sub={`共 ${providers.length} 家配置`} />
         <KpiCard title="告警" value={String(alerts.length)} tone={alerts.length > 0 ? 'danger' : 'default'} />
       </div>

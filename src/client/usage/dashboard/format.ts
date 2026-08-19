@@ -14,6 +14,18 @@ export function formatCompact(n: number): string {
   return String(n)
 }
 
+/**
+ * 亿级精准显示：≥ 1 亿时返回「亿」主值 + 千分位精确数字，
+ * 供 KPI 卡主值（缩写）配副行（精准）展示，如 "25 亿" / "2,500,000,000"。
+ * 小于 1 亿返回 null（保持原缩写，不需要副行）。
+ */
+export function formatYiExact(n: number): { yi: string; exact: string } | null {
+  if (!isFinite(n) || n < 1e8) return null
+  const yi = n / 1e8
+  const yiText = yi >= 100 ? String(Math.round(yi)) : yi.toFixed(1).replace(/\.0$/, '')
+  return { yi: `${yiText} 亿`, exact: n.toLocaleString('en-US') }
+}
+
 /** 时间戳 → 相对时间（分钟/小时/天粒度）。 */
 export function relativeTime(ts: number, now = Date.now()): string {
   const diff = ts - now
