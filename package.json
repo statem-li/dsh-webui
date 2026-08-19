@@ -35,6 +35,7 @@
         "@deepseek-ai/dsh-client-ui-tool",
         "@deepseek-ai/dsh-client-ui-attachment",
         "@deepseek-ai/dsh-client-ui-locale",
+        "@deepseek-ai/dsh-client-ui-model-selection",
         "@deepseek-ai/dsh-client-ui-settings",
         "@deepseek-ai/dsh-client-schema-form"
       ],
