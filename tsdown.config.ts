@@ -1,3 +1,4 @@
+import { existsSync, realpathSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { basename, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -16,10 +17,37 @@ const CLIENT_EXTERNALS = [
   '@antv/infographic',
 ]
 
+/**
+ * @deepseek-ai/dsh-client-schema-form 特例：DSH 宿主的 client 模块表
+ * （seed word / boot graph / package factory）当前不含该包——宿主升级后 seed 漂移，
+ * 运行时 require 会抛 "missed the module table"。其 lib 是自包含 ESM（零外部依赖），
+ * 故直接内联进 client bundle，不再向宿主请求该模块。
+ */
+const SCHEMA_FORM = '@deepseek-ai/dsh-client-schema-form'
+
 /** 判断一个模块是否应 external（支持 `scope/*` glob 与精确名）。 */
 function isExternal(id: string): boolean {
+  if (id === SCHEMA_FORM) return false
   return CLIENT_EXTERNALS.some(ext => ext.endsWith('/*') ? id.startsWith(ext.slice(0, -1)) : id === ext)
 }
+
+/**
+ * 定位 schema-form 的 ESM 入口（只读引用 DSH checkout，绝不修改）。
+ * 1) 优先 build.sh 已 link 的 node_modules junction，realpath 还原 checkout 真实路径；
+ * 2) 回退 DSH_CHECKOUT 环境变量。
+ */
+function resolveSchemaFormEntry(): string {
+  const linked = resolve('node_modules', ...SCHEMA_FORM.split('/'), 'lib', 'index.js')
+  try { return realpathSync(linked) } catch { /* junction 未建或已断 */ }
+  const checkout = process.env.DSH_CHECKOUT
+  if (checkout) {
+    const direct = resolve(checkout, 'packages/client/schema-form/lib/index.js')
+    if (existsSync(direct)) return direct
+  }
+  throw new Error(`[webui] cannot locate ${SCHEMA_FORM} entry (run scripts/build.sh to link, or set DSH_CHECKOUT)`)
+}
+
+const SCHEMA_FORM_ENTRY = resolveSchemaFormEntry()
 
 // CSS 内联约定：把 .css 变成「注入 <style> 标签」的 JS（与原 dsh-better-markdown 一致）。
 const CSS_PREFIX = '\0webui-css:'
@@ -40,10 +68,22 @@ const clientBundle: UserConfig = {
     'import.meta.env': JSON.stringify({ MODE: process.env.NODE_ENV ?? 'production' }),
   },
   deps: {
-    neverBundle: [...CLIENT_EXTERNALS],
+    neverBundle: [
+      'react', 'react/jsx-runtime', 'react-dom', 'react-dom/client',
+      // 所有 @deepseek-ai/* 平台包保持 external，唯独排除 schema-form（内联）
+      /^@deepseek-ai\/(?!dsh-client-schema-form$)/,
+      '@terrastruct/d2',
+      '@antv/infographic',
+    ],
     alwaysBundle: (id: string) => !isExternal(id),
   },
   plugins: [{
+    name: 'webui-schema-form-inline',
+    resolveId(source) {
+      if (source === SCHEMA_FORM) return SCHEMA_FORM_ENTRY
+      return null
+    },
+  }, {
     name: 'webui-code-block-dependencies',
     resolveId(source) {
       if (source === 'shiki') return resolve('src/client/markdown/shiki.ts')
