@@ -1,18 +1,18 @@
-# webui — DeepSeek Harness 会话增强全家桶
+# dsh-webui — DeepSeek Harness 会话增强全家桶
 
 一个插件融合了视图切换、消息导航、供应商管理、辅助视觉、生图、记忆、浏览器、文件浏览器、Markdown 渲染、工具聚合、网页搜索、提示音、壳管理更新、网络代理、中文思考等能力。纯插件实现，不改动 DSH 源码。
 
 ## 一句话安装（DSH）
 
 ```bash
-dsh plugin --profile web add github:statem-li/webui
+dsh plugin --profile web add github:statem-li/dsh-webui
 ```
 
 然后在 `~/.dsh/profiles/web/cordis.patch.yml` 追加注册：
 
 ```yaml
 - insert:
-    - id: webui
+    - id: dsh-webui
       name: "@dsh-external/dsh-webui"
 ```
 
@@ -36,6 +36,7 @@ dsh plugin --profile web add github:statem-li/webui
 14. **壳管理更新**（原 dsh-updater）：宽度/自启/版本/一键更新
 15. **网络代理**（原 dsh-proxy）：代理设置行
 16. **推理等级自动补全**：`webui_sync_reasoning` 工具按供应商模板补全 `reasoningEfforts`
+17. **DeepSeek 峰谷时刻卡片**：侧边栏 footer 首行显示峰时/谷时状态与切换倒计时（工作日 09:00–12:00 / 14:00–18:00 高峰）
 
 ## 构建（Windows）
 
