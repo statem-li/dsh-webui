@@ -14,12 +14,34 @@ type T = (key: FileExplorerLocaleKey) => string
 interface FileExplorerDrawerProps {
   open: boolean
   onClose: () => void
+  /** 当前会话的工作区根（cwd）；有值时抽屉自动跟随到对应工作区。 */
+  currentCwd?: string
   t: T
 }
 
 type WorkspaceState = 'loading' | 'error' | 'ready'
 
-export function FileExplorerDrawer({ open, onClose, t }: FileExplorerDrawerProps): JSX.Element | null {
+/** 归一化路径用于比较（统一分隔符、去尾斜杠、忽略大小写——Windows）。 */
+function normalizePath(path: string): string {
+  return path.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+}
+
+/** 按 cwd 选择最匹配的工作区：先精确命中，再取 cwd 所在的最深工作区。 */
+function pickWorkspaceByCwd(workspaces: WorkspaceView[], cwd: string | undefined): string | undefined {
+  if (cwd === undefined || cwd === '') return undefined
+  const target = normalizePath(cwd)
+  let best: WorkspaceView | undefined
+  for (const workspace of workspaces) {
+    const root = normalizePath(workspace.path)
+    if (target === root) return workspace.id
+    if (target.startsWith(`${root}/`)) {
+      if (best === undefined || root.length > normalizePath(best.path).length) best = workspace
+    }
+  }
+  return best?.id
+}
+
+export function FileExplorerDrawer({ open, onClose, currentCwd, t }: FileExplorerDrawerProps): JSX.Element | null {
   const [workspaces, setWorkspaces] = useState<WorkspaceView[]>([])
   const [wsState, setWsState] = useState<WorkspaceState>('loading')
   const [selected, setSelected] = useState('')
@@ -40,6 +62,14 @@ export function FileExplorerDrawer({ open, onClose, t }: FileExplorerDrawerProps
     )
     return () => { current = false }
   }, [open])
+
+  // 跟随当前会话的工作区（打开后、会话切换时自动跳到对应工作区）。
+  useEffect(() => {
+    if (!open || wsState !== 'ready') return
+    const preferred = pickWorkspaceByCwd(workspaces, currentCwd)
+    if (preferred === undefined) return
+    setSelected(prev => (prev === preferred ? prev : preferred))
+  }, [open, wsState, workspaces, currentCwd])
 
   if (!open) return null
 
