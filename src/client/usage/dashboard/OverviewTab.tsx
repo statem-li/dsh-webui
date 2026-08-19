@@ -107,9 +107,11 @@ export function OverviewTab({ onJumpAccounts, refreshTick }: OverviewTabProps): 
         <span style={{ fontSize: 12, color: 'var(--dsw-alias-label-tertiary)' }}>查询范围：{rangeTitle}</span>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}>
         <KpiCard title={`${rangeLabel} Tokens`} value={formatCompact(sum.total)} sub={`输入 ${formatCompact(sum.input)} · 输出 ${formatCompact(sum.output)}`} />
-        <KpiCard title="缓存命中率" value={`${hitRate}%`} />
+        <KpiCard title="输入" value={formatCompact(sum.input)} />
+        <KpiCard title="输出" value={formatCompact(sum.output)} />
+        <KpiCard title="缓存命中" value={formatCompact(sum.cache)} sub={`命中率 ${hitRate}%`} />
         <KpiCard title="活跃供应商" value={String(activeProviders)} sub={`共 ${providers.length} 家配置`} />
         <KpiCard title="告警" value={String(alerts.length)} tone={alerts.length > 0 ? 'danger' : 'default'} />
       </div>
