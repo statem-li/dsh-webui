@@ -279,3 +279,116 @@
 .dsh-better-markdown__markdown .code-block-header .code-action-btn:disabled:nth-child(3) {
   display: none;
 }
+
+/* ============================================================
+   丰富的 Markdown 排版（全部用主题 token，深浅主题自适应）
+   ============================================================ */
+
+/* 标题：DSH markdown 字号 token + 清晰层级 */
+.dsh-better-markdown__markdown .heading-node {
+  margin: 1.4em 0 0.6em;
+  color: var(--dsw-alias-label-primary);
+  letter-spacing: -0.01em;
+}
+
+.dsh-better-markdown__markdown .heading-1 { font: var(--dsw-font-markdown-h1); }
+.dsh-better-markdown__markdown .heading-2 { font: var(--dsw-font-markdown-h2); }
+.dsh-better-markdown__markdown .heading-3 { font: var(--dsw-font-markdown-h3); }
+.dsh-better-markdown__markdown .heading-4,
+.dsh-better-markdown__markdown .heading-5,
+.dsh-better-markdown__markdown .heading-6 {
+  font: var(--dsw-font-markdown-h4);
+}
+
+/* h1/h2 底部细分隔线，层级更明显 */
+.dsh-better-markdown__markdown .heading-1,
+.dsh-better-markdown__markdown .heading-2 {
+  padding-bottom: 0.35em;
+  border-bottom: 1px solid var(--dsw-alias-border-l2, rgba(127, 127, 127, .2));
+}
+
+/* 引用块：左侧色条 + 淡背景 + 圆角 */
+.dsh-better-markdown__markdown .blockquote-node {
+  margin: 0.9em 0;
+  padding: 0.55em 1.1em;
+  border-left: 3px solid var(--dsw-alias-state-business-primary, #3182ce);
+  border-radius: 0 8px 8px 0;
+  background: color-mix(in srgb, var(--dsw-alias-state-business-primary, #3182ce) 7%, transparent);
+  color: var(--dsw-alias-label-secondary);
+}
+
+.dsh-better-markdown__markdown .blockquote-node > * {
+  margin-top: 0.3em;
+  margin-bottom: 0.3em;
+}
+
+.dsh-better-markdown__markdown .blockquote-node > :first-child { margin-top: 0; }
+.dsh-better-markdown__markdown .blockquote-node > :last-child { margin-bottom: 0; }
+
+/* 列表：彩色 marker + 任务复选框 */
+.dsh-better-markdown__markdown .list-node > li::marker {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.dsh-better-markdown__markdown .checkbox-input {
+  accent-color: var(--dsw-alias-state-business-primary, #3182ce);
+}
+
+/* 表格：斑马纹 + 悬停高亮（表头样式见上文） */
+.dsh-better-markdown__markdown .table-node tbody tr:nth-child(even) {
+  background: color-mix(in srgb, var(--dsw-alias-interactive-bg-hover, rgba(127, 127, 127, .06)) 55%, transparent);
+}
+
+.dsh-better-markdown__markdown .table-node tbody tr:hover {
+  background: var(--dsw-alias-interactive-bg-hover, rgba(127, 127, 127, .08));
+}
+
+/* 分隔线 */
+.dsh-better-markdown__markdown .thematic-break-node {
+  margin: 1.6em 0;
+  border: 0;
+  border-top: 1px solid var(--dsw-alias-border-l3, rgba(127, 127, 127, .2));
+}
+
+/* 链接：主题色下划线 + hover 加深 */
+.dsh-better-markdown__markdown a {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: color-mix(in srgb, var(--dsw-alias-state-business-primary, #3182ce) 45%, transparent);
+}
+
+.dsh-better-markdown__markdown a:hover {
+  text-decoration-color: currentColor;
+}
+
+/* 行内代码：细边框，更易识别 */
+.dsh-better-markdown__markdown :not(pre) > code {
+  border: 1px solid var(--dsw-alias-border-l2, rgba(127, 127, 127, .18));
+}
+
+/* 高亮（==mark==）：琥珀色底 */
+.dsh-better-markdown__markdown .highlight-node {
+  padding: 0 3px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--dsw-alias-state-warn-primary, #f59e0b) 24%, transparent);
+  color: inherit;
+}
+
+/* 插入（++ins++）：绿色，保留语义 */
+.dsh-better-markdown__markdown .insert-node {
+  padding: 0 3px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--dsw-alias-state-success-primary, #2f9e44) 14%, transparent);
+  color: var(--dsw-alias-state-success-primary, #2f9e44);
+  text-decoration: none;
+}
+
+/* 删除线：弱化颜色 */
+.dsh-better-markdown__markdown .strikethrough-node {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* 图片：圆角 + 轻阴影 */
+.dsh-better-markdown__image {
+  box-shadow: 0 2px 10px rgba(0, 0, 0, .08);
+}
