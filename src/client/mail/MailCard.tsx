@@ -43,18 +43,26 @@ interface MailMessage {
 
 const POPUP_STYLES = `
 .mail-popup-overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;}
-.mail-popup-modal{width:min(760px,94vw);max-height:82vh;display:flex;flex-direction:column;background:var(--dsw-alias-bg-overlay);border:1px solid var(--dsw-alias-border-l2);border-radius:12px;overflow:hidden;}
-.mail-popup-head{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--dsw-alias-border-l1);}
+.mail-popup-modal{width:min(860px,94vw);height:min(600px,82vh);display:flex;flex-direction:column;background:var(--dsw-alias-bg-overlay);border:1px solid var(--dsw-alias-border-l2);border-radius:12px;overflow:hidden;}
+.mail-popup-head{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--dsw-alias-border-l1);flex:none;}
 .mail-popup-title{font-size:15px;font-weight:600;color:var(--dsw-alias-label-primary);}
 .mail-popup-actions{display:flex;gap:8px;}
-.mail-popup-body{overflow:auto;padding:12px 16px;}
-.mail-mail{border:1px solid var(--dsw-alias-border-l1);border-radius:8px;padding:10px 12px;margin-bottom:10px;background:var(--dsw-alias-bg-layer-1);}
-.mail-mail-head{display:flex;justify-content:space-between;gap:10px;font-size:12px;color:var(--dsw-alias-label-secondary);}
-.mail-from{font-weight:600;color:var(--dsw-alias-label-primary);}
-.mail-subject{margin-top:4px;font-size:13px;color:var(--dsw-alias-label-primary);}
-.mail-codes{margin-top:6px;font-size:13px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
-.mail-code{background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-brand-primary);color:var(--dsw-alias-brand-primary);border-radius:5px;padding:2px 8px;font-weight:700;font-size:14px;letter-spacing:1px;}
-.mail-text{margin-top:6px;font-size:12px;color:var(--dsw-alias-label-secondary);white-space:pre-wrap;word-break:break-word;max-height:120px;overflow:auto;}
+.mail-popup-body{flex:1;min-height:0;display:flex;overflow:hidden;}
+.mail-list{flex:0 0 230px;overflow-y:auto;border-right:1px solid var(--dsw-alias-border-l1);padding:8px;}
+.mail-list-item{padding:9px 10px;border-radius:8px;cursor:pointer;margin-bottom:4px;border:1px solid transparent;}
+.mail-list-item:hover{background:var(--dsw-alias-interactive-bg-hover);}
+.mail-list-item-active{background:var(--dsw-alias-interactive-bg-hover);border-color:var(--dsw-alias-border-l2);}
+.mail-list-from{font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.mail-list-meta{font-size:11px;color:var(--dsw-alias-label-tertiary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:2px;}
+.mail-list-subject{font-size:11px;color:var(--dsw-alias-label-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:2px;}
+.mail-list-badge{display:inline-block;margin-left:4px;font-size:10px;font-weight:700;color:var(--dsw-alias-brand-primary);}
+.mail-detail{flex:1;min-width:0;overflow-y:auto;padding:14px 18px;}
+.mail-detail-from{font-size:15px;font-weight:600;color:var(--dsw-alias-label-primary);}
+.mail-detail-meta{font-size:12px;color:var(--dsw-alias-label-tertiary);margin-top:3px;}
+.mail-detail-subject{font-size:14px;font-weight:500;color:var(--dsw-alias-label-primary);margin-top:10px;}
+.mail-detail-codes{margin-top:10px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
+.mail-code{background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-brand-primary);color:var(--dsw-alias-brand-primary);border-radius:5px;padding:3px 10px;font-weight:700;font-size:15px;letter-spacing:1px;}
+.mail-detail-text{margin-top:12px;font-size:13px;color:var(--dsw-alias-label-secondary);white-space:pre-wrap;word-break:break-word;line-height:1.65;}
 .mail-note{color:var(--dsw-alias-label-tertiary);font-size:12px;}
 .mail-empty{padding:20px 0;text-align:center;color:var(--dsw-alias-label-tertiary);font-size:13px;}
 `
@@ -91,6 +99,13 @@ function formatDate(raw: string): string {
   return `${ymd} ${hm}`
 }
 
+/** 从 From 头提取发件人名称（去 <email>），便于快速识别来源。 */
+function fromName(from: string): string {
+  const m = from.match(/^\s*(.*?)\s*<[^>]+>\s*$/)
+  if (m !== null && m[1] !== undefined && m[1] !== '') return m[1]
+  return from
+}
+
 // ── host API ────────────────────────────────────────────────────────────────
 
 async function postJson<T>(path: string, body: unknown): Promise<T> {
@@ -125,6 +140,7 @@ function MailCardView(props: MailCardViewProps): React.ReactElement | null {
   const [testResult, setTestResult] = useState('')
   const [popup, setPopup] = useState(false)
   const [mails, setMails] = useState<MailMessage[]>([])
+  const [selectedUid, setSelectedUid] = useState<string | null>(null)
 
   const seededEmail = useRef(false)
   const [snap, setSnap] = useState(() => scope.getSnapshot())
@@ -191,7 +207,9 @@ function MailCardView(props: MailCardViewProps): React.ReactElement | null {
     try {
       // 输入框为空时 host 端自动回退到已保存的邮箱 + 凭据域安全码。
       const r = await postJson<{ ok: boolean; messages: MailMessage[] }>('/fetch', { email: emailDraft.trim(), authCode: codeDraft.trim(), limit: 10 })
-      setMails(r.messages ?? [])
+      const msgs = r.messages ?? []
+      setMails(msgs)
+      setSelectedUid(msgs[0]?.uid ?? null)
       setPopup(true)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -201,6 +219,9 @@ function MailCardView(props: MailCardViewProps): React.ReactElement | null {
   }
 
   if (!available) return null
+
+  const mailKey = (m: MailMessage): string => m.uid ?? `${m.date}-${m.subject}`
+  const selectedMail = mails.find((m) => mailKey(m) === selectedUid) ?? mails[0]
 
   const title = '邮箱验证码'
   return (
@@ -287,25 +308,50 @@ function MailCardView(props: MailCardViewProps): React.ReactElement | null {
                 </div>
               </div>
               <div className="mail-popup-body">
-                {mails.length === 0 ? <div className="mail-empty">没有邮件</div> : null}
-                {mails.map((m) => (
-                  <div className="mail-mail" key={m.uid ?? `${m.date}-${m.subject}`}>
-                    <div className="mail-mail-head">
-                      <span className="mail-from">{m.from}</span>
-                      <span>{formatDate(m.date)}</span>
-                    </div>
-                    <div className="mail-subject">{m.subject}</div>
-                    {m.codes.length > 0
-                      ? (
-                        <div className="mail-codes">
-                          <span>验证码: </span>
-                          {m.codes.map((c) => <span className="mail-code" key={c}>{c}</span>)}
-                        </div>
-                      )
-                      : null}
-                    <div className="mail-text">{m.text}</div>
-                  </div>
-                ))}
+                {mails.length === 0
+                  ? <div className="mail-empty">没有邮件</div>
+                  : (
+                    <>
+                      <div className="mail-list">
+                        {mails.map((m) => {
+                          const key = mailKey(m)
+                          const active = selectedMail !== undefined && mailKey(selectedMail) === key
+                          return (
+                            <div
+                              className={active ? 'mail-list-item mail-list-item-active' : 'mail-list-item'}
+                              key={key}
+                              onClick={() => { setSelectedUid(key) }}
+                            >
+                              <div className="mail-list-from">
+                                {fromName(m.from)}
+                                {m.codes.length > 0 ? <span className="mail-list-badge">· 验证码</span> : null}
+                              </div>
+                              <div className="mail-list-meta">{formatDate(m.date)}</div>
+                              <div className="mail-list-subject">{m.subject}</div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                      {selectedMail !== undefined
+                        ? (
+                          <div className="mail-detail">
+                            <div className="mail-detail-from">{fromName(selectedMail.from)}</div>
+                            <div className="mail-detail-meta">{formatDate(selectedMail.date)}</div>
+                            <div className="mail-detail-subject">{selectedMail.subject}</div>
+                            {selectedMail.codes.length > 0
+                              ? (
+                                <div className="mail-detail-codes">
+                                  <span className="mail-note">验证码: </span>
+                                  {selectedMail.codes.map((c) => <span className="mail-code" key={c}>{c}</span>)}
+                                </div>
+                              )
+                              : null}
+                            <div className="mail-detail-text">{selectedMail.text || '(无正文)'}</div>
+                          </div>
+                        )
+                        : null}
+                    </>
+                  )}
               </div>
             </div>
           </div>

@@ -387,7 +387,7 @@ export async function fetchRecentMails(opts: ImapOptions, limit: number): Promis
           from,
           subject,
           date,
-          text: text.slice(0, 2000),
+          text: text.slice(0, 20000),
           codes: extractCodes(subject + ' ' + text),
         })
       }
