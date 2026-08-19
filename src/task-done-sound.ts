@@ -111,6 +111,26 @@ export function applyTaskDoneSound(ctx: any, config: TaskDoneSoundConfig = {}): 
     }
   }
 
+  // 仅播放提示音（不弹卡片）：供审批/提问等交互提醒复用。PowerShell 播放，绕开浏览器 autoplay。
+  function playSoundOnly(soundName = 'task-done.wav'): void {
+    const soundPath = findAssetPath(soundName)
+    if (soundPath === null) {
+      console.warn(`[dsh-task-done-sound] playSoundOnly: sound not found: ${soundName}`)
+      return
+    }
+    try {
+      const escaped = soundPath.replace(/'/g, "''")
+      const command = `Add-Type -AssemblyName System.Media; (New-Object System.Media.SoundPlayer '${escaped}').PlaySync()`
+      const child = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', command], { stdio: 'ignore', windowsHide: true })
+      child.on('error', (err) => {
+        console.error('[dsh-task-done-sound] playSoundOnly spawn errored:', err)
+      })
+      child.unref()
+    } catch (error: any) {
+      console.error('[dsh-task-done-sound] playSoundOnly failed:', String(error?.message ?? error))
+    }
+  }
+
   ctx.effect(() => ctx.webServer.register({
     kind: 'prefix',
     path: '/dyn-assets',
@@ -167,5 +187,31 @@ export function applyTaskDoneSound(ctx: any, config: TaskDoneSoundConfig = {}): 
     },
   }), 'webui: task-done-sound conversation-done route')
 
-  console.log(`[dsh-task-done-sound] mounted: /dyn-assets/*.wav, /api/task-done-sound/conversation-done (shellDir=${shellDir})`)
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: '/api/task-done-sound/play',
+    handler: async (req: any, res: any) => {
+      if (req.method !== 'POST') {
+        res.writeHead(405, { 'Content-Type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify({ ok: false, message: 'method not allowed' }))
+        return
+      }
+      let soundName = 'task-done.wav'
+      try {
+        const chunks: Buffer[] = []
+        for await (const chunk of req) chunks.push(chunk)
+        if (chunks.length > 0) {
+          const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')
+          if (parsed && typeof parsed.sound === 'string' && /^[A-Za-z0-9._-]+\.wav$/.test(parsed.sound)) soundName = parsed.sound
+        }
+      } catch (error) {
+        // 非法 body 视为默认提示音
+      }
+      playSoundOnly(soundName)
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' })
+      res.end(JSON.stringify({ ok: true, sound: soundName }))
+    },
+  }), 'webui: task-done-sound play route')
+
+  console.log(`[dsh-task-done-sound] mounted: /dyn-assets/*.wav, /api/task-done-sound/conversation-done, /api/task-done-sound/play (shellDir=${shellDir})`)
 }
