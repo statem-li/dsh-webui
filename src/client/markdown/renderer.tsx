@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { ReactNode } from 'react'
 import MarkdownRender, { MarkdownCodeBlockNode } from 'markstream-react'
 import type { NodeComponentProps } from 'markstream-react'
@@ -93,12 +93,30 @@ export function DshCodeBlockNode({ node, ctx }: NodeComponentProps<CodeBlockNode
   )
 }
 
+/**
+ * Current color scheme as a stable snapshot: true when the theme presenter
+ * applied `body[data-ds-dark-theme]`. Follows live theme switches via a
+ * MutationObserver so code blocks re-highlight without a reload.
+ */
+function useIsDark(): boolean {
+  return useSyncExternalStore(
+    (onChange) => {
+      if (typeof document === 'undefined') return () => {}
+      const observer = new MutationObserver(onChange)
+      observer.observe(document.body, { attributes: true, attributeFilter: ['data-ds-dark-theme'] })
+      return () => { observer.disconnect() }
+    },
+    () => typeof document !== 'undefined' && document.body.hasAttribute('data-ds-dark-theme'),
+  )
+}
+
 /** Markstream wrapper configured for untrusted assistant output. */
 export const MarkstreamMarkdown = memo(function MarkstreamMarkdown({ text, streaming, fileMentions }: {
   text: string
   streaming: boolean
   fileMentions?: MarkdownFileMentions | undefined
 }) {
+  const isDark = useIsDark()
   const codeBlockProps = useMemo(() => ({
     fileMentions: streaming ? undefined : fileMentions,
   }), [fileMentions, streaming])
@@ -114,6 +132,7 @@ export const MarkstreamMarkdown = memo(function MarkstreamMarkdown({ text, strea
         viewportPriority={false}
         codeBlockStream={streaming}
         codeBlockProps={codeBlockProps}
+        isDark={isDark}
       />
     </div>
   )
