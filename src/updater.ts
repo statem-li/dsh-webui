@@ -60,6 +60,25 @@ function git(gitBin: string, args: string[], cwd: string, timeoutMs?: number) {
   return runCmd(gitBin, args, cwd, timeoutMs)
 }
 
+/** 解析 git status --porcelain 一行，返回目标路径（重命名取新路径，处理引号包裹）。 */
+function porcelainPath(line: string): string | null {
+  // 形如 " M packages/a.ts"、"?? .gitignore"、"R  old -> new"
+  const m = /^.. (.*)$/.exec(line)
+  if (!m) return null
+  let p = m[1]
+  const arrow = p.indexOf(' -> ')
+  if (arrow !== -1) p = p.slice(arrow + 4)
+  if (p.startsWith('"') && p.endsWith('"')) {
+    p = p.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, '\\')
+  }
+  return p
+}
+
+/** 是否 DSH 源码路径：仅 apps/ 与 packages/ 下的文件计入本地改动数。 */
+function isSourcePath(p: string): boolean {
+  return p.startsWith('apps/') || p.startsWith('packages/')
+}
+
 function logTail(): string | null {
   try {
     if (!existsSync(LOG_FILE)) return null
@@ -167,8 +186,13 @@ export function applyUpdater(ctx: any, config: UpdaterConfig = {}): void {
       const dateRes = await git(gitBin, ['log', '-1', '--format=%cd', '--date=short'], dshDir, 15000)
       const date = dateRes.ok ? dateRes.stdout.trim() : ''
 
+      // 只统计「源码」改动：git status --porcelain 每行形如 "XY path"
+      // （重命名/复制为 "R  old -> new"），取目标路径后仅保留 apps/ 与
+      // packages/ 下的文件；根目录点文件（.gitignore 等）与临时脚本不算。
       const dirtyRes = await git(gitBin, ['status', '--porcelain'], dshDir, 15000)
-      const dirty = dirtyRes.ok ? dirtyRes.stdout.split(/\r?\n/).filter(Boolean).length : 0
+      const dirty = dirtyRes.ok
+        ? dirtyRes.stdout.split(/\r?\n/).filter(Boolean).map(porcelainPath).filter((p): p is string => !!p && isSourcePath(p)).length
+        : 0
 
       state.current = { full, short: full.slice(0, 7), date, branch, dirty }
 
