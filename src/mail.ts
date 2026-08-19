@@ -113,14 +113,14 @@ async function handle(ctx: Context, req: IncomingMessage, res: ServerResponse, c
       return
     }
     const body = await readJsonBody(req)
-    // 输入框为空时回退到已保存配置（settings 的邮箱 + 凭据域的安全码），
-    // 让「测试连接/查看邮箱」在已绑定后无需重新填写。
+    // 逐字段回退：哪个输入框为空，就从已保存配置补哪个
+    // （settings 的邮箱 / 凭据域的安全码），已绑定后无需重复填写。
     let email = bodyString(body, 'email')
     let authCode = bodyString(body, 'authCode')
-    if (email === '' && authCode === '') {
+    if (email === '' || authCode === '') {
       const saved = await resolveMailCredentials(ctx, current())
-      email = saved.email
-      authCode = saved.authCode
+      if (email === '') email = saved.email
+      if (authCode === '') authCode = saved.authCode
     }
     if (email === '' || authCode === '') {
       json(res, 400, { ok: false, error: '未配置邮箱或安全码：请在 设置 → 插件 → 邮箱验证码 中绑定后再试' })
