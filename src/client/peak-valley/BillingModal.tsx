@@ -6,7 +6,7 @@
  */
 import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { modalAnimClass, modalMaskAnimClass } from '../modal-animation'
-import { fetchDeepseekAccount, fetchDeepseekBilling, type AccountSnapshot, type BillingModel, type BillingResponse } from './api'
+import { fetchDeepseekAccount, fetchDeepseekBilling, saveDeepseekUserToken, type AccountSnapshot, type BillingModel, type BillingResponse } from './api'
 import { beijingClock, formatDelta, isPeak, nextTransition } from './schedule'
 
 export interface BillingModalProps {
@@ -264,6 +264,54 @@ const emptyBox: CSSProperties = {
   color: 'var(--dsw-alias-label-tertiary)',
 }
 
+const tokenBox: CSSProperties = {
+  border: '1px dashed var(--dsw-alias-border-l2)',
+  borderRadius: 12,
+  padding: 16,
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 10,
+}
+
+const tokenHint: CSSProperties = {
+  fontSize: 12,
+  lineHeight: '18px',
+  color: 'var(--dsw-alias-label-tertiary)',
+}
+
+const tokenRow: CSSProperties = {
+  display: 'flex',
+  gap: 8,
+}
+
+const tokenInputStyle: CSSProperties = {
+  flex: '1 1 auto',
+  minWidth: 0,
+  padding: '7px 10px',
+  fontSize: 13,
+  borderRadius: 6,
+  border: '1px solid var(--dsw-alias-border-l1)',
+  background: 'var(--dsw-alias-bg-base)',
+  color: 'var(--dsw-alias-label-primary)',
+}
+
+const tokenBtnStyle: CSSProperties = {
+  flex: 'none',
+  padding: '7px 16px',
+  fontSize: 12,
+  fontWeight: 600,
+  borderRadius: 6,
+  border: 'none',
+  background: '#22c55e',
+  color: '#0e1116',
+  cursor: 'pointer',
+}
+
+const tokenErrorStyle: CSSProperties = {
+  fontSize: 12,
+  color: 'var(--dsw-alias-state-error-primary)',
+}
+
 const skeletonBox = (height: number): CSSProperties => ({
   height,
   borderRadius: 12,
@@ -289,8 +337,12 @@ export function BillingModal({ closing, onClose }: BillingModalProps): JSX.Eleme
   const [loading, setLoading] = useState(true)
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
   const [nowMs, setNowMs] = useState<number>(() => Date.now())
+  const [reloadKey, setReloadKey] = useState(0)
+  const [tokenInput, setTokenInput] = useState('')
+  const [savingToken, setSavingToken] = useState(false)
+  const [tokenError, setTokenError] = useState<string | null>(null)
 
-  // 打开后并行加载余额 + 明细。
+  // 打开后并行加载余额 + 明细（保存 token 后 reloadKey 变化触发重载）。
   useEffect(() => {
     let alive = true
     setLoading(true)
@@ -309,7 +361,24 @@ export function BillingModal({ closing, onClose }: BillingModalProps): JSX.Eleme
         if (alive) setLoading(false)
       })
     return () => { alive = false }
-  }, [])
+  }, [reloadKey])
+
+  // 保存用户粘贴的 DeepSeek 平台 userToken（写入安全凭据存储后重载明细）。
+  const saveToken = async (): Promise<void> => {
+    const value = tokenInput.trim()
+    if (value === '') return
+    setSavingToken(true)
+    setTokenError(null)
+    try {
+      await saveDeepseekUserToken(value)
+      setTokenInput('')
+      setReloadKey(k => k + 1)
+    } catch (e) {
+      setTokenError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setSavingToken(false)
+    }
+  }
 
   // Esc 关闭（closing 阶段忽略，requestClose 内部亦有防重入）。
   useEffect(() => {
@@ -382,7 +451,26 @@ export function BillingModal({ closing, onClose }: BillingModalProps): JSX.Eleme
               {/* 明细区 */}
               <div style={sectionTitle}>月度账单</div>
               {billing && billing.configured === false ? (
-                <div style={emptyBox}>{billing.message || '未配置 DeepSeek API Token，暂无账单明细'}</div>
+                <div style={tokenBox}>
+                  <div style={{ fontSize: 12, color: 'var(--dsw-alias-label-secondary)' }}>{billing.message || '未配置 DeepSeek API Token，暂无账单明细'}</div>
+                  <div style={tokenHint}>
+                    获取方式：登录 platform.deepseek.com → 浏览器 DevTools → Application → Local Storage → 复制 <code>userToken</code> 的 value（JWT，会过期）。
+                  </div>
+                  <div style={tokenRow}>
+                    <input
+                      type="password"
+                      value={tokenInput}
+                      onChange={e => setTokenInput(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') void saveToken() }}
+                      placeholder="粘贴 userToken"
+                      style={tokenInputStyle}
+                    />
+                    <button type="button" style={{ ...tokenBtnStyle, opacity: tokenInput.trim() === '' || savingToken ? 0.6 : 1 }} disabled={tokenInput.trim() === '' || savingToken} onClick={() => void saveToken()}>
+                      {savingToken ? '保存中…' : '保存'}
+                    </button>
+                  </div>
+                  {tokenError && <div style={tokenErrorStyle}>{tokenError}</div>}
+                </div>
               ) : sortedMonths.length === 0 ? (
                 <div style={emptyBox}>暂无账单明细</div>
               ) : (

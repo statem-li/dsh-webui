@@ -81,3 +81,14 @@ export async function fetchDeepseekAccount(): Promise<AccountSnapshot | null> {
 export async function fetchDeepseekBilling(months = 3): Promise<BillingResponse> {
   return fetchJson<BillingResponse>(`/api/usage-stats/deepseek-billing?months=${months}`)
 }
+
+/** 通过凭据编辑路由写入 DEEPSEEK_USER_TOKEN（存于安全凭据存储，不落盘明文到前端）。 */
+export async function saveDeepseekUserToken(value: string): Promise<void> {
+  const res = await fetch('/api/usage-stats/credentials', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', accept: 'application/json' },
+    body: JSON.stringify({ ref: 'DEEPSEEK_USER_TOKEN', value }),
+  })
+  const payload = await res.json()
+  if (!res.ok || payload.ok !== true) throw new Error(payload?.message ?? `HTTP ${res.status}`)
+}
