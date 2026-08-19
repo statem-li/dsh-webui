@@ -25,12 +25,15 @@ const switchStyle: React.CSSProperties = {
   position: 'relative', width: 40, height: 22, borderRadius: 11, border: 'none', cursor: 'pointer',
   flex: 'none', background: 'var(--dsw-alias-border-l2)', transition: 'background .15s', padding: 0,
 }
-const switchOnStyle: React.CSSProperties = { ...switchStyle, background: 'var(--dsw-alias-brand-primary)' }
+// 开启态用品牌蓝（浅色 deepseek-500 / 深色 deepseek-400），knob 白底可见；
+// 不能用 --dsw-alias-brand-primary——它在浅色下是黑、深色下是白（反色设计）。
+const switchOnStyle: React.CSSProperties = { ...switchStyle, background: 'var(--dsw-alias-state-business-primary)' }
 const knobStyle: React.CSSProperties = {
-  position: 'absolute', top: 2, left: 2, width: 18, height: 18, borderRadius: '50%', background: '#fff',
-  transition: 'left .15s', boxShadow: '0 1px 2px rgba(0,0,0,.2)',
+  position: 'absolute', top: 2, left: 2, width: 18, height: 18, borderRadius: '50%',
+  background: 'var(--dsw-alias-label-tertiary)',
+  transition: 'left .15s, background .15s', boxShadow: '0 1px 2px rgba(0,0,0,.2)',
 }
-const knobOnStyle: React.CSSProperties = { ...knobStyle, left: 20 }
+const knobOnStyle: React.CSSProperties = { ...knobStyle, left: 20, background: '#fff' }
 const segBase: React.CSSProperties = {
   padding: '3px 10px', fontSize: 12, cursor: 'pointer',
   color: 'var(--dsw-alias-label-secondary)',
@@ -38,9 +41,10 @@ const segBase: React.CSSProperties = {
 }
 const segBaseR: React.CSSProperties = { ...segBase, borderTopLeftRadius: 6, borderBottomLeftRadius: 6 }
 const segBaseL: React.CSSProperties = { ...segBase, borderTopRightRadius: 6, borderBottomRightRadius: 6 }
+// 选中分段：ghost 按钮选中填充（浅色 bluish-100 / 深色 bluish-750）。
 const segOn: React.CSSProperties = {
   color: 'var(--dsw-alias-label-primary)',
-  background: 'var(--dsw-alias-raised, #21262d)',
+  background: 'var(--dsw-alias-button-ghost-active-fill)',
   borderColor: 'var(--dsw-alias-border-l2)',
 }
 const chipBase: React.CSSProperties = {
@@ -48,10 +52,11 @@ const chipBase: React.CSSProperties = {
   color: 'var(--dsw-alias-label-secondary)',
   background: 'transparent', border: '1px solid var(--dsw-alias-border-l1)', maxWidth: '100%',
 }
+// 选中厂商 chip：品牌蓝浅底 + 蓝边框 + 蓝字（business 系变量两主题都有定义）。
 const chipOn: React.CSSProperties = {
-  color: 'var(--dsw-alias-label-primary)',
-  background: 'var(--dsw-alias-brand-primary-dim, rgba(0,150,136,.18))',
-  borderColor: 'var(--dsw-alias-brand-primary)',
+  color: 'var(--dsw-alias-state-business-primary)',
+  background: 'var(--dsw-alias-state-business-tertiary)',
+  borderColor: 'var(--dsw-alias-state-business-primary)',
 }
 const chipText: React.CSSProperties = { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
 const chipHost: React.CSSProperties = { fontSize: 11, opacity: 0.7, marginLeft: 4, fontWeight: 400 }
@@ -172,8 +177,8 @@ function ProxyRow(): JSX.Element {
             style={{
               flex: 'none', padding: '4px 12px', fontSize: 12, cursor: 'pointer',
               color: 'var(--dsw-alias-label-primary)',
-              background: 'var(--dsw-alias-raised, #21262d)',
-              border: '1px solid var(--dsw-alias-border-l1)',
+              background: 'var(--dsw-alias-button-ghost-active-fill)',
+              border: '1px solid var(--dsw-alias-border-l2)',
               borderRadius: 6,
             }}
           >

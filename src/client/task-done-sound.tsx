@@ -67,7 +67,9 @@ function switchStyle(on: boolean): React.CSSProperties {
   return {
     position: 'relative', flex: 'none', width: 40, height: 22, padding: 0,
     border: 'none', borderRadius: 11, cursor: 'pointer',
-    background: on ? 'var(--dsw-alias-brand-primary)' : 'var(--dsw-alias-bg-module-platform)',
+    // 开启态用品牌蓝（浅色 deepseek-500 / 深色 deepseek-400），knob 白底可见；
+    // 不能用 --dsw-alias-brand-primary——它在浅色下是黑、深色下是白（反色设计）。
+    background: on ? 'var(--dsw-alias-state-business-primary)' : 'var(--dsw-alias-bg-module-platform)',
     transition: 'background .15s',
   }
 }

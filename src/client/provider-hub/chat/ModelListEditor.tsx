@@ -50,9 +50,6 @@ export const chatCopy = {
   modelContextInvalid: '上下文窗口必须是正数，例如 131072、256K 或 1M。',
   modelMaxTokensInvalid: '最大输出 token 数必须是正数，例如 8192、64K 或 1M。',
   reasoningEfforts: '推理等级',
-  effortStateInherit: '继承',
-  effortStateDisabled: '禁用',
-  effortStateCustom: '自定义',
   effortLevel: '等级',
   effortWire: '线上值',
   effortOffWire: '留空表示不发送该参数',
@@ -365,23 +362,12 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
     }))
   }
 
-  /** 一行的 `reasoningEfforts` 字段被推理等级编辑器对待的方式。 */
-  type EffortState = 'inherit' | 'disabled' | 'custom'
-
   /** 一行的已声明等级映射；无声明时为空映射。 */
   const effortMapOf = (model: ModelDraft): Record<string, string | null> => {
     const efforts = model['reasoningEfforts']
     return typeof efforts === 'object' && efforts !== null && !Array.isArray(efforts)
       ? efforts as Record<string, string | null>
       : {}
-  }
-
-  /** 一行所处的推理等级模式：已声明映射为 custom，`false` 为禁用。 */
-  const effortStateOf = (model: ModelDraft): EffortState => {
-    const efforts = model['reasoningEfforts']
-    if (efforts === false) return 'disabled'
-    if (typeof efforts === 'object' && efforts !== null && !Array.isArray(efforts)) return 'custom'
-    return 'inherit'
   }
 
   /** 一个等级的线上值字段显示什么：存储值，省略的 off 显示为空。 */
@@ -405,20 +391,6 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
     const next: Record<string, string | null> = { ...current }
     next[level] = text.length === 0 ? (level === 'off' ? null : '') : text
     patch(index, { reasoningEfforts: next })
-  }
-
-  /** 切换一行在继承、禁用、声明之间。 */
-  const setEffortState = (index: number, state: EffortState): void => {
-    if (state === 'inherit') {
-      patch(index, { reasoningEfforts: undefined })
-      return
-    }
-    if (state === 'disabled') {
-      patch(index, { reasoningEfforts: false })
-      return
-    }
-    const current = effortMapOf(models[index]!)
-    patch(index, { reasoningEfforts: Object.keys(current).length > 0 ? current : {} })
   }
 
   const editCapacity = (index: number, field: CapacityField, text: string): void => {
@@ -640,54 +612,35 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
                   </label>
                 </div>
                 <div style={effortBlockStyle}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-                    <span style={fieldLabelStyle}>{chatCopy.reasoningEfforts}</span>
-                    <select
-                      style={{ ...inputStyle, maxWidth: 140, height: 28, padding: '3px 8px' }}
-                      value={effortStateOf(model)}
-                      aria-label={`${chatCopy.reasoningEfforts} ${index + 1}`}
-                      disabled={disabled}
-                      onChange={(event) => { setEffortState(index, event.target.value as EffortState) }}
-                    >
-                      <option value="inherit">{chatCopy.effortStateInherit}</option>
-                      <option value="disabled">{chatCopy.effortStateDisabled}</option>
-                      <option value="custom">{chatCopy.effortStateCustom}</option>
-                    </select>
+                  <span style={fieldLabelStyle}>{chatCopy.reasoningEfforts}</span>
+                  <p style={hintStyle}>{chatCopy.effortHint}</p>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    {REASONING_LEVELS.map(level => {
+                      const map = effortMapOf(model)
+                      const checked = level in map
+                      return (
+                        <label key={level} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            disabled={disabled}
+                            aria-label={`${chatCopy.effortLevel} ${level} ${index + 1}`}
+                            onChange={(event) => { toggleEffort(index, level, event.target.checked) }}
+                          />
+                          <span style={effortLevelNameStyle}>{level}</span>
+                          <input
+                            style={inputStyle}
+                            type="text"
+                            value={effortWire(map, level)}
+                            placeholder={level === 'off' ? chatCopy.effortOffWire : level}
+                            aria-label={`${chatCopy.effortWire} ${level} ${index + 1}`}
+                            disabled={disabled || !checked}
+                            onChange={(event) => { setEffortWire(index, level, event.target.value) }}
+                          />
+                        </label>
+                      )
+                    })}
                   </div>
-                  {effortStateOf(model) === 'custom'
-                    ? (
-                      <>
-                        <p style={hintStyle}>{chatCopy.effortHint}</p>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                          {REASONING_LEVELS.map(level => {
-                            const map = effortMapOf(model)
-                            const checked = level in map
-                            return (
-                              <label key={level} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                                <input
-                                  type="checkbox"
-                                  checked={checked}
-                                  disabled={disabled}
-                                  aria-label={`${chatCopy.effortLevel} ${level} ${index + 1}`}
-                                  onChange={(event) => { toggleEffort(index, level, event.target.checked) }}
-                                />
-                                <span style={effortLevelNameStyle}>{level}</span>
-                                <input
-                                  style={inputStyle}
-                                  type="text"
-                                  value={effortWire(map, level)}
-                                  placeholder={level === 'off' ? chatCopy.effortOffWire : level}
-                                  aria-label={`${chatCopy.effortWire} ${level} ${index + 1}`}
-                                  disabled={disabled || !checked}
-                                  onChange={(event) => { setEffortWire(index, level, event.target.value) }}
-                                />
-                              </label>
-                            )
-                          })}
-                        </div>
-                      </>
-                    )
-                    : null}
                 </div>
               </>
             )

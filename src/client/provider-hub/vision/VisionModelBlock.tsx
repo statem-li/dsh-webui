@@ -1,12 +1,13 @@
 /**
  * VisionModelBlock — 辅助视觉模型区块。
- * 交互：两级下拉——先选供应商，再选该供应商下的模型。
+ * 可视化编辑「降级方案」：有序列表（第一个为当前使用），支持上移/下移/删除/添加。
  * 复用 dsh-vision-helper 的 HTTP 接口：/api/vision-helper/providers + /config。
  */
 import { useEffect, useState } from 'react'
 
 interface ModelInfo { id: string; name: string; input: string[] | null }
 interface ProviderInfo { id: string; name: string; models: ModelInfo[] }
+interface VisionItem { provider: string; model: string }
 
 const BLOCK_TITLE: React.CSSProperties = { fontSize: 14, fontWeight: 600, marginBottom: 6 }
 const HINT: React.CSSProperties = { fontSize: 12, color: 'var(--dsw-alias-label-secondary)', marginBottom: 10 }
@@ -18,17 +19,30 @@ const SELECT: React.CSSProperties = {
   color: 'var(--dsw-alias-label-primary)', fontSize: 13, cursor: 'pointer',
 }
 const ACTIVE_HINT: React.CSSProperties = { fontSize: 12, color: 'var(--dsw-alias-label-secondary)' }
+const SMALL_BTN: React.CSSProperties = {
+  padding: '2px 9px', fontSize: 12, lineHeight: '18px', borderRadius: 5, cursor: 'pointer',
+  border: '1px solid var(--dsw-alias-border-l2)',
+  background: 'var(--dsw-alias-bg-layer-2, transparent)',
+  color: 'var(--dsw-alias-label-primary)',
+}
+const SMALL_BTN_DISABLED: React.CSSProperties = { ...SMALL_BTN, opacity: 0.45, cursor: 'default' }
+const LIST_ROW: React.CSSProperties = { display: 'flex', gap: 8, alignItems: 'center', padding: '5px 0' }
+const TAG: React.CSSProperties = { fontSize: 13, fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace' }
 
 function isVisionModel(m: ModelInfo): boolean {
   return Array.isArray(m.input) && m.input.includes('image')
 }
 
+function keyOf(item: VisionItem): string { return `${item.provider}/${item.model}` }
+
 export function VisionModelBlock(): React.ReactElement {
   const [providers, setProviders] = useState<ProviderInfo[]>([])
+  const [list, setList] = useState<VisionItem[]>([])
   const [active, setActive] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
-  const [selectedProvider, setSelectedProvider] = useState('')
+  const [addProvider, setAddProvider] = useState('')
+  const [addModel, setAddModel] = useState('')
 
   useEffect(() => {
     let alive = true
@@ -39,6 +53,7 @@ export function VisionModelBlock(): React.ReactElement {
         if (d && d.ok !== false) {
           setProviders(d.providers || [])
           setActive(d.active || '')
+          setList(Array.isArray(d.visionList) ? d.visionList : [])
         } else {
           setError((d && d.error) || '加载失败')
         }
@@ -47,77 +62,94 @@ export function VisionModelBlock(): React.ReactElement {
     return () => { alive = false }
   }, [])
 
-  const slash = active.indexOf('/')
-  const activeProvider = slash > 0 ? active.slice(0, slash) : ''
-  const activeModel = slash > 0 ? active.slice(slash + 1) : ''
+  const addModels = providers.find(p => p.id === addProvider)?.models ?? []
 
-  // 当前供应商：用户手选 > 激活模型所属 > 第一个。
-  const currentProvider = selectedProvider || activeProvider || providers[0]?.id || ''
-  const currentModels = providers.find(p => p.id === currentProvider)?.models ?? []
-  // 模型框当前值：激活模型属于当前供应商才回显，否则留空（提示选择）。
-  const modelValue = currentProvider === activeProvider ? activeModel : ''
-
-  // 激活模型是否支持图片输入（仅当它能定位到当前供应商下的模型时）。
-  const activeIsVision = (() => {
-    const p = providers.find(x => x.id === activeProvider)
-    const m = p?.models.find(x => x.id === activeModel)
-    return m !== undefined && isVisionModel(m)
-  })()
-
-  const pick = (key: string): void => {
+  const save = (next: VisionItem[], activeKey?: string): void => {
     if (saving) return
     setSaving(true)
+    setError(null)
     fetch('/api/vision-helper/config', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ visionActive: key }),
+      body: JSON.stringify({ vision: next, visionActive: activeKey }),
     })
       .then((r) => r.json())
-      .then((d: any) => { if (d && d.ok) setActive(key) })
+      .then((d: any) => {
+        if (d && d.ok) { setList(next); setActive(d.active || '') }
+        else setError((d && d.error) || '保存失败')
+      })
+      .catch(() => setError('保存请求失败'))
       .finally(() => setSaving(false))
+  }
+
+  const move = (index: number, dir: -1 | 1): void => {
+    const target = index + dir
+    if (target < 0 || target >= list.length) return
+    const next = list.slice()
+    const tmp = next[index]!
+    next[index] = next[target]!
+    next[target] = tmp
+    save(next)
+  }
+
+  const remove = (index: number): void => {
+    save(list.filter((_, i) => i !== index))
+  }
+
+  const add = (): void => {
+    if (!addProvider || !addModel) return
+    if (list.some(x => x.provider === addProvider && x.model === addModel)) { setError('该模型已在降级列表中'); return }
+    save([...list, { provider: addProvider, model: addModel }])
+    setAddModel('')
+  }
+
+  const modelName = (item: VisionItem): string => {
+    const p = providers.find(x => x.id === item.provider)
+    const m = p?.models.find(x => x.id === item.model)
+    return (m && m.name) || item.model
   }
 
   return (
     <div>
       <div style={BLOCK_TITLE}>辅助视觉模型</div>
-      <div style={HINT}>vision_describe 使用的模型（图片→文本描述，供文本主模型与浏览器截图兜底）。标注「视觉」的模型声明了图片输入。</div>
+      <div style={HINT}>vision_describe 使用的模型（图片→文本描述）。从上到下依次尝试，第一个成功的即返回（可自定义降级方案）。标注「视觉」的模型声明了图片输入。</div>
       {error && <div style={{ color: '#d33', marginBottom: 8 }}>{error}</div>}
       {providers.length === 0 && !error
         ? <div style={{ color: '#888' }}>加载中…</div>
         : (
           <>
-            <div style={ROW}>
-              <select
-                style={SELECT}
-                value={currentProvider}
-                aria-label="供应商"
-                onChange={(e) => { setSelectedProvider(e.target.value) }}
-              >
-                {providers.map(p => (
-                  <option key={p.id} value={p.id}>{p.name || p.id}</option>
+            {list.length === 0
+              ? <div style={{ color: '#888', marginBottom: 8 }}>尚未配置降级方案，请从下方添加模型。</div>
+              : list.map((item, index) => (
+                <div key={keyOf(item) + '-' + index} style={LIST_ROW}>
+                  <span style={{ fontSize: 12, color: 'var(--dsw-alias-label-secondary)', width: 18, flex: 'none' }}>{index + 1}</span>
+                  <span style={TAG}>{item.provider}/{item.model}</span>
+                  <span style={{ fontSize: 12, color: 'var(--dsw-alias-label-secondary)' }}>{modelName(item)}</span>
+                  <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, flex: 'none' }}>
+                    <button style={saving || index === 0 ? SMALL_BTN_DISABLED : SMALL_BTN} disabled={saving || index === 0} onClick={() => move(index, -1)}>↑</button>
+                    <button style={saving || index === list.length - 1 ? SMALL_BTN_DISABLED : SMALL_BTN} disabled={saving || index === list.length - 1} onClick={() => move(index, 1)}>↓</button>
+                    <button style={saving ? SMALL_BTN_DISABLED : SMALL_BTN} disabled={saving} onClick={() => remove(index)}>✕</button>
+                  </div>
+                </div>
+              ))}
+            <div style={{ ...ROW, marginTop: 10 }}>
+              <select style={SELECT} aria-label="添加供应商" value={addProvider}
+                onChange={(e) => { setAddProvider(e.target.value); setAddModel('') }}>
+                <option value="">选择供应商</option>
+                {providers.map(p => <option key={p.id} value={p.id}>{p.name || p.id}</option>)}
+              </select>
+              <select style={SELECT} aria-label="添加模型" value={addModel}
+                disabled={!addProvider || addModels.length === 0}
+                onChange={(e) => setAddModel(e.target.value)}>
+                <option value="">{addModels.length === 0 ? '无模型' : '选择模型'}</option>
+                {addModels.map(m => (
+                  <option key={m.id} value={m.id}>{m.name || m.id}{isVisionModel(m) ? '（视觉）' : ''}</option>
                 ))}
               </select>
-              <select
-                style={SELECT}
-                value={modelValue}
-                aria-label="模型"
-                disabled={saving || currentModels.length === 0}
-                onChange={(e) => { if (e.target.value) pick(`${currentProvider}/${e.target.value}`) }}
-              >
-                <option value="">{currentModels.length === 0 ? '无模型' : '选择模型'}</option>
-                {currentModels.map(m => (
-                  <option key={m.id} value={m.id}>
-                    {m.name || m.id}{isVisionModel(m) ? '（视觉）' : ''}
-                  </option>
-                ))}
-              </select>
+              <button style={saving || !addProvider || !addModel ? SMALL_BTN_DISABLED : SMALL_BTN}
+                disabled={saving || !addProvider || !addModel} onClick={add}>+ 添加</button>
             </div>
-            {active && (
-              <div style={ACTIVE_HINT}>
-                当前：{active}
-                {activeIsVision ? ' · 支持图片输入' : ''}
-              </div>
-            )}
+            {active && <div style={ACTIVE_HINT}>当前生效：{active}</div>}
           </>
         )}
     </div>

@@ -16,12 +16,15 @@ const switchStyle: React.CSSProperties = {
   position: 'relative', width: 40, height: 22, borderRadius: 11, border: 'none', cursor: 'pointer',
   flex: 'none', background: 'var(--dsw-alias-border-l2)', transition: 'background .15s', padding: 0,
 }
-const switchOnStyle: React.CSSProperties = { ...switchStyle, background: 'var(--dsw-alias-brand-primary)' }
+// 开启态用品牌蓝（浅色 deepseek-500 / 深色 deepseek-400），knob 白底可见；
+// 不能用 --dsw-alias-brand-primary——它在浅色下是黑、深色下是白（反色设计）。
+const switchOnStyle: React.CSSProperties = { ...switchStyle, background: 'var(--dsw-alias-state-business-primary)' }
 const knobStyle: React.CSSProperties = {
-  position: 'absolute', top: 2, left: 2, width: 18, height: 18, borderRadius: '50%', background: '#fff',
-  transition: 'left .15s', boxShadow: '0 1px 2px rgba(0,0,0,.2)',
+  position: 'absolute', top: 2, left: 2, width: 18, height: 18, borderRadius: '50%',
+  background: 'var(--dsw-alias-label-tertiary)',
+  transition: 'left .15s, background .15s', boxShadow: '0 1px 2px rgba(0,0,0,.2)',
 }
-const knobOnStyle: React.CSSProperties = { ...knobStyle, left: 20 }
+const knobOnStyle: React.CSSProperties = { ...knobStyle, left: 20, background: '#fff' }
 
 function fetchState(): Promise<{ enabled?: boolean }> {
   return fetch('/api/zh-thinking', { cache: 'no-store' }).then(r => r.json())
