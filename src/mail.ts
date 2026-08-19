@@ -18,7 +18,7 @@ export const DEFAULT_AUTH_CODE_REF = 'MAIL_IMAP_AUTH_CODE'
 
 /** 邮箱验证码插件配置（全部可选）。 */
 export interface MailConfig {
-  /** 邮箱账号（如 2601259226@qq.com），存 settings。 */
+  /** 邮箱账号（如 name@qq.com），存 settings。 */
   email?: string
 }
 

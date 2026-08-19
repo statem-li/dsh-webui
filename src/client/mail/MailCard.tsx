@@ -141,8 +141,15 @@ function MailCardView(props: MailCardViewProps): React.ReactElement | null {
     try {
       const email = emailDraft.trim()
       if (email === '') throw new Error('邮箱账号不能为空')
-      if (codeDraft.trim() !== '') {
-        await api.credentials.set({ ref: DEFAULT_AUTH_CODE_REF, value: codeDraft.trim() })
+      const code = codeDraft.trim()
+      if (code === '' && !codeConfigured) throw new Error('请填写安全码（尚未配置过）')
+      if (code !== '') {
+        await api.credentials.set({ ref: DEFAULT_AUTH_CODE_REF, value: code })
+        // 重新 describe 验证写入真的落库，避免静默失败却提示成功。
+        const check = await api.credentials.describe({ refs: [DEFAULT_AUTH_CODE_REF] })
+        const configured = check.result.ok
+          && check.result.value.credentials[DEFAULT_AUTH_CODE_REF]?.configured === true
+        if (!configured) throw new Error('安全码保存失败：凭据域未接受写入')
         setCodeConfigured(true)
       }
       await scope.set('email', email)
@@ -217,7 +224,7 @@ function MailCardView(props: MailCardViewProps): React.ReactElement | null {
                 className="ase-input"
                 type="text"
                 value={emailDraft}
-                placeholder="2601259226@qq.com"
+                placeholder="name@qq.com"
                 disabled={!writable || busy}
                 onChange={(event) => { setEmailDraft(event.target.value) }}
               />
