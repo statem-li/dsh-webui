@@ -6,9 +6,9 @@ export declare const inject: string[];
 export interface Config {
     /** Chrome/Edge 可执行文件路径（空 = 自动探测常见路径） */
     chromePath: string;
-    /** CDP 端口（0 = 自动从 9222 起找空闲端口） */
+    /** CDP 起始端口（0 = 自动从 9222 起找空闲端口；每会话独立端口） */
     port: number;
-    /** 无头模式 */
+    /** 无头模式（默认开启：画面经接口内嵌到 Web GUI，不弹独立窗口） */
     headless: boolean;
     /** 截图输出目录（空 = Chrome profile 目录下 screenshots/） */
     screenshotDir: string;

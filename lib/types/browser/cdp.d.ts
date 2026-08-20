@@ -63,6 +63,8 @@ export declare function navigateHistory(session: CdpSession, delta: number): Pro
     url: string;
     title: string;
 }>;
+/** 设置视口尺寸（无头 Chrome 默认视口过小，网页会以小屏响应式渲染；这里设成桌面尺寸）。 */
+export declare function setViewport(session: CdpSession, width: number, height: number): Promise<void>;
 /** 页面截图（jpeg base64） */
 export declare function captureScreenshot(session: CdpSession, quality?: number): Promise<string>;
 /** 页面执行 JS，返回 JSON 值 */

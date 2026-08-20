@@ -293,15 +293,71 @@ function decodeBody(rawText: string, headerText: string): string {
   return text
 }
 
+// 常见误报词（含数字的英文占位词，大写比较），避免把关键词窗口里的普通词当验证码。
+const ALNUM_BLACKLIST = new Set([
+  'HTTP', 'HTTPS', 'HTML', 'CODE', 'OTP', 'PASSWORD', 'PASSCODE',
+  'LOGIN', 'VERIFY', 'SECURITY', 'TOKEN', 'NUMBER', 'PHONE', 'MOBILE',
+])
+
+/**
+ * 在关键词就近窗口内取第一个「字母数字混合」候选（至少 1 字母 + 1 数字）。
+ * 支持连续型（Ab3Xy9）与连字符分段型（AB12-CD34）；分段型去连字符返回连续码
+ * （去分隔后 4–10 位），便于直接填入输入框。不用空格作分隔符，避免把英文
+ * 句子里的功能词（如 "code is X7K2P9" 中的 "is"）误当验证码段。
+ */
+function firstAlnumCode(window: string): string | null {
+  const candidates: Array<{ token: string; index: number }> = []
+
+  // 连续型：\b[A-Za-z0-9]{4,10}\b，须同时含字母与数字。
+  const contRe = /\b([A-Za-z0-9]{4,10})\b/g
+  let m: RegExpExecArray | null
+  while ((m = contRe.exec(window)) !== null) {
+    const t = m[1]!
+    if (/[A-Za-z]/.test(t) && /\d/.test(t)) candidates.push({ token: t, index: m.index })
+  }
+
+  // 分段型：首段 2–6 位 + 至少一段「连字符 + 2–6 位」，如 AB12-CD34。
+  const segRe = /\b([A-Za-z0-9]{2,6}(?:-[A-Za-z0-9]{2,6})+)\b/g
+  while ((m = segRe.exec(window)) !== null) {
+    const compact = m[1]!.replace(/-/g, '')
+    if (/[A-Za-z]/.test(compact) && /\d/.test(compact) && compact.length >= 4 && compact.length <= 10) {
+      candidates.push({ token: compact, index: m.index })
+    }
+  }
+
+  // 位置最靠前优先；同位置取更长（分段型去分隔后更长，避免被切成首段）。
+  candidates.sort((a, b) => (a.index - b.index) || (b.token.length - a.token.length))
+  for (const c of candidates) {
+    if (!ALNUM_BLACKLIST.has(c.token.toUpperCase())) return c.token
+  }
+  return null
+}
+
 function extractCodes(text: string): string[] {
   const codes: string[] = []
   const seen = new Set<string>()
   const add = (c: string): void => { if (c !== '' && !seen.has(c)) { seen.add(c); codes.push(c) } }
-  const hinted = /(?:验证码|校验码|验证|校验|动态码|授权码|安全码|一次性密码|verification\s*code|verify\s*code|security\s*code|one[-\s]?time\s*(?:passcode|code|password)|\botp\b|\bcode\b)[^\d]{0,24}(\d{4,8})/gi
+
+  // 关键词：验证码出现的常见上下文，用于「就近窗口」提取，抑制误报。
+  const KW = '(?:验证码|校验码|校验|验证|动态码|授权码|安全码|一次性密码|登录码|verification\\s*code|verify\\s*code|security\\s*code|one[-\\s]?time\\s*(?:passcode|code|password)|\\bpasscode\\b|\\botp\\b|\\bcode\\b)'
+
+  // 1) 关键词后紧跟的纯数字验证码（4–8 位，保留原逻辑）。
+  const hinted = new RegExp(KW + '[^\\d]{0,24}(\\d{4,8})', 'gi')
   let m: RegExpExecArray | null
   while ((m = hinted.exec(text)) !== null) add(m[1]!)
+
+  // 2) 关键词就近窗口内的字母数字混合验证码（至少 1 字母 + 1 数字）。
+  const kwRe = new RegExp(KW, 'gi')
+  while ((m = kwRe.exec(text)) !== null) {
+    const windowText = text.slice(m.index + m[0].length, m.index + m[0].length + 80)
+    const token = firstAlnumCode(windowText)
+    if (token !== null) add(token)
+  }
+
+  // 3) 兜底：全文 6 位纯数字。
   const re6 = /(?<!\d)(\d{6})(?!\d)/g
   while ((m = re6.exec(text)) !== null) add(m[1]!)
+
   return codes
 }
 
