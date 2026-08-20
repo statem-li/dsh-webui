@@ -37,6 +37,7 @@ dsh plugin --profile web add github:statem-li/dsh-webui
 15. **网络代理**（原 dsh-proxy）：代理设置行
 16. **推理等级自动补全**：`webui_sync_reasoning` 工具按供应商模板补全 `reasoningEfforts`
 17. **DeepSeek 峰谷时刻卡片**：侧边栏 footer 首行显示峰时/谷时状态与切换倒计时（工作日 09:00–12:00 / 14:00–18:00 高峰）
+18. **对话退回**（原 dsh-webui-rewind）：每条用户消息加退回按钮，一键回退工作区文件到该消息发送前 + 原地回退上下文（fork 到该消息之前 turn 边界 → 归档原会话 → 打开子会话）
 
 ## 构建（Windows）
 
