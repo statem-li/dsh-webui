@@ -248,6 +248,15 @@ const SHEET = `
 .skm-viewer-content hr{border:none;border-top:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.08));margin:10px 0}
 .skm-loose-empty{margin:2px;padding:4px 0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,#888)}
 .skm-visually-hidden{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+
+/* ── 移动端：面板加高、文件查看器左右分栏改上下堆叠 ───────────── */
+@media (max-width: 767.98px) {
+  .skm-panel{max-height:calc(100vh - 140px)}
+  .skm-viewer-body{height:calc(100vh - 60px)}
+  .skm-viewer-layout{flex-direction:column}
+  .skm-viewer-nav{width:100%;border-right:none;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.08));flex:none;max-height:40%}
+  .skm-viewer-content{flex:1;min-height:0}
+}
 `
 
 function ensureStyles() {

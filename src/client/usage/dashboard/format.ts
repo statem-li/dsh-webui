@@ -26,6 +26,23 @@ export function formatYiExact(n: number): { yi: string; exact: string } | null {
   return { yi: `${yiText} 亿`, exact: n.toLocaleString('en-US') }
 }
 
+/**
+ * 中文单位缩写：≥1 亿显示「X 亿」，≥1 万显示「X 万」，否则原数。
+ * 用量工作台图表/列表的 token 数值统一用它，避免 K/M/G 英文后缀。
+ */
+export function formatUnits(n: number): string {
+  if (!isFinite(n) || n < 0) return String(n)
+  if (n >= 1e8) {
+    const v = n / 1e8
+    return `${v >= 100 ? Math.round(v) : v.toFixed(v >= 10 ? 1 : 2).replace(/\.?0+$/, '')}亿`
+  }
+  if (n >= 1e4) {
+    const v = n / 1e4
+    return `${v >= 100 ? Math.round(v) : v.toFixed(1).replace(/\.0$/, '')}万`
+  }
+  return String(Math.round(n))
+}
+
 /** 时间戳 → 相对时间（分钟/小时/天粒度）。 */
 export function relativeTime(ts: number, now = Date.now()): string {
   const diff = ts - now

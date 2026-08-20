@@ -105,8 +105,8 @@ interface SessionBrowserState {
   screenshotDir: string
   lastScreenshotPath: string | null
   log: Array<{ ts: string; action: string; detail: string }>
-  /** screencast 最新帧（内嵌面板实时画面 + 交互回传坐标基准）。 */
-  frame: { data: string; width: number; height: number; ts: number } | null
+  /** screencast 最新帧（内嵌面板实时画面 + 交互回传坐标基准）。rev 为递增帧号，供 client 增量拉取（无新帧返回 304）。 */
+  frame: { data: string; width: number; height: number; ts: number; rev: number } | null
   /** screencast 帧事件订阅的取消函数。 */
   offFrame: (() => void) | null
 }
@@ -150,8 +150,6 @@ export function applyBrowser(ctx: PluginContext, config: Config): void {
   // 目标视口：默认桌面尺寸，client 侧会按用户屏幕分辨率动态上报覆盖。
   let viewportWidth = VIEWPORT_WIDTH
   let viewportHeight = VIEWPORT_HEIGHT
-  // Web GUI 自身 origin（client 上报），用于拒绝「导航到自身导致截图套娃」。
-  let webGuiOrigin = ''
   function loadPrefs(): void {
     try {
       const parsed = JSON.parse(fs.readFileSync(prefsFile, 'utf8'))
@@ -271,7 +269,7 @@ export function applyBrowser(ctx: PluginContext, config: Config): void {
     // 启动 screencast：Chrome 持续推送页面帧（仅变化时），供内嵌面板实时展示 +
     // 交互回传（面板内鼠标/键盘/滚轮直接操作页面）。失败不阻塞浏览器可用性。
     try {
-      await startScreencast(session, viewportWidth, viewportHeight, 70)
+      await startScreencast(session, viewportWidth, viewportHeight, 85)
       st.offFrame = conn.on('Page.screencastFrame', (p: any) => {
         if (!p || typeof p.data !== 'string' || p.sessionId !== session.sessionId) return
         // 逐帧 ack（CDP 要求，否则会暂停推送）
@@ -284,6 +282,7 @@ export function applyBrowser(ctx: PluginContext, config: Config): void {
           width: Number(meta.deviceWidth) || viewportWidth,
           height: Number(meta.deviceHeight) || viewportHeight,
           ts: Date.now(),
+          rev: (st.frame?.rev ?? 0) + 1,
         }
       })
     } catch (e: any) {
@@ -403,17 +402,6 @@ export function applyBrowser(ctx: PluginContext, config: Config): void {
         const step = beginActivity(sessionId, 'browser_navigate', '打开 URL', url)
         try {
           if (!/^https?:\/\//i.test(url)) throw new Error('仅支持 http/https 地址')
-          // 防护：拒绝导航到 Web GUI 自身，避免截图递归套娃。
-          if (webGuiOrigin !== '') {
-            try {
-              if (new URL(url).origin === webGuiOrigin) {
-                throw new Error('不允许导航到 DSH Web 界面自身（会导致画面递归套娃）')
-              }
-            } catch (e: any) {
-              if (String(e?.message || '').includes('递归套娃')) throw e
-              // URL 解析失败则忽略，交给后续导航报错
-            }
-          }
           const session = await requireSession(sessionId)
           const info = await navigateAndWait(session, url, NAV_TIMEOUT_MS)
           const snap = await snapshotFor(session, sessionId)
@@ -906,14 +894,24 @@ export function applyBrowser(ctx: PluginContext, config: Config): void {
             json(res, 404, { ok: false, error: '浏览器未运行' })
             return
           }
+          // 增量拉取：client 带上已收到的帧号 since；无新帧时返回 304 空体，
+          // 避免每 150ms 全量下载+解码图片（静止页面的主要卡顿来源）。
+          const since = Number(queryOf(req).get('since')) || 0
+          if (st.frame !== null && since === st.frame.rev) {
+            res.writeHead(304, { 'x-frame-rev': String(st.frame.rev) })
+            res.end()
+            return
+          }
           // 优先返回 screencast 最新帧（实时、零截图开销）；无帧时回退截图。
           let data: Buffer
           let width = viewportWidth
           let height = viewportHeight
+          let rev = 0
           if (st.frame !== null) {
             data = Buffer.from(st.frame.data, 'base64')
             width = st.frame.width
             height = st.frame.height
+            rev = st.frame.rev
           } else {
             const base64 = await captureScreenshot(st.session)
             data = Buffer.from(base64, 'base64')
@@ -923,6 +921,7 @@ export function applyBrowser(ctx: PluginContext, config: Config): void {
             'cache-control': 'no-store',
             'x-frame-width': String(width),
             'x-frame-height': String(height),
+            'x-frame-rev': String(rev),
           })
           res.end(data)
         } catch (e: any) {
@@ -1161,13 +1160,16 @@ export function applyBrowser(ctx: PluginContext, config: Config): void {
             }
             viewportWidth = Math.min(Math.max(Math.round(body.width), 1280), 2560)
             viewportHeight = Math.min(Math.max(Math.round(body.height), 800), 1600)
-            if (typeof body.origin === 'string' && body.origin.length > 0) {
-              webGuiOrigin = body.origin
-            }
-            // 已运行会话实时更新视口，下次截图即用新分辨率。
+            // 已运行会话实时更新视口；screencast 的 maxWidth/maxHeight 是启动时锁定的，
+            // 不会随视口变化自动更新（否则帧一直停留在旧分辨率、画面模糊），
+            // 因此用新尺寸重启 screencast 让帧分辨率跟上屏幕。
             for (const st of sessions.values()) {
               if (st.session) {
                 try { await setViewport(st.session, viewportWidth, viewportHeight) } catch { /* 忽略 */ }
+                try {
+                  await stopScreencast(st.session)
+                  await startScreencast(st.session, viewportWidth, viewportHeight, 85)
+                } catch { /* 忽略：screencast 失败不阻塞 */ }
               }
             }
             return respond(200, { ok: true, width: viewportWidth, height: viewportHeight })

@@ -95,10 +95,16 @@ const SHEET = `
 /* ── 侧边栏会话列表标识 ───────────────────────────────────────── */
 .dsh-browser-sidebar-badge{
   flex:none;display:inline-flex;align-items:center;justify-content:center;
-  width:14px;height:14px;margin-right:4px;border-radius:4px;
-  background:rgba(74,158,255,.18);color:var(--dsw-alias-state-business-primary,#4a9eff);
+  width:14px;height:14px;margin-right:4px;
+  color:var(--dsw-alias-state-business-primary,#4a9eff);
 }
 .dsh-browser-sidebar-badge svg{animation:dsh-browser-pulse 1.4s ease-in-out infinite}
+
+/* ── 移动端：内嵌浏览器面板全屏、时间线全宽 ───────────────────── */
+@media (max-width: 767.98px) {
+  .dsh-browser-panel{width:100vw;height:100vh;height:100dvh;max-width:none;max-height:none;top:0;left:0;transform:none;border-radius:0;border:none}
+  .dsh-browser-panel__timeline{width:100%;max-width:100%}
+}
 `
 
 let injected = false

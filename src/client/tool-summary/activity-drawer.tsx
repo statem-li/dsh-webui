@@ -10,6 +10,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
+import { IconApiOutline14, IconThinkOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ChatNode } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { ToolCallBlock } from '@deepseek-ai/dsh-client-runtime/client'
 import { computeStats, formatDuration, isRunning, shortenPath, type ToolStats } from './tool-stats.ts'
@@ -104,7 +105,7 @@ function DrawerToolSummary({ stats, cwd, openFile, kinds }: {
 }) {
   return (
     <div className="dts__summary">
-      <div className="dts__summary-title">🔧 工具调用总结</div>
+      <div className="dts__summary-title"><IconApiOutline14 size={13} aria-hidden /> 工具调用总结</div>
       <div className="dts__summary-line">
         共 <b>{stats.total}</b> 次调用
         {stats.running > 0 && <> · <b>{stats.running}</b> 次进行中</>}
@@ -230,14 +231,22 @@ function DrawerPanel({ turn, data, store, openFile, inspectCall }: {
       <div className="dts__modal-backdrop" onClick={close} aria-hidden />
       <div className="dts__modal" role="dialog" aria-label={`第 ${turn} 轮活动详情`}>
         <header className="dts__modal-head">
-          <span className="dts__modal-title">第 {turn} 轮 · 🧠 {reasoning.length} · 🔧 {toolNodes.length}</span>
+          <span className="dts__modal-title">
+            第 {turn} 轮
+            {mode === 'reasoning' && (
+              <> · <IconThinkOutline14 size={14} aria-hidden /> {reasoning.length}</>
+            )}
+            {mode === 'tools' && (
+              <> · <IconApiOutline14 size={14} aria-hidden /> {toolNodes.length}</>
+            )}
+          </span>
           <button type="button" className="dts__modal-close" onClick={close} aria-label="关闭">✕</button>
         </header>
         <div className="dts__modal-scroll" ref={scrollRef}>
           {mode !== 'tools' && reasoning.length > 0 && (
             <div className="dts__modal-panel">
               <header className="dts__modal-panel-head">
-                <span>🧠 思考过程</span>
+                <span className="dts__modal-panel-title"><IconThinkOutline14 size={14} aria-hidden /> 思考过程</span>
                 {reasoningRunning && elapsed !== undefined && (
                   <span className="dts__modal-panel-live">思考中 · {formatDuration(elapsed)}</span>
                 )}
@@ -265,7 +274,7 @@ function DrawerPanel({ turn, data, store, openFile, inspectCall }: {
           {mode !== 'reasoning' && toolNodes.length > 0 && (
             <div className="dts__modal-panel">
               <header className="dts__modal-panel-head">
-                <span>🔧 工具调用</span>
+                <span className="dts__modal-panel-title"><IconApiOutline14 size={14} aria-hidden /> 工具调用</span>
                 {toolsRunning && toolsElapsed !== undefined && (
                   <span className="dts__modal-panel-live">进行中 · {formatDuration(toolsElapsed)}</span>
                 )}

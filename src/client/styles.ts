@@ -28,6 +28,16 @@ export const css = {
   tipBody: 'webui-tip-body',
   flash: 'webui-flash',
   providerBadge: 'webui-provider-badge',
+  shotBtn: 'webui-shot-btn',
+  shotBtnBusy: 'webui-shot-btn-busy',
+  shotPopup: 'webui-shot-popup',
+  shotPopupHead: 'webui-shot-popup-head',
+  shotPopupBody: 'webui-shot-popup-body',
+  shotImg: 'webui-shot-img',
+  shotPath: 'webui-shot-path',
+  shotActions: 'webui-shot-actions',
+  shotAction: 'webui-shot-action',
+  shotError: 'webui-shot-error',
 } as const
 
 const STYLE_ID = 'dsh-webui-styles'
@@ -69,11 +79,13 @@ const SHEET = `
 .webui-load-older{margin:4px 6px 2px;padding:6px 10px;border:1px dashed var(--dsw-alias-border-l2,#333);border-radius:8px;background:transparent;color:var(--dsw-alias-label-secondary,#bbb);font-size:11px;cursor:pointer}
 .webui-load-older:hover{border-color:var(--dsw-alias-state-business-primary,#4a9eff);color:var(--dsw-alias-state-business-primary,#4a9eff)}
 .webui-load-older:disabled{opacity:.5;cursor:default}
-/* 无背景横条面板：只显示横条本身；无滚动条（超出由滚轮平滑滚动） */
-.webui-panel{position:fixed;z-index:1100;padding:6px 8px;overflow:hidden;cursor:default;touch-action:none;user-select:none;background:transparent}
+/* 无背景横条面板：只显示横条本身；无滚动条（超出由滚轮平滑滚动）。
+   整个面板指针穿透（pointer-events:none），热区只剩横条本身（.webui-bar 重新
+   开启 auto）——右侧空白区域不拦截滚轮/点击，全部落到对话区。 */
+.webui-panel{position:fixed;z-index:1100;padding:6px 8px;overflow:hidden;background:transparent;pointer-events:none}
 .webui-scroller{display:flex;flex-direction:column;gap:2px;will-change:transform}
-.webui-row{width:100%;height:18px;display:flex;align-items:center;justify-content:flex-end;flex:0 0 auto}
-.webui-bar{display:block;width:15px;height:5px;padding:0;border:none;border-radius:3px;background:var(--dsw-alias-scrollbar-bg-l2,#667085);opacity:.6;cursor:pointer;flex:0 0 auto;transition:width .16s ease,background .12s,opacity .12s}
+.webui-row{width:100%;height:18px;display:flex;align-items:center;justify-content:flex-end;flex:0 0 auto;pointer-events:none}
+.webui-bar{display:block;width:15px;height:5px;padding:0;border:none;border-radius:3px;background:var(--dsw-alias-scrollbar-bg-l2,#667085);opacity:.6;cursor:pointer;flex:0 0 auto;transition:width .16s ease,background .12s,opacity .12s;pointer-events:auto}
 .webui-bar:hover{opacity:1;background:var(--dsw-alias-scrollbar-hover-l2,#8a94a8)}
 .webui-bar-active{width:23px;background:var(--dsw-alias-state-business-primary,#4a9eff);opacity:1;box-shadow:0 0 6px color-mix(in srgb,var(--dsw-alias-state-business-primary,#4a9eff) 55%,transparent)}
 .webui-bar-active:hover{background:color-mix(in srgb,var(--dsw-alias-state-business-primary,#4a9eff) 78%,#fff)}
@@ -83,6 +95,26 @@ const SHEET = `
 .webui-tip-body{font-size:12px;line-height:1.55;color:var(--dsw-alias-label-secondary,#bbb);white-space:pre-wrap;word-break:break-word;overflow:hidden;display:-webkit-box;-webkit-line-clamp:6;-webkit-box-orient:vertical}
 .webui-flash{outline:2px solid var(--dsw-alias-state-business-primary,#4a9eff);outline-offset:-2px;border-radius:8px;animation:webui-flash-pulse 2.4s ease-out}
 @keyframes webui-flash-pulse{0%{background:color-mix(in srgb,var(--dsw-alias-state-business-primary,#4a9eff) 22%,transparent)}60%{background:color-mix(in srgb,var(--dsw-alias-state-business-primary,#4a9eff) 10%,transparent)}100%{background:transparent}}
+/* 对话截图按钮 + 预览弹窗 */
+.webui-shot-btn{box-sizing:border-box;flex:none;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;padding:6px;border:none;border-radius:28px;background:transparent;color:var(--dsw-alias-label-tertiary,#888);cursor:pointer;transition:color .12s,background .12s}
+.webui-shot-btn:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.06));color:var(--dsw-alias-label-secondary,#bbb)}
+.webui-shot-btn-busy{opacity:.6;cursor:default;pointer-events:none;animation:webui-shot-spin 1s linear infinite}
+@keyframes webui-shot-spin{to{transform:rotate(360deg)}}
+.webui-shot-popup{position:fixed;z-index:1400;width:min(calc(100vw - 40px),calc((100vh - 80px) * 1.6));aspect-ratio:16/10;display:flex;flex-direction:column;border:1px solid var(--dsw-alias-border-l2,#333);border-radius:14px;background:var(--dsw-specific-menu,var(--dsw-alias-bg-layer-2,#16181d));box-shadow:var(--dsw-shadow-lv3,0 8px 40px rgba(0,0,0,.5));overflow:hidden}
+.webui-shot-popup-head{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary,#ddd);border-bottom:1px solid var(--dsw-alias-border-l3,#2a2d35)}
+.webui-shot-popup-head small{color:var(--dsw-alias-label-tertiary,#888);font-weight:400}
+.webui-shot-popup-body{flex:1;min-height:0;overflow:auto;padding:12px;display:flex;flex-direction:column;gap:10px}
+.webui-shot-img{width:100%;flex:1;min-height:0;object-fit:contain;border-radius:10px;border:1px solid var(--dsw-alias-border-l2,#333);background:#fff;display:block}
+.webui-shot-path{font-family:var(--dsw-font-mono,ui-monospace,Menlo,monospace);font-size:11px;color:var(--dsw-alias-label-tertiary,#888);word-break:break-all;background:var(--dsw-alias-bg-layer-1,rgba(255,255,255,.02));padding:8px 10px;border-radius:8px}
+.webui-shot-actions{display:flex;align-items:center;gap:8px}
+.webui-shot-action{display:inline-flex;align-items:center;justify-content:center;height:28px;padding:0 12px;border:1px solid var(--dsw-alias-border-l2,#333);border-radius:8px;background:transparent;color:var(--dsw-alias-label-secondary,#bbb);font-size:12px;cursor:pointer;transition:border-color .12s,color .12s}
+.webui-shot-action:hover{border-color:var(--dsw-alias-state-business-primary,#4a9eff);color:var(--dsw-alias-state-business-primary,#4a9eff)}
+.webui-shot-error{font-size:12px;color:var(--dsw-alias-state-danger-primary,#f56c6c);line-height:1.5}
+
+/* ── 移动端：消息横条提示泡不超出屏幕 ─────────────────────────── */
+@media (max-width: 767.98px) {
+  .webui-tip{width:min(300px,calc(100vw - 16px))}
+}
 `
 
 let injected = false

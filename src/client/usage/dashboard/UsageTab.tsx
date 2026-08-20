@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
 import { usageApi } from './api'
 import { sumTokens, type UsageDay } from './aggregate'
-import { formatCompact } from './format'
+import { formatUnits } from './format'
 import { providerPalette } from './theme'
-import { AreaChart } from './charts/AreaChart'
+import { AreaChart, type SeriesPoint } from './charts/AreaChart'
 import { Heatmap } from './charts/Heatmap'
 import { ErrorCard } from './primitives/ErrorCard'
+import { useIsMobile } from '../../responsive'
 
 type ViewMode = 'day' | 'month' | 'year'
 
@@ -17,6 +18,7 @@ export function UsageTab({ refreshTick }: UsageTabProps): JSX.Element {
   const [selectedDay, setSelectedDay] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [retryTick, setRetryTick] = useState(0)
+  const isMobile = useIsMobile()
 
   useEffect(() => {
     let alive = true
@@ -38,7 +40,27 @@ export function UsageTab({ refreshTick }: UsageTabProps): JSX.Element {
   const year = now.getFullYear()
   const month = now.getMonth() + 1
   const todayStr = `${year}-${String(month).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
-  const trend = usage.slice(-30).map(d => ({ label: d.date, input: d.inputTokens, output: d.outputTokens, cache: d.cacheReadTokens + d.cacheWriteTokens }))
+  // 趋势数据与视图一致：日=近 30 天、月=近 12 月（按 YYYY-MM 聚合）、年=按年聚合。
+  const sorted = [...usage].sort((a, b) => a.date.localeCompare(b.date))
+  const trend = (() => {
+    if (mode === 'day') {
+      return sorted.slice(-30).map(d => ({ label: d.date, input: d.inputTokens, output: d.outputTokens, cache: (d.cacheReadTokens ?? 0) + (d.cacheWriteTokens ?? 0) }))
+    }
+    const group = (len: number): SeriesPoint[] => {
+      const map = new Map<string, UsageDay[]>()
+      for (const d of sorted) {
+        const key = d.date.slice(0, len)
+        const arr = map.get(key)
+        if (arr) arr.push(d)
+        else map.set(key, [d])
+      }
+      return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([label, days]) => {
+        const s = sumTokens(days)
+        return { label, input: s.input, output: s.output, cache: s.cache }
+      })
+    }
+    return mode === 'month' ? group(7).slice(-12) : group(4)
+  })()
   const monthPrefix = `${year}-${String(month).padStart(2, '0')}`
   const monthDays = usage.filter(d => d.date.startsWith(monthPrefix))
   // 月视图热力：本月天数（按当前月实际天数补齐空档）
@@ -89,12 +111,12 @@ export function UsageTab({ refreshTick }: UsageTabProps): JSX.Element {
         <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12, color: 'var(--dsw-alias-label-primary)' }}>{mode === 'day' ? '近 30 天' : mode === 'month' ? '近 12 月' : '年度'}用量趋势</div>
         <AreaChart data={trend} />
       </div>
-      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-        <div style={{ flex: '1 1 45%', border: '1px solid var(--dsw-alias-border-l1)', borderRadius: 12, background: 'var(--dsw-alias-bg-layer-2)', padding: 16, minWidth: 0, overflow: 'hidden' }}>
+      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', flexDirection: isMobile ? 'column' : undefined }}>
+        <div style={{ flex: isMobile ? '1 1 auto' : '1 1 45%', border: '1px solid var(--dsw-alias-border-l1)', borderRadius: 12, background: 'var(--dsw-alias-bg-layer-2)', padding: 16, minWidth: 0, overflow: 'hidden' }}>
           <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12, color: 'var(--dsw-alias-label-primary)' }}>{year} 年 {month} 月热力</div>
           <div style={{ overflowX: 'auto' }}><Heatmap cells={monthCells} onSelect={c => setSelectedDay(c.label)} /></div>
         </div>
-        <div style={{ flex: '1 1 45%', border: '1px solid var(--dsw-alias-border-l1)', borderRadius: 12, background: 'var(--dsw-alias-bg-layer-2)', padding: 16, minWidth: 0, overflow: 'hidden' }}>
+        <div style={{ flex: isMobile ? '1 1 auto' : '1 1 45%', border: '1px solid var(--dsw-alias-border-l1)', borderRadius: 12, background: 'var(--dsw-alias-bg-layer-2)', padding: 16, minWidth: 0, overflow: 'hidden' }}>
           <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12, color: 'var(--dsw-alias-label-primary)' }}>{year} 年度热力</div>
           <div style={{ overflowX: 'auto' }}><Heatmap cells={yearCells} rows={1} /></div>
         </div>
@@ -105,11 +127,11 @@ export function UsageTab({ refreshTick }: UsageTabProps): JSX.Element {
           return (
             <div key={row.model} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0' }}>
               <span style={{ width: 10, height: 10, borderRadius: 2, background: palette[i % palette.length], flex: 'none' }} />
-              <span style={{ width: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--dsw-alias-label-primary)', fontSize: 12 }} title={row.model}>{row.model}</span>
+              <span style={{ width: isMobile ? 110 : 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--dsw-alias-label-primary)', fontSize: 12 }} title={row.model}>{row.model}</span>
               <div style={{ flex: 1, height: 8, borderRadius: 4, background: 'var(--dsw-alias-border-l2)', overflow: 'hidden' }}>
                 <div style={{ height: '100%', width: `${(row.tokens / maxModel) * 100}%`, background: palette[i % palette.length], borderRadius: 4 }} />
               </div>
-              <span style={{ color: 'var(--dsw-alias-label-secondary)', fontSize: 12, fontFamily: 'ui-monospace, monospace' }}>{formatCompact(row.tokens)}</span>
+              <span style={{ color: 'var(--dsw-alias-label-secondary)', fontSize: 12, fontFamily: 'ui-monospace, monospace' }}>{formatUnits(row.tokens)}</span>
             </div>
           )
         })}
@@ -138,10 +160,10 @@ function DayDetailTable({ day }: { day?: UsageDay }): JSX.Element | null {
         {rows.map(r => (
           <tr key={r.model} style={{ color: 'var(--dsw-alias-label-primary)' }}>
             <td style={{ padding: '6px 8px' }}>{r.model}</td>
-            <td style={{ padding: '6px 8px', fontFamily: 'ui-monospace, monospace' }}>{formatCompact(r.inputTokens)}</td>
-            <td style={{ padding: '6px 8px', fontFamily: 'ui-monospace, monospace' }}>{formatCompact(r.outputTokens)}</td>
-            <td style={{ padding: '6px 8px', fontFamily: 'ui-monospace, monospace' }}>{formatCompact(r.cacheReadTokens)}</td>
-            <td style={{ padding: '6px 8px', fontFamily: 'ui-monospace, monospace' }}>{formatCompact(r.tokens)}</td>
+            <td style={{ padding: '6px 8px', fontFamily: 'ui-monospace, monospace' }}>{formatUnits(r.inputTokens)}</td>
+            <td style={{ padding: '6px 8px', fontFamily: 'ui-monospace, monospace' }}>{formatUnits(r.outputTokens)}</td>
+            <td style={{ padding: '6px 8px', fontFamily: 'ui-monospace, monospace' }}>{formatUnits(r.cacheReadTokens)}</td>
+            <td style={{ padding: '6px 8px', fontFamily: 'ui-monospace, monospace' }}>{formatUnits(r.tokens)}</td>
             <td style={{ padding: '6px 8px' }}>{r.cacheHitRate}%</td>
           </tr>
         ))}

@@ -238,22 +238,28 @@ export async function navigateHistory(session: CdpSession, delta: number): Promi
 }
 
 /** 设置视口尺寸（无头 Chrome 默认视口过小，网页会以小屏响应式渲染；这里设成桌面尺寸）。 */
-export async function setViewport(session: CdpSession, width: number, height: number): Promise<void> {
+export async function setViewport(
+  session: CdpSession,
+  width: number,
+  height: number,
+  deviceScaleFactor = 1,
+): Promise<void> {
   const { conn, sessionId } = session
   await conn.send('Emulation.setDeviceMetricsOverride', {
-    width, height, deviceScaleFactor: 1, mobile: false,
+    width, height, deviceScaleFactor, mobile: false,
   }, sessionId)
 }
 
-/** 页面截图（jpeg base64） */
+/** 页面截图（默认 jpeg；format 可传 png 无损，适合文字/卡片）。 */
 export async function captureScreenshot(
   session: CdpSession,
-  quality = 80,
+  quality = 90,
+  format: 'jpeg' | 'png' = 'jpeg',
 ): Promise<string> {
   const { conn, sessionId } = session
   const shot: any = await conn.send(
     'Page.captureScreenshot',
-    { format: 'jpeg', quality, fromSurface: true },
+    { format, ...(format === 'jpeg' ? { quality } : {}), fromSurface: true },
     sessionId,
   )
   if (!shot?.data) throw new Error('截图失败：CDP 未返回图像数据')
@@ -265,7 +271,7 @@ export async function startScreencast(
   session: CdpSession,
   width: number,
   height: number,
-  quality = 70,
+  quality = 85,
 ): Promise<void> {
   const { conn, sessionId } = session
   await conn.send('Page.startScreencast', {

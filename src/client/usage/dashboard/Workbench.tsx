@@ -3,6 +3,7 @@ import { OverviewTab } from './OverviewTab'
 import { UsageTab } from './UsageTab'
 import { AccountsTab } from './AccountsTab'
 import { modalAnimClass, modalMaskAnimClass } from '../../modal-animation'
+import { useIsMobile } from '../../responsive'
 
 export type TabKey = 'overview' | 'usage' | 'accounts'
 
@@ -25,7 +26,7 @@ const css = {
     color: active ? 'var(--dsw-alias-label-primary)' : 'var(--dsw-alias-label-secondary)',
     fontSize: 13, fontWeight: active ? 600 : 400,
   }),
-  content: { flex: 1, overflowY: 'auto', padding: '20px 24px 40px', maxWidth: 1200, margin: '0 auto', width: '100%' } as React.CSSProperties,
+  content: { flex: 1, overflowY: 'auto', padding: '20px 24px 40px', maxWidth: 1200, margin: '0 auto', width: '100%', boxSizing: 'border-box' } as React.CSSProperties,
   title: { fontSize: 15, fontWeight: 600, color: 'var(--dsw-alias-label-primary)' } as React.CSSProperties,
   close: { marginLeft: 'auto', width: 28, height: 28, borderRadius: 6, border: 'none', background: 'transparent', color: 'var(--dsw-alias-label-secondary)', cursor: 'pointer', fontSize: 16 } as React.CSSProperties,
 }
@@ -39,6 +40,15 @@ export interface WorkbenchProps {
 
 export function Workbench({ onClose, closing = false, renderTab }: WorkbenchProps): JSX.Element {
   const [tab, setTab] = useState<TabKey>('overview')
+  const isMobile = useIsMobile()
+
+  // 移动端：全屏面板 + 收紧内容留白（桌面 1350×82vh 的尺寸在手机上不可用）。
+  const modalStyle: React.CSSProperties = isMobile
+    ? { ...css.modal, width: '100vw', maxWidth: '100vw', height: '100dvh', minHeight: 0, maxHeight: '100dvh', borderRadius: 0 }
+    : css.modal
+  const contentStyle: React.CSSProperties = isMobile
+    ? { ...css.content, padding: '12px 16px 32px' }
+    : css.content
 
   // prefers-reduced-motion：检测并注入 CSS 变量（已知限制：图表内联 transition 未逐处改造，见任务报告）
   useEffect(() => {
@@ -67,7 +77,7 @@ export function Workbench({ onClose, closing = false, renderTab }: WorkbenchProp
   }
   return (
     <div style={css.shell} className={modalMaskAnimClass(closing)} onClick={onClose}>
-      <div style={css.modal} className={modalAnimClass(closing)} onClick={e => e.stopPropagation()}>
+      <div style={modalStyle} className={modalAnimClass(closing)} onClick={e => e.stopPropagation()}>
         <div style={css.topbar}>
           <span style={css.title}>用量工作台</span>
           <button type="button" style={css.close} aria-label="关闭" onClick={onClose}>✕</button>
@@ -79,7 +89,7 @@ export function Workbench({ onClose, closing = false, renderTab }: WorkbenchProp
             </button>
           ))}
         </div>
-        <main style={css.content}>
+        <main style={contentStyle}>
           {renderTab ? renderTab(tab) : tabContent[tab]}
         </main>
       </div>

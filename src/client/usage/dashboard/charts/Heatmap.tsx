@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { createPortal } from 'react-dom'
-import { formatCompact } from '../format'
+import { formatUnits } from '../format'
 
 export interface HeatCell {
   key: string
@@ -52,13 +52,13 @@ export function Heatmap({ cells, onSelect, rows = 5 }: { cells: HeatCell[]; onSe
         })}
       </div>
       {hover !== null && typeof document !== 'undefined' && createPortal(
-        <div style={{ position: 'fixed', bottom: typeof window !== 'undefined' ? window.innerHeight - hover.top + TIP_GAP : 0, left: hover.left, background: 'var(--dsw-alias-raised)', border: '1px solid var(--dsw-alias-border-l1)', borderRadius: 8, padding: '8px 12px', fontSize: 12, whiteSpace: 'nowrap', zIndex: 6100, boxShadow: '0 8px 24px rgba(0,0,0,.35)', pointerEvents: 'none' }}>
+        <div style={{ position: 'fixed', bottom: typeof window !== 'undefined' ? window.innerHeight - hover.top + TIP_GAP : 0, left: hover.left, background: 'var(--dsw-alias-bg-layer-3)', border: '1px solid var(--dsw-alias-border-l1)', borderRadius: 8, padding: '8px 12px', fontSize: 12, whiteSpace: 'nowrap', zIndex: 6100, boxShadow: '0 8px 24px rgba(0,0,0,.35)', pointerEvents: 'none' }}>
           <div style={{ fontWeight: 600, marginBottom: 2, color: 'var(--dsw-alias-label-primary)' }}>{hover.cell.label}</div>
-          <div style={{ color: 'var(--dsw-alias-label-secondary)' }}>合计 {hover.cell.value > 0 ? formatCompact(hover.cell.value) : '无用量'}</div>
+          <div style={{ color: 'var(--dsw-alias-label-secondary)' }}>合计 {hover.cell.value > 0 ? formatUnits(hover.cell.value) : '无用量'}</div>
           {hover.cell.input !== undefined && (hover.cell.input ?? 0) + (hover.cell.output ?? 0) + (hover.cell.cache ?? 0) > 0 && (
             <div style={{ marginTop: 4, display: 'flex', flexDirection: 'column', gap: 2, color: 'var(--dsw-alias-label-secondary)' }}>
-              <span>输入 {formatCompact(hover.cell.input ?? 0)} · 输出 {formatCompact(hover.cell.output ?? 0)}</span>
-              <span>缓存 {formatCompact(hover.cell.cache ?? 0)}{hover.cell.hitRate !== undefined ? ` · 命中 ${hover.cell.hitRate}%` : ''}</span>
+              <span>输入 {formatUnits(hover.cell.input ?? 0)} · 输出 {formatUnits(hover.cell.output ?? 0)}</span>
+              <span>缓存 {formatUnits(hover.cell.cache ?? 0)}{hover.cell.hitRate !== undefined ? ` · 命中 ${hover.cell.hitRate}%` : ''}</span>
             </div>
           )}
         </div>,

@@ -45,7 +45,7 @@ function reportViewport(): void {
   fetch('/api/dsh-browser/viewport', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ width, height, origin: window.location.origin }),
+    body: JSON.stringify({ width, height }),
   }).catch(() => {})
 }
 

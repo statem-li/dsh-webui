@@ -90,6 +90,9 @@ const CSS = `
 }
 
 .dts__summary-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   font-size: 12px;
   font-weight: 600;
   color: var(--dsw-alias-label-primary);
@@ -619,6 +622,9 @@ const CSS = `
 }
 
 .dts__modal-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: 13px;
   font-weight: 600;
   color: var(--dsw-alias-label-primary);
@@ -646,6 +652,26 @@ const CSS = `
   min-height: 0;
   overflow-y: auto;
   padding: 14px 16px 24px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--dsw-alias-scrollbar-bg-l2, rgba(127,127,127,.4)) transparent;
+}
+
+.dts__modal-scroll::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+.dts__modal-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.dts__modal-scroll::-webkit-scrollbar-thumb {
+  background: var(--dsw-alias-scrollbar-bg-l2, rgba(127,127,127,.4));
+  border-radius: 2px;
+}
+
+.dts__modal-scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--dsw-alias-scrollbar-hover-l2, rgba(127,127,127,.6));
 }
 
 /* ---- separate panels: thinking vs tools ---- */
@@ -670,6 +696,12 @@ const CSS = `
   font-size: 13px;
   font-weight: 600;
   color: var(--dsw-alias-label-primary);
+}
+
+.dts__modal-panel-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
 }
 
 .dts__modal-panel-count {
@@ -857,6 +889,12 @@ const CSS = `
   padding: 8px 12px;
   color: var(--dsw-alias-label-tertiary);
   font-size: 12px;
+}
+
+/* ── 移动端：活动弹窗全屏、对话流内下载卡片不设最小宽 ─────────── */
+@media (max-width: 767.98px) {
+  .dts__modal{width:100vw;max-width:100vw;max-height:100vh;max-height:100dvh;border-radius:0;top:0;left:0;transform:none}
+  .dts__download-card{min-width:0}
 }
 `
 

@@ -48,11 +48,18 @@ import { injectStatsStyles } from './chat-stats/styles'
 import { applyRewindClient } from './rewind'
 // 对话输入框 Ctrl+Enter 换行。
 import { applyCtrlEnterNewline } from './ctrl-enter-newline'
+// 单条消息截图（樱花主题）：assistant 消息 actions 行的截图按钮。
+import { applyMessageScreenshot } from './screenshot'
+// 移动端响应式：手机断点识别 + DSH 设置面板单列化等全局覆盖。
+import { injectResponsiveStyles } from './responsive'
 const CUSTOM_COMPONENT_SCOPE = 'dsh-better-markdown'
 
 export const inject = ['slots', 'settingsScope', 'connection', 'conversationEvents', 'locale', 'remote', 'sessions', 'workspaces']
 
 export function apply(ctx: ClientContext): void {
+  // ---- 移动端响应式：全局覆盖样式（DSH 设置面板单列化等），随插件生命周期清理 ----
+  ctx.effect(() => injectResponsiveStyles(), 'webui: responsive styles')
+
   // ---- 原生 webui：右上角「对话/轨迹」图块 + 消息入口 --------------------
   ctx.slots.inject('conversation.session.header.utilities', () =>
     ctx.slots.register({
@@ -165,4 +172,7 @@ export function apply(ctx: ClientContext): void {
 
   // ---- 对话输入框 Ctrl+Enter 换行 -------------------------------------------
   applyCtrlEnterNewline()
+
+  // ---- 单条消息截图（樱花主题）：assistant 消息 actions 行截图按钮 -----------
+  applyMessageScreenshot(ctx)
 }

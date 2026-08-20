@@ -6,6 +6,7 @@
  */
 import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { modalAnimClass, modalMaskAnimClass } from '../modal-animation'
+import { useIsMobile } from '../responsive'
 import { fetchDeepseekAccount, fetchDeepseekBilling, saveDeepseekUserToken, type AccountSnapshot, type BillingModel, type BillingResponse } from './api'
 import { beijingClock, formatDelta, isPeak, nextTransition } from './schedule'
 
@@ -341,6 +342,7 @@ export function BillingModal({ closing, onClose }: BillingModalProps): JSX.Eleme
   const [tokenInput, setTokenInput] = useState('')
   const [savingToken, setSavingToken] = useState(false)
   const [tokenError, setTokenError] = useState<string | null>(null)
+  const isMobile = useIsMobile()
 
   // 打开后并行加载余额 + 明细（保存 token 后 reloadKey 变化触发重载）。
   useEffect(() => {
@@ -410,8 +412,12 @@ export function BillingModal({ closing, onClose }: BillingModalProps): JSX.Eleme
   const balance = account?.balance ?? null
 
   return (
-    <div style={mask} className={modalMaskAnimClass(closing)} onClick={onClose}>
-      <div style={card} className={modalAnimClass(closing)} onClick={e => e.stopPropagation()}>
+    <div style={isMobile ? { ...mask, padding: 0 } : mask} className={modalMaskAnimClass(closing)} onClick={onClose}>
+      <div
+        style={isMobile ? { ...card, width: '100vw', maxWidth: '100vw', maxHeight: '100dvh', borderRadius: 0 } : card}
+        className={modalAnimClass(closing)}
+        onClick={e => e.stopPropagation()}
+      >
         {/* 标题区 */}
         <div style={header}>
           <div style={headerText}>

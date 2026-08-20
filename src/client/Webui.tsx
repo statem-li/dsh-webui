@@ -7,7 +7,8 @@
  *  2. 右上角「消息 N」按钮 → 弹出本会话全部已发送消息（user + steering）；
  *     点击某条 → 会话自动滚动到该消息并高亮闪烁。
  *  3. 右侧中间「消息横条」：透明无背景的一列细横条，每条横条 = 一条你
- *     发送的消息；点击跳转、悬停预览、按住空白处拖动滚动会话。
+ *     发送的消息；点击跳转、悬停预览。面板整体指针穿透，热区仅横条本身，
+ *     右侧空白区域不拦截滚轮/点击（全部落到对话区）。
  *
  * 依赖 DOM 契约（ui-conversation 稳定提供）：
  *  - [data-phase] — 会话根（含 [role="tablist"] 原生标签页）
@@ -18,7 +19,7 @@
  */
 import {
   useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState,
-  type PointerEvent as ReactPointerEvent, type ReactNode,
+  type ReactNode,
 } from 'react'
 import { createPortal } from 'react-dom'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
@@ -146,15 +147,6 @@ export function Webui(props: WebuiProps): ReactNode {
   const scrollPosRef = useRef(0)
   const scrollTargetRef = useRef(0)
   const scrollRafRef = useRef(0)
-  // 面板空白处拖动 → 滚动会话。
-  const dragRef = useRef<{
-    down: boolean
-    dragging: boolean
-    moved: number
-    startX: number
-    startY: number
-    startScrollTop: number
-  } | null>(null)
 
   // 本会话已发送消息（user + steering，按时间正序 = 流顺序）。
   const userMessages = useMemo(() => {
@@ -375,8 +367,6 @@ export function Webui(props: WebuiProps): ReactNode {
     }
   }, [open])
 
-  useEffect(() => () => { dragRef.current = null }, [])
-
   // 平滑滚动到面板内目标位置（transform 驱动，无滚动条）。
   const applyScroll = useCallback((target: number, smooth: boolean): void => {
     const panel = panelRef.current
@@ -415,32 +405,6 @@ export function Webui(props: WebuiProps): ReactNode {
     scrollRafRef.current = requestAnimationFrame(tick)
   }, [])
 
-  // 鼠标滚轮滚动横条面板（无滚动条）：内容超限时滚轮平滑滚动；不足时不劫持。
-  useEffect(() => {
-    const panel = panelRef.current
-    if (panel === null) return
-    const onWheel = (event: WheelEvent): void => {
-      const scroller = scrollerRef.current
-      if (scroller === null) return
-      const max = Math.max(0, scroller.scrollHeight - panel.clientHeight)
-      if (max <= 0) {
-        scrollPosRef.current = 0
-        scrollTargetRef.current = 0
-        return
-      }
-      event.preventDefault()
-      applyScroll(scrollTargetRef.current + event.deltaY, true)
-    }
-    panel.addEventListener('wheel', onWheel, { passive: false })
-    return () => {
-      panel.removeEventListener('wheel', onWheel)
-      if (scrollRafRef.current !== 0) cancelAnimationFrame(scrollRafRef.current)
-      scrollRafRef.current = 0
-      scrollPosRef.current = 0
-      scrollTargetRef.current = 0
-    }
-  }, [panelPos, bars.length, applyScroll])
-
   // 当前阅读位置的消息高亮并平滑滚入面板视野。
   useEffect(() => {
     if (activeKey === null || panelRef.current === null) return
@@ -453,45 +417,6 @@ export function Webui(props: WebuiProps): ReactNode {
     const target = row.offsetTop - (panel.clientHeight - row.offsetHeight) / 2
     applyScroll(target, true)
   }, [activeKey, bars.length, applyScroll])
-
-  // 面板空白处按住拖动 → 滚动会话（2 倍手感）。
-  const onPanelPointerDown = (event: ReactPointerEvent<HTMLDivElement>): void => {
-    if (event.target instanceof HTMLElement && event.target.closest('button') !== null) return
-    const scrollport = scrollportOf()
-    if (scrollport === null) return
-    event.currentTarget.setPointerCapture(event.pointerId)
-    dragRef.current = {
-      down: true,
-      dragging: false,
-      moved: 0,
-      startX: event.clientX,
-      startY: event.clientY,
-      startScrollTop: scrollport.scrollTop,
-    }
-  }
-
-  const onPanelPointerMove = (event: ReactPointerEvent<HTMLDivElement>): void => {
-    const drag = dragRef.current
-    if (drag === null || !drag.down) return
-    drag.moved += Math.abs(event.clientX - drag.startX) + Math.abs(event.clientY - drag.startY)
-    if (!drag.dragging && drag.moved > 6) drag.dragging = true
-    if (!drag.dragging) return
-    const scrollport = scrollportOf()
-    if (scrollport === null) return
-    const max = Math.max(0, scrollport.scrollHeight - scrollport.clientHeight)
-    scrollport.scrollTop = clamp(
-      drag.startScrollTop + (event.clientY - drag.startY) * 2,
-      0,
-      max,
-    )
-  }
-
-  const onPanelPointerUp = (event: ReactPointerEvent<HTMLDivElement>): void => {
-    const drag = dragRef.current
-    dragRef.current = null
-    if (drag === null) return
-    try { event.currentTarget.releasePointerCapture(event.pointerId) } catch { /* 忽略 */ }
-  }
 
   const totalCount = userMessages.length
   const showButton = totalCount > 0
@@ -601,9 +526,6 @@ export function Webui(props: WebuiProps): ReactNode {
           ref={panelRef}
           className={css.panel}
           style={{ left: panelPos.x, top: panelPos.y, width: PANEL_WIDTH, height: clamp(bars.length * PANEL_ROW_HEIGHT + PANEL_PADDING, 56, MAX_VISIBLE_ROWS * PANEL_ROW_HEIGHT + PANEL_PADDING) }}
-          onPointerDown={onPanelPointerDown}
-          onPointerMove={onPanelPointerMove}
-          onPointerUp={onPanelPointerUp}
           onPointerLeave={() => { setHover(null) }}
         >
           <div ref={scrollerRef} className={css.scroller}>

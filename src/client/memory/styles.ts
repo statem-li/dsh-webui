@@ -140,6 +140,13 @@ const SHEET = `
 .dsh-memory-toggle-off{color:var(--dsw-alias-label-tertiary,#888);opacity:.55}
 .dsh-memory-error{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-state-error-primary,#e0434b)}
 .dsh-memory-visually-hidden{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+
+/* ── 移动端：全屏面板、收紧筛选控件 ───────────────────────────── */
+@media (max-width: 767.98px) {
+  .dsh-memory-panel{max-height:none;padding:2px}
+  .dsh-memory-project-chip{max-width:150px}
+  .dsh-memory-tag-select{max-width:150px}
+}
 `
 
 /** 注入样式表（幂等；loader 卸载插件时会移除其 style 标签）。 */

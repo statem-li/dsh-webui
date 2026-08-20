@@ -13,13 +13,13 @@ import { Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SessionId } from '@deepseek-ai/dsh-client-runtime/client'
 import { browserActivityStore } from './activity'
 
-/** 浏览器图标（内联 globe，避免额外图标依赖）。 */
-function GlobeIcon({ size = 14 }: { size?: number }) {
+/** 浏览器图标（线条风格：球形网状地球，语义清晰，小尺寸下干净）。 */
+function BrowserIcon({ size = 14 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden>
-      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.8" />
-      <ellipse cx="12" cy="12" rx="4" ry="9" stroke="currentColor" strokeWidth="1.8" />
-      <path d="M3.5 9h17M3.5 15h17" stroke="currentColor" strokeWidth="1.6" />
+      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.6" />
+      <ellipse cx="12" cy="12" rx="4.2" ry="9" stroke="currentColor" strokeWidth="1.6" />
+      <path d="M3.2 9h17.6M3.2 15h17.6" stroke="currentColor" strokeWidth="1.5" />
     </svg>
   )
 }
@@ -87,6 +87,20 @@ function BrowserPanel({ sessionId, onClose }: { sessionId: string; onClose: () =
   const frameElRef = useRef<HTMLImageElement | null>(null)
   const frameSizeRef = useRef<{ width: number; height: number }>({ width: 0, height: 0 })
 
+  // 打开面板即上报屏幕分辨率（含 HiDPI 缩放），让 host 把浏览器视口/帧分辨率
+  // 对齐当前屏幕——screencast 帧分辨率跟随屏幕，画面才清晰（自适应分辨率）。
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.screen === 'undefined') return
+    const dpr = Math.min(window.devicePixelRatio || 1, 2)
+    const width = Math.round(window.screen.width * dpr)
+    const height = Math.round(window.screen.height * dpr)
+    fetch('/api/dsh-browser/viewport', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ width, height }),
+    }).catch(() => {})
+  }, [])
+
   // 轮询操作详情（时间线 + url/title）。
   useEffect(() => {
     let alive = true
@@ -102,19 +116,45 @@ function BrowserPanel({ sessionId, onClose }: { sessionId: string; onClose: () =
     return () => { alive = false; window.clearInterval(timer) }
   }, [sessionId])
 
-  // 轮询 screencast 最新帧：/frame 返回缓存帧 + x-frame-width/height（坐标映射基准）。
+  // 轮询 screencast 最新帧：带 since 增量拉取，静止时服务端返回 304 空体，
+  // 不下载/不解码图片（消除每 150ms 全量拉帧的卡顿）；连续无新帧自动降频，
+  // 一旦有新帧立即恢复高频。坐标映射基准（x-frame-width/height）同步维护。
   useEffect(() => {
     let alive = true
     let objectUrl: string | null = null
+    let lastRev = 0
+    let intervalMs = 150
+    let idleStreak = 0
+    let timer = 0
+
+    const restartTimer = (ms: number): void => {
+      window.clearInterval(timer)
+      timer = window.setInterval(() => { void poll() }, ms)
+    }
+
     const poll = async (): Promise<void> => {
       try {
-        const res = await fetch(`/api/dsh-browser/frame?sessionId=${encodeURIComponent(sessionId)}`, { cache: 'no-store' })
+        const res = await fetch(`/api/dsh-browser/frame?sessionId=${encodeURIComponent(sessionId)}&since=${lastRev}`, { cache: 'no-store' })
+        if (res.status === 304) {
+          // 无新帧：空闲计数，连续三次后降频（150 → 300 → 600 → 1200ms 封顶）。
+          idleStreak++
+          if (idleStreak >= 3 && intervalMs < 1200) {
+            intervalMs = Math.min(1200, intervalMs * 2)
+            restartTimer(intervalMs)
+          }
+          return
+        }
         if (!res.ok) { if (alive) setFrameError(true); return }
+        // 有新帧：复位高频 + 更新画面。
+        idleStreak = 0
+        if (intervalMs !== 150) { intervalMs = 150; restartTimer(intervalMs) }
+        const rev = Number(res.headers.get('x-frame-rev')) || 0
         const w = Number(res.headers.get('x-frame-width')) || 0
         const h = Number(res.headers.get('x-frame-height')) || 0
         const blob = await res.blob()
         if (!alive) return
         if (w > 0 && h > 0) frameSizeRef.current = { width: w, height: h }
+        if (rev > 0) lastRev = rev
         const url = URL.createObjectURL(blob)
         if (objectUrl) URL.revokeObjectURL(objectUrl)
         objectUrl = url
@@ -122,8 +162,9 @@ function BrowserPanel({ sessionId, onClose }: { sessionId: string; onClose: () =
         setFrameError(false)
       } catch { /* 保持上次 */ }
     }
+
     void poll()
-    const timer = window.setInterval(() => { void poll() }, 150)
+    timer = window.setInterval(() => { void poll() }, intervalMs)
     return () => {
       alive = false
       window.clearInterval(timer)
@@ -153,14 +194,34 @@ function BrowserPanel({ sessionId, onClose }: { sessionId: string; onClose: () =
     }).catch(() => {})
   }, [sessionId])
 
-  const lastMove = useRef(0)
+  // 鼠标移动：合并发送（一次在途只保留最新坐标），快速移动时不再堆积 POST 请求。
+  const movePending = useRef<{ x: number; y: number } | null>(null)
+  const moveInFlight = useRef(false)
+  const sendMove = useCallback((): void => {
+    const next = movePending.current
+    if (next === null || moveInFlight.current) return
+    moveInFlight.current = true
+    fetch('/api/dsh-browser/input', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId, type: 'mouse', event: 'move', x: next.x, y: next.y }),
+    })
+      .catch(() => {})
+      .finally(() => {
+        moveInFlight.current = false
+        // 在途期间又产生了新坐标：补发最新一次。
+        const cur = movePending.current
+        if (cur !== null && (cur.x !== next.x || cur.y !== next.y)) sendMove()
+      })
+  }, [sessionId])
+
   const onMouseMove = useCallback((e: React.MouseEvent) => {
-    const now = Date.now()
-    if (now - lastMove.current < 40) return
-    lastMove.current = now
     const { x, y } = toPage(e.clientX, e.clientY)
-    sendInput({ type: 'mouse', event: 'move', x, y })
-  }, [toPage, sendInput])
+    const last = movePending.current
+    if (last !== null && last.x === x && last.y === y) return
+    movePending.current = { x, y }
+    sendMove()
+  }, [toPage, sendMove])
 
   const buttonOf = (b: number): string => (b === 2 ? 'right' : b === 1 ? 'middle' : 'left')
 
@@ -218,7 +279,7 @@ function BrowserPanel({ sessionId, onClose }: { sessionId: string; onClose: () =
       <div className={fullscreen ? 'dsh-browser-panel dsh-browser-panel--fullscreen' : 'dsh-browser-panel'} role="dialog" aria-label="AI 浏览器操作面板">
         <header className="dsh-browser-panel__head">
           <span className="dsh-browser-panel__title">
-            <GlobeIcon size={16} /> AI 浏览器{running ? ' · 操作中' : ''}
+            <BrowserIcon size={16} /> AI 浏览器{running ? ' · 操作中' : ''}
           </span>
           <button
             type="button"
@@ -293,7 +354,7 @@ export const BrowserSeat = memo(function BrowserSeat({ sessionId }: BrowserSeatP
           aria-pressed={engaged}
           onClick={() => { setOpen(v => !v) }}
         >
-          <GlobeIcon size={14} />
+          <BrowserIcon size={14} />
         </button>
       </Tooltip>
       {open && <BrowserPanel sessionId={String(sessionId)} onClose={() => { setOpen(false) }} />}

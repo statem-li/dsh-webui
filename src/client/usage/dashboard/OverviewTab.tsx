@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react'
 import { usageApi, type ProviderInfo } from './api'
 import { averageCacheHitRate, monthTokens, providerShare, sumTokens, type UsageDay } from './aggregate'
-import { formatCompact, formatYiExact } from './format'
+import { formatUnits, formatYiExact } from './format'
 import { providerPalette } from './theme'
 import { AreaChart } from './charts/AreaChart'
 import { DonutChart } from './charts/DonutChart'
 import { KpiCard } from './primitives/KpiCard'
 import { ErrorCard } from './primitives/ErrorCard'
 import { EmptyState } from './primitives/EmptyState'
+import { useIsMobile } from '../../responsive'
 
 export interface OverviewTabProps { onJumpAccounts: () => void; refreshTick?: number }
 
@@ -24,6 +25,7 @@ export function OverviewTab({ onJumpAccounts, refreshTick }: OverviewTabProps): 
   const [providers, setProviders] = useState<ProviderInfo[]>([])
   const [error, setError] = useState<string | null>(null)
   const [retryTick, setRetryTick] = useState(0)
+  const isMobile = useIsMobile()
 
   // 时间范围查询：日 / 月 / 年（默认今日）
   const [viewMode, setViewMode] = useState<ViewMode>('day')
@@ -108,23 +110,23 @@ export function OverviewTab({ onJumpAccounts, refreshTick }: OverviewTabProps): 
         <span style={{ fontSize: 12, color: 'var(--dsw-alias-label-tertiary)' }}>查询范围：{rangeTitle}</span>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}>
         {/* 亿级数字：主值显示「X 亿」，副行显示千分位精确数字 */}
-        <KpiCard title={`${rangeLabel} Tokens`} value={formatYiExact(sum.total)?.yi ?? formatCompact(sum.total)} exact={formatYiExact(sum.total)?.exact} sub={`输入 ${formatCompact(sum.input)} · 输出 ${formatCompact(sum.output)}`} />
-        <KpiCard title="输入" value={formatYiExact(sum.input)?.yi ?? formatCompact(sum.input)} exact={formatYiExact(sum.input)?.exact} />
-        <KpiCard title="输出" value={formatYiExact(sum.output)?.yi ?? formatCompact(sum.output)} exact={formatYiExact(sum.output)?.exact} />
-        <KpiCard title="缓存命中" value={formatYiExact(sum.cache)?.yi ?? formatCompact(sum.cache)} exact={formatYiExact(sum.cache)?.exact} sub={`命中率 ${hitRate}%`} />
+        <KpiCard title={`${rangeLabel} Tokens`} value={formatYiExact(sum.total)?.yi ?? formatUnits(sum.total)} exact={formatYiExact(sum.total)?.exact} sub={`输入 ${formatUnits(sum.input)} · 输出 ${formatUnits(sum.output)}`} />
+        <KpiCard title="输入" value={formatYiExact(sum.input)?.yi ?? formatUnits(sum.input)} exact={formatYiExact(sum.input)?.exact} />
+        <KpiCard title="输出" value={formatYiExact(sum.output)?.yi ?? formatUnits(sum.output)} exact={formatYiExact(sum.output)?.exact} />
+        <KpiCard title="缓存命中" value={formatYiExact(sum.cache)?.yi ?? formatUnits(sum.cache)} exact={formatYiExact(sum.cache)?.exact} sub={`命中率 ${hitRate}%`} />
         <KpiCard title="活跃供应商" value={String(activeProviders)} sub={`共 ${providers.length} 家配置`} />
         <KpiCard title="告警" value={String(alerts.length)} tone={alerts.length > 0 ? 'danger' : 'default'} />
       </div>
-      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-        <div style={{ flex: '1 1 60%', minWidth: 0, border: '1px solid var(--dsw-alias-border-l1)', borderRadius: 12, background: 'var(--dsw-alias-bg-layer-2)', padding: 16 }}>
+      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', flexDirection: isMobile ? 'column' : undefined }}>
+        <div style={{ flex: isMobile ? '1 1 auto' : '1 1 60%', minWidth: 0, border: '1px solid var(--dsw-alias-border-l1)', borderRadius: 12, background: 'var(--dsw-alias-bg-layer-2)', padding: 16 }}>
           <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12, color: 'var(--dsw-alias-label-primary)' }}>近 30 天用量趋势</div>
           <AreaChart data={trend} />
         </div>
-        <div style={{ flex: '1 1 35%', minWidth: 0, border: '1px solid var(--dsw-alias-border-l1)', borderRadius: 12, background: 'var(--dsw-alias-bg-layer-2)', padding: 16 }}>
+        <div style={{ flex: isMobile ? '1 1 auto' : '1 1 35%', minWidth: 0, border: '1px solid var(--dsw-alias-border-l1)', borderRadius: 12, background: 'var(--dsw-alias-bg-layer-2)', padding: 16 }}>
           <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12, color: 'var(--dsw-alias-label-primary)' }}>{rangeLabel}供应商分布</div>
-          {donutSlices.length === 0 ? <EmptyState title={`${rangeTitle} 暂无用量`} hint="去聊两句就会在这里出现数据" /> : <DonutChart slices={donutSlices} centerTitle={rangeLabel} centerValue={formatCompact(sum.total)} />}
+          {donutSlices.length === 0 ? <EmptyState title={`${rangeTitle} 暂无用量`} hint="去聊两句就会在这里出现数据" /> : <DonutChart slices={donutSlices} centerTitle={rangeLabel} centerValue={formatUnits(sum.total)} />}
         </div>
       </div>
       {alerts.length > 0 ? (

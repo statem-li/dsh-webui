@@ -28,6 +28,7 @@ import { applyUsageHost } from './usage-host.js'
 import { applyVisionHelper } from './vision-helper.js'
 import { applyMail } from './mail.js'
 import { applyRewind } from './rewind.js'
+import { applyScreenshot } from './screenshot.js'
 import {
   AnySearchSearchProvider,
   ANYSEARCH_DEFAULT_BASE_URL,
@@ -249,4 +250,7 @@ export async function apply(ctx: Context, config: WebuiConfig = {}): Promise<voi
 
   // 13) 对话「退回」（自 dsh-rewind）：user 消息文件快照 + /api/webui-rewind 回退路由。
   applyRewind(ctx)
+
+  // 14) 对话「截图渲染」：渲染会话长图（/api/webui-screenshot）。
+  applyScreenshot(ctx)
 }

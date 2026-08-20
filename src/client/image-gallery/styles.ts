@@ -46,6 +46,11 @@ const SHEET = `
 .gig-hint{color:var(--dsw-alias-label-tertiary,#777)}
 .gig-hint-line{margin-top:-4px;text-align:center;font-size:11px;color:var(--dsw-alias-label-tertiary,#666)}
 @keyframes gig-fade{from{opacity:0}to{opacity:1}}
+
+/* ── 移动端：损坏占位不设最小宽 ───────────────────────────────── */
+@media (max-width: 767.98px) {
+  .gig-broken{min-width:0;min-height:120px}
+}
 `
 
 let injected = false

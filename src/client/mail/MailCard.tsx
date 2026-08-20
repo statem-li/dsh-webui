@@ -65,6 +65,15 @@ const POPUP_STYLES = `
 .mail-detail-text{margin-top:12px;font-size:13px;color:var(--dsw-alias-label-secondary);white-space:pre-wrap;word-break:break-word;line-height:1.65;}
 .mail-note{color:var(--dsw-alias-label-tertiary);font-size:12px;}
 .mail-empty{padding:20px 0;text-align:center;color:var(--dsw-alias-label-tertiary);font-size:13px;}
+
+/* ── 移动端：邮件弹窗全屏、列表/详情左右分栏改上下堆叠 ────────── */
+@media (max-width: 767.98px) {
+  .mail-popup-overlay{padding:0}
+  .mail-popup-modal{width:100vw;max-width:100vw;height:100vh;height:100dvh;border-radius:0}
+  .mail-popup-body{flex-direction:column}
+  .mail-list{flex:0 0 auto;max-height:42%;border-right:none;border-bottom:1px solid var(--dsw-alias-border-l1)}
+  .mail-detail{flex:1;min-height:0}
+}
 `
 
 let popupStylesInjected = false

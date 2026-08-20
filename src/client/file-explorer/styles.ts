@@ -70,6 +70,12 @@ const SHEET = `
 .fe-editor-footer{display:flex;align-items:center;gap:8px;width:100%}
 .fe-editor-status{flex:1;min-width:0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,#888);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .fe-editor-error{flex:none;font-size:12px;line-height:18px;color:var(--dsw-alias-state-error-primary,#e0434b)}
+
+/* ── 移动端：抽屉全宽、编辑器加高 ─────────────────────────────── */
+@media (max-width: 767.98px) {
+  .fe-drawer{width:100vw;max-width:100vw;border-left:none}
+  .fe-editor-host{height:min(72vh,640px)}
+}
 `
 
 /** 注入样式表(幂等;loader 卸载插件时会移除其 style 标签)。 */

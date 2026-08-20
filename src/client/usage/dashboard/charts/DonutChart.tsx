@@ -1,4 +1,4 @@
-import { formatCompact } from '../format'
+import { formatUnits } from '../format'
 
 export interface DonutSlice { label: string; value: number; color: string }
 export function DonutChart({ slices, centerTitle, centerValue }: { slices: DonutSlice[]; centerTitle: string; centerValue: string }): JSX.Element {
@@ -28,7 +28,7 @@ export function DonutChart({ slices, centerTitle, centerValue }: { slices: Donut
             <span style={{ width: 10, height: 10, borderRadius: 2, background: s.color, flex: 'none' }} />
             <span style={{ color: 'var(--dsw-alias-label-primary)', maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.label}</span>
             <span style={{ color: 'var(--dsw-alias-label-tertiary)' }}>{Math.round((s.value / total) * 100)}%</span>
-            <span style={{ color: 'var(--dsw-alias-label-secondary)', fontFamily: 'ui-monospace, monospace' }}>{formatCompact(s.value)}</span>
+            <span style={{ color: 'var(--dsw-alias-label-secondary)', fontFamily: 'ui-monospace, monospace' }}>{formatUnits(s.value)}</span>
           </div>
         ))}
       </div>

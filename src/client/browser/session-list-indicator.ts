@@ -15,7 +15,7 @@ import { browserActivityStore } from './activity'
 
 const BADGE_CLASS = 'dsh-browser-sidebar-badge'
 
-const GLOBE_SVG = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2.4"/><ellipse cx="12" cy="12" rx="4" ry="9" stroke="currentColor" stroke-width="2.4"/><path d="M3.5 9h17M3.5 15h17" stroke="currentColor" stroke-width="2.2"/></svg>'
+const BROWSER_SVG = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2"/><ellipse cx="12" cy="12" rx="4.2" ry="9" stroke="currentColor" stroke-width="2"/><path d="M3.2 9h17.6M3.2 15h17.6" stroke="currentColor" stroke-width="1.8"/></svg>'
 
 /** 在会话行内定位标题 span（textContent 精确命中活跃会话标题之一）。 */
 function findTitleSpan(row: HTMLElement, titles: readonly string[]): HTMLElement | null {
@@ -79,7 +79,7 @@ export function applySessionListIndicator(ctx: ClientContext): () => void {
       el.className = BADGE_CLASS
       el.title = fullTip
       el.setAttribute('aria-label', `AI 浏览器操作中：${tip}`)
-      el.innerHTML = GLOBE_SVG
+      el.innerHTML = BROWSER_SVG
       titleSpan.before(el)
     }
   }
