@@ -37,7 +37,8 @@
         "@deepseek-ai/dsh-client-ui-locale",
         "@deepseek-ai/dsh-client-ui-model-selection",
         "@deepseek-ai/dsh-client-ui-settings",
-        "@deepseek-ai/dsh-client-schema-form"
+        "@deepseek-ai/dsh-client-schema-form",
+        "@deepseek-ai/dsh-client-ui-input-trigger"
       ],
       "platform": "web"
     }
@@ -72,6 +73,7 @@
     "@deepseek-ai/dsh-llm": ">=0.0.1-rc <2",
     "@deepseek-ai/dsh-api-remotes": ">=0.0.1-rc <2",
     "@deepseek-ai/dsh-client-schema-form": ">=0.0.1-rc <2",
+    "@deepseek-ai/dsh-client-ui-input-trigger": ">=0.0.1-rc <2",
     "@deepseek-ai/schemastery": ">=3",
     "react": ">=18",
     "react-dom": ">=18"

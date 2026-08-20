@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { usageApi } from './api'
 import { sumTokens, type UsageDay } from './aggregate'
-import { formatUnits } from './format'
+import { formatHitRate, formatUnits } from './format'
 import { providerPalette } from './theme'
 import { AreaChart, type SeriesPoint } from './charts/AreaChart'
 import { Heatmap } from './charts/Heatmap'
@@ -85,7 +85,7 @@ export function UsageTab({ refreshTick }: UsageTabProps): JSX.Element {
       input: sum.input,
       output: sum.output,
       cache: sum.cache,
-      hitRate: days.length > 0 ? Math.round(days.reduce((acc, d) => acc + (d.cacheHitRate ?? 0), 0) / days.length) : undefined,
+      hitRate: days.length > 0 ? days.reduce((acc, d) => acc + (d.cacheHitRate ?? 0), 0) / days.length : undefined,
     }
   })
   const models = new Map<string, number>()
@@ -164,7 +164,7 @@ function DayDetailTable({ day }: { day?: UsageDay }): JSX.Element | null {
             <td style={{ padding: '6px 8px', fontFamily: 'ui-monospace, monospace' }}>{formatUnits(r.outputTokens)}</td>
             <td style={{ padding: '6px 8px', fontFamily: 'ui-monospace, monospace' }}>{formatUnits(r.cacheReadTokens)}</td>
             <td style={{ padding: '6px 8px', fontFamily: 'ui-monospace, monospace' }}>{formatUnits(r.tokens)}</td>
-            <td style={{ padding: '6px 8px' }}>{r.cacheHitRate}%</td>
+            <td style={{ padding: '6px 8px' }}>{formatHitRate(r.cacheHitRate)}</td>
           </tr>
         ))}
       </tbody>

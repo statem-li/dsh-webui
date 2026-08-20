@@ -12,8 +12,6 @@ import { createPortal } from 'react-dom'
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
-// Type-only: 激活 session-projection 的 `title` projection key（SessionProjectionMap 合并）。
-import type {} from '@deepseek-ai/dsh-session-title/types'
 import { css } from './styles'
 
 function CameraIcon({ size = 16 }: { size?: number }) {
@@ -47,7 +45,7 @@ interface ShotResult {
  * @param role - user（纯文本，暖橙）或 assistant（markdown 渲染）。
  * @param text - 该条消息的文本内容；为空则不渲染。
  */
-export function MessageScreenshotButton({ role, text, title = '' }: { role: 'user' | 'assistant'; text: string; title?: string }) {
+export function MessageScreenshotButton({ role, text, sessionId }: { role: 'user' | 'assistant'; text: string; sessionId?: string }) {
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState<ShotResult | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -62,7 +60,7 @@ export function MessageScreenshotButton({ role, text, title = '' }: { role: 'use
     fetch('/api/webui-screenshot', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ role, text, title }),
+      body: JSON.stringify({ role, text, sessionId }),
     }).then((res) => res.json()).then((r: { ok?: boolean; error?: string; path?: string; imageUrl?: string }) => {
       if (r.ok === true && typeof r.path === 'string') {
         setResult({ path: r.path, imageUrl: r.imageUrl ?? '' })
@@ -72,7 +70,7 @@ export function MessageScreenshotButton({ role, text, title = '' }: { role: 'use
     }).catch((err: unknown) => {
       setError(err instanceof Error ? err.message : String(err))
     }).finally(() => { setBusy(false) })
-  }, [busy, role, text, title])
+  }, [busy, role, text, sessionId])
 
   const copyPath = useCallback((): void => {
     if (result === null) return
@@ -130,7 +128,7 @@ export function MessageScreenshotButton({ role, text, title = '' }: { role: 'use
  * 渲染在复制和「分支」之间）。通过 useSession 从 messageId 反查该条回复的文本。
  */
 export function AssistantScreenshotAction(props: PropsRuntime<'conversation.chat.assistant-actions'>) {
-  const { messageId, useSession, useProjection } = props
+  const { messageId, useSession, sessionId } = props
   const text = useSession(snapshot => {
     for (const key of snapshot.chat.order) {
       const node = snapshot.chat.nodes.get(key)
@@ -144,8 +142,7 @@ export function AssistantScreenshotAction(props: PropsRuntime<'conversation.chat
     }
     return ''
   })
-  const title = useProjection('title', t => t)
-  return <MessageScreenshotButton role="assistant" text={text} title={typeof title === 'string' ? title : ''} />
+  return <MessageScreenshotButton role="assistant" text={text} sessionId={sessionId} />
 }
 
 /** 注册 assistant 消息截图按钮（conversation.chat.assistant-actions）。 */

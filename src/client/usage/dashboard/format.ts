@@ -43,6 +43,17 @@ export function formatUnits(n: number): string {
   return String(Math.round(n))
 }
 
+/** 千分位完整数字（英文逗号分隔），供 KPI 卡副行展示精确值。 */
+export function formatExact(n: number): string {
+  return n.toLocaleString('en-US')
+}
+
+/** 缓存命中率：固定两位小数（72.2 → 72.20%）；空值显示 —。 */
+export function formatHitRate(n: number | null | undefined): string {
+  if (n === null || n === undefined || !isFinite(n)) return '—'
+  return `${n.toFixed(2)}%`
+}
+
 /** 时间戳 → 相对时间（分钟/小时/天粒度）。 */
 export function relativeTime(ts: number, now = Date.now()): string {
   const diff = ts - now

@@ -32,6 +32,7 @@ import { applyMemoryClient } from './memory'
 import { applyImageGallery } from './image-gallery'
 import { applyProviderHub } from './provider-hub'
 import { applyFileExplorerClient } from './file-explorer'
+import { applyWorkspaceDirPickerClient } from './workspace-dir-picker'
 import { apply as applyUsageEntries } from './usage/entry'
 import { applyPeakValley } from './peak-valley'
 import { applyApprovalNotifier } from './approval-notify'
@@ -52,9 +53,11 @@ import { applyCtrlEnterNewline } from './ctrl-enter-newline'
 import { applyMessageScreenshot } from './screenshot'
 // 移动端响应式：手机断点识别 + DSH 设置面板单列化等全局覆盖。
 import { injectResponsiveStyles } from './responsive'
+// 技能 slash 源（替代内核 ui-skill）：输入 / 先选集合再选技能 + 技能工具行。
+import { apply as applySkillSource } from './skill-source'
 const CUSTOM_COMPONENT_SCOPE = 'dsh-better-markdown'
 
-export const inject = ['slots', 'settingsScope', 'connection', 'conversationEvents', 'locale', 'remote', 'sessions', 'workspaces']
+export const inject = ['slots', 'settingsScope', 'connection', 'conversationEvents', 'locale', 'remote', 'sessions', 'workspaces', 'inputTriggers']
 
 export function apply(ctx: ClientContext): void {
   // ---- 移动端响应式：全局覆盖样式（DSH 设置面板单列化等），随插件生命周期清理 ----
@@ -158,6 +161,9 @@ export function apply(ctx: ClientContext): void {
   // ---- dsh-file-explorer：右上角文件浏览器（抽屉 + 树 + 编辑器）-----------
   applyFileExplorerClient(ctx)
 
+  // ---- 工作区目录选择器：自写弹窗（添加工作区选文件夹，shadow 官方 native）---
+  applyWorkspaceDirPickerClient(ctx)
+
   // ---- 用量工作台 + 技能面板（自 dsh-usage-skill 融合）：footer 独立入口 ---
   applyUsageEntries(ctx)
 
@@ -175,4 +181,7 @@ export function apply(ctx: ClientContext): void {
 
   // ---- 单条消息截图（樱花主题）：assistant 消息 actions 行截图按钮 -----------
   applyMessageScreenshot(ctx)
+
+  // ---- 技能 slash 源（替代内核 ui-skill）：输入 / 先选集合再选技能 ----------
+  applySkillSource(ctx)
 }

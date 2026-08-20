@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { usageApi, type ProviderInfo } from './api'
 import { averageCacheHitRate, monthTokens, providerShare, sumTokens, type UsageDay } from './aggregate'
-import { formatUnits, formatYiExact } from './format'
+import { formatExact, formatHitRate, formatUnits, formatYiExact } from './format'
 import { providerPalette } from './theme'
 import { AreaChart } from './charts/AreaChart'
 import { DonutChart } from './charts/DonutChart'
@@ -113,9 +113,9 @@ export function OverviewTab({ onJumpAccounts, refreshTick }: OverviewTabProps): 
       <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}>
         {/* 亿级数字：主值显示「X 亿」，副行显示千分位精确数字 */}
         <KpiCard title={`${rangeLabel} Tokens`} value={formatYiExact(sum.total)?.yi ?? formatUnits(sum.total)} exact={formatYiExact(sum.total)?.exact} sub={`输入 ${formatUnits(sum.input)} · 输出 ${formatUnits(sum.output)}`} />
-        <KpiCard title="输入" value={formatYiExact(sum.input)?.yi ?? formatUnits(sum.input)} exact={formatYiExact(sum.input)?.exact} />
-        <KpiCard title="输出" value={formatYiExact(sum.output)?.yi ?? formatUnits(sum.output)} exact={formatYiExact(sum.output)?.exact} />
-        <KpiCard title="缓存命中" value={formatYiExact(sum.cache)?.yi ?? formatUnits(sum.cache)} exact={formatYiExact(sum.cache)?.exact} sub={`命中率 ${hitRate}%`} />
+        <KpiCard title="输入" value={formatYiExact(sum.input)?.yi ?? formatUnits(sum.input)} exact={formatExact(sum.input)} />
+        <KpiCard title="输出" value={formatYiExact(sum.output)?.yi ?? formatUnits(sum.output)} exact={formatExact(sum.output)} />
+        <KpiCard title="缓存命中" value={formatYiExact(sum.cache)?.yi ?? formatUnits(sum.cache)} exact={formatExact(sum.cache)} sub={`命中率 ${formatHitRate(hitRate)}`} />
         <KpiCard title="活跃供应商" value={String(activeProviders)} sub={`共 ${providers.length} 家配置`} />
         <KpiCard title="告警" value={String(alerts.length)} tone={alerts.length > 0 ? 'danger' : 'default'} />
       </div>

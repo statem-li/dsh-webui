@@ -59,6 +59,7 @@ link_pkg @deepseek-ai/dsh-client-ui-model-selection packages/client/ui-model-sel
 link_pkg @deepseek-ai/dsh-client-ui-settings packages/client/ui-settings
 link_pkg @deepseek-ai/dsh-client-ui-sidebar packages/client/ui-sidebar
 link_pkg @deepseek-ai/dsh-client-ui-tool packages/client/ui-tool
+link_pkg @deepseek-ai/dsh-client-ui-input-trigger packages/client/ui-input-trigger
 link_pkg @deepseek-ai/dsh-credentials packages/credentials/credentials
 link_pkg @deepseek-ai/dsh-launch-environment packages/util/launch-environment
 link_pkg @deepseek-ai/dsh-settings packages/settings/settings

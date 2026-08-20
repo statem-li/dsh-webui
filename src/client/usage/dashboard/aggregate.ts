@@ -39,5 +39,6 @@ export function providerShare(days: UsageDay[]): Array<{ provider: string; token
 export function averageCacheHitRate(days: UsageDay[]): number {
   if (days.length === 0) return 0
   const sum = days.reduce((acc, d) => acc + (d.cacheHitRate ?? 0), 0)
-  return Math.round(sum / days.length)
+  // 保留小数精度（两位由 formatHitRate 统一格式化），不再取整。
+  return sum / days.length
 }

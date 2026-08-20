@@ -16,7 +16,7 @@ import { basename, join } from 'node:path'
 import { URL } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
 import {
-  CdpConnection, captureScreenshot, createPageSession,
+  CdpConnection, captureScreenshot, createPageSession, evaluateJson,
   fetchBrowserWsUrl, navigateAndWait, setViewport,
 } from './browser/cdp.js'
 import {
@@ -31,6 +31,10 @@ interface WebServerRoute {
 
 interface WebServerService {
   register(route: WebServerRoute): () => void
+}
+
+interface SessionStoreLike {
+  get(id: string): { events?: readonly { type: string; data?: { title?: string } }[] } | undefined
 }
 
 declare module '@deepseek-ai/cordis' {
@@ -52,6 +56,16 @@ const MAX_TEXT_LEN = 80000
 function screenshotHome(): string {
   const dshHome = process.env.DSH_HOME ?? join(homedir(), '.dsh')
   return join(dshHome, 'storages', 'webui-screenshot')
+}
+
+/** 从会话事件日志折叠最新标题（last-wins session/title）。 */
+function readTitle(sessionId: string, sessions: SessionStoreLike | undefined): string {
+  const events = sessions?.get(sessionId)?.events ?? []
+  for (let i = events.length - 1; i >= 0; i--) {
+    const event = events[i]
+    if (event.type === 'session/title' && typeof event.data?.title === 'string') return event.data.title
+  }
+  return ''
 }
 
 // ── 轻量 Markdown 渲染（白底深字排版）───────────────────────────────────────
@@ -186,13 +200,13 @@ const THEME_CSS = `
 *{margin:0;padding:0;box-sizing:border-box}
 html{font-size:16px}
 body{background:#ffffff;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",Roboto,sans-serif;color:#24292f;-webkit-font-smoothing:antialiased}
-.card{width:${PAGE_WIDTH}px;height:${PAGE_HEIGHT}px;background:#ffffff;display:flex;flex-direction:column;overflow:hidden}
+.card{width:${PAGE_WIDTH}px;min-height:${PAGE_HEIGHT}px;background:#ffffff;display:flex;flex-direction:column}
 .head{display:flex;flex-direction:column;gap:12px;padding:36px 72px 0}
 .head-top{display:flex;align-items:center;justify-content:space-between}
 .head-brand{display:flex;align-items:center;gap:8px;font-size:15px;font-weight:600;color:#111}
 .head-date{font-size:13px;color:#9aa0a6}
 .head-title{font-size:24px;font-weight:700;color:#111;line-height:1.35}
-.content{flex:1;padding:30px 72px 24px;overflow:hidden;font-size:20px;line-height:1.85;color:#24292f}
+.content{flex:1;padding:30px 72px 24px;font-size:20px;line-height:1.85;color:#24292f}
 .content p{margin:0 0 .95em}
 .content p:last-child{margin-bottom:0}
 .content h1,.content h2,.content h3,.content h4,.content h5,.content h6{color:#111;font-weight:650;margin:1.15em 0 .55em;line-height:1.4}
@@ -244,7 +258,7 @@ function renderMessageHtml(role: 'user' | 'assistant', text: string, title: stri
 
 // ── 无头浏览器固定视口截图 ──────────────────────────────────────────────────
 
-/** 用独立无头浏览器把 HTML 渲染为截图（2x DPR + PNG 无损，文字清晰）。 */
+/** 用独立无头浏览器把 HTML 渲染为截图（2x DPR + PNG 无损，文字清晰）。短内容保持 16:10，长内容自动扩展为长图截全。 */
 async function captureHtml(html: string): Promise<string> {
   const chromePath = resolveChromePath(DEFAULT_CHROME_CANDIDATES)
   const port = await findFreePort(9222)
@@ -260,8 +274,21 @@ async function captureHtml(html: string): Promise<string> {
     const htmlFile = join(tmpDir, 'shot.html')
     await writeFile(htmlFile, html, 'utf8')
     await navigateAndWait(session, `file:///${htmlFile.replaceAll('\\', '/')}`, 15000)
-    // 2x DPR：1280×800 CSS 视口 → 2560×1600 物理像素，文字/线条清晰不糊。
+    // 先按 16:10 视口排版（2x DPR）。
     await setViewport(session, PAGE_WIDTH, PAGE_HEIGHT, 2)
+    // 测量内容实际高度；超过 16:10 时扩展视口（长图截全），二次测量修正重排。
+    let cssHeight = PAGE_HEIGHT
+    for (let round = 0; round < 2; round += 1) {
+      const measured = await evaluateJson(
+        session,
+        'Math.max(document.body ? document.body.scrollHeight : 0, document.documentElement.scrollHeight)',
+        false,
+      )
+      const next = Math.min(Math.max(Math.round(Number(measured)) || PAGE_HEIGHT, PAGE_HEIGHT), 24000)
+      if (next === cssHeight) break
+      cssHeight = next
+      await setViewport(session, PAGE_WIDTH, cssHeight, 2)
+    }
     const base64 = await captureScreenshot(session, 92, 'png')
     return base64
   } finally {
@@ -304,7 +331,7 @@ function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
   })
 }
 
-async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+async function handle(ctx: Context, req: IncomingMessage, res: ServerResponse): Promise<void> {
   if (req.method !== 'POST') {
     json(res, 405, { ok: false, error: '仅支持 POST' })
     return
@@ -318,12 +345,15 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   }
   const role = body.role === 'user' || body.role === 'assistant' ? body.role : ''
   const text = typeof body.text === 'string' ? body.text : ''
-  const title = typeof body.title === 'string' ? body.title : ''
+  const sessionId = typeof body.sessionId === 'string' ? body.sessionId : ''
   if (role === '' || text.trim() === '') {
     json(res, 400, { ok: false, error: 'role 或 text 无效' })
     return
   }
   try {
+    // 标题权威取自会话事件日志（session/title 最后一条），避免 client 端 projection 不一致。
+    const sessions = ctx.get('sessions') as SessionStoreLike | undefined
+    const title = readTitle(sessionId, sessions)
     const html = renderMessageHtml(role, text, title)
     const base64 = await captureHtml(html)
     const outDir = screenshotHome()
@@ -349,7 +379,7 @@ export function applyScreenshot(ctx: Context): void {
   ctx.effect(() => webServer.register({
     kind: 'exact',
     path: ROUTE_PATH,
-    handler: (req, res) => { void handle(req, res) },
+    handler: (req, res) => { void handle(ctx, req, res) },
   }), 'webui: screenshot route')
   ctx.effect(() => webServer.register({
     kind: 'prefix',

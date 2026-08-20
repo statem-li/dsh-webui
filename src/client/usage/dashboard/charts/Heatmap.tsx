@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { createPortal } from 'react-dom'
-import { formatUnits } from '../format'
+import { formatHitRate, formatUnits } from '../format'
 
 export interface HeatCell {
   key: string
@@ -58,7 +58,7 @@ export function Heatmap({ cells, onSelect, rows = 5 }: { cells: HeatCell[]; onSe
           {hover.cell.input !== undefined && (hover.cell.input ?? 0) + (hover.cell.output ?? 0) + (hover.cell.cache ?? 0) > 0 && (
             <div style={{ marginTop: 4, display: 'flex', flexDirection: 'column', gap: 2, color: 'var(--dsw-alias-label-secondary)' }}>
               <span>输入 {formatUnits(hover.cell.input ?? 0)} · 输出 {formatUnits(hover.cell.output ?? 0)}</span>
-              <span>缓存 {formatUnits(hover.cell.cache ?? 0)}{hover.cell.hitRate !== undefined ? ` · 命中 ${hover.cell.hitRate}%` : ''}</span>
+              <span>缓存 {formatUnits(hover.cell.cache ?? 0)}{hover.cell.hitRate !== undefined ? ` · 命中 ${formatHitRate(hover.cell.hitRate)}` : ''}</span>
             </div>
           )}
         </div>,

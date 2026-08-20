@@ -24,11 +24,13 @@ import { applyProxy } from './proxy.js'
 import { applyBrowser } from './browser/index.js'
 import { applyMemory } from './memory/index.js'
 import { applyFileExplorer } from './file-explorer.js'
+import { applyWorkspaceDirPicker } from './workspace-dir-picker.js'
 import { applyUsageHost } from './usage-host.js'
 import { applyVisionHelper } from './vision-helper.js'
 import { applyMail } from './mail.js'
 import { applyRewind } from './rewind.js'
 import { applyScreenshot } from './screenshot.js'
+import { apply as applySkillToggles } from './skill-toggles.js'
 import {
   AnySearchSearchProvider,
   ANYSEARCH_DEFAULT_BASE_URL,
@@ -239,6 +241,10 @@ export async function apply(ctx: Context, config: WebuiConfig = {}): Promise<voi
   // 9) 工作区文件浏览器（自 dsh-file-explorer 合并）。
   applyFileExplorer(ctx)
 
+  // 9.5) 工作区目录选择器：应用内弹窗浏览目录（/api/webui-dir-picker），
+  // 供「添加工作区」选择文件夹（shadow 官方 native surface）。
+  applyWorkspaceDirPicker(ctx)
+
   // 10) 用量统计 + 技能管理（自 dsh-usage-skill 融合；host 复用其 lib 产物）。
   await applyUsageHost(ctx, config.usage)
 
@@ -253,4 +259,7 @@ export async function apply(ctx: Context, config: WebuiConfig = {}): Promise<voi
 
   // 14) 对话「截图渲染」：渲染会话长图（/api/webui-screenshot）。
   applyScreenshot(ctx)
+
+  // 15) 技能开关（/api/skill-toggles）：每个技能禁用/开启 + 技能包一键开关。
+  await applySkillToggles(ctx)
 }

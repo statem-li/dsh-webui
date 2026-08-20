@@ -8,7 +8,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
-  Button, IconChevronDownOutline14, IconEditOutline16, IconFolderOpenOutline16,
+  Button, IconChevronDownOutline14, IconCloseOutline16, IconEditOutline16, IconFolderOpenOutline16,
   IconPlusOutline16, IconRefreshOutline14, IconTrashOutline16, Modal, Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { modalAnimClass } from '../../modal-animation'
@@ -59,6 +59,9 @@ const SKILL_ZH: Record<string, string> = {
   looseTitle: '散装技能', looseEmpty: '没有散装 Skill',
   deleteBundleConfirm: '删除 Bundle「{name}」？其中的技能将变为散装。',
   deleteSkillConfirm: '删除技能「{name}」？此操作会删除它的文件。',
+  enableSkill: '启用', disableSkill: '禁用',
+  enableBundle: '启用全部', disableBundle: '禁用全部',
+  toggleFailed: '切换失败：{message}',
 }
 
 function skillT(key: string, params?: Record<string, string | number>): string {
@@ -84,8 +87,43 @@ type InstallInput =
   | { archive: string; description: string; bundleId?: string }
   | { skillName: string; description: string; bundleId?: string; files: Array<{ path: string; data: string }> }
 
+/** 技能开关状态(/api/skill-toggles/status 响应)。 */
+interface ToggleStatus {
+  skills: Record<string, boolean>
+  bundles: Record<string, boolean>
+}
+
 const skillApi = {
   list: (): Promise<SkillSnapshot> => skillRequest<SkillSnapshot>('/list', { headers: { accept: 'application/json' } }),
+  toggleStatus: (): Promise<ToggleStatus> =>
+    fetch('/api/skill-toggles/status', { headers: { accept: 'application/json' } })
+      .then((response) => response.json() as Promise<ToggleStatus & { error?: string }>)
+      .then((body) => {
+        if (typeof body !== 'object' || body === null || body.skills === undefined) {
+          throw new Error('toggle status unavailable')
+        }
+        return body as ToggleStatus
+      }),
+  setSkillEnabled: (name: string, enabled: boolean): Promise<{ ok: boolean }> =>
+    fetch(`/api/skill-toggles/skills/${encodeURIComponent(name)}`, {
+      method: 'PUT',
+      headers: { accept: 'application/json', 'content-type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+    }).then((response) => response.json() as Promise<{ ok: boolean; error?: string }>)
+      .then((body) => {
+        if (!body.ok) throw new Error(body.error || 'toggle failed')
+        return body
+      }),
+  setBundleEnabled: (bundleId: string, enabled: boolean): Promise<{ ok: boolean; handled?: number }> =>
+    fetch(`/api/skill-toggles/bundles/${encodeURIComponent(bundleId)}`, {
+      method: 'PUT',
+      headers: { accept: 'application/json', 'content-type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+    }).then((response) => response.json() as Promise<{ ok: boolean; error?: string; handled?: number }>)
+      .then((body) => {
+        if (!body.ok) throw new Error(body.error || 'toggle failed')
+        return body
+      }),
   createBundle: (name: string): Promise<Record<string, never>> =>
     skillRequest('/bundles', { method: 'POST', headers: { accept: 'application/json', 'content-type': 'application/json' }, body: JSON.stringify({ name }) }),
   renameBundle: (bundleId: string, name: string): Promise<Record<string, never>> =>
@@ -153,6 +191,12 @@ const css = {
   viewerContent: 'skm-viewer-content',
   looseEmpty: 'skm-loose-empty',
   visuallyHidden: 'skm-visually-hidden',
+  // 技能/技能包开关
+  toggle: 'skm-toggle',
+  toggleOn: 'skm-toggle-on',
+  toggleOff: 'skm-toggle-off',
+  toggleKnob: 'skm-toggle-knob',
+  bundleToggle: 'skm-bundle-toggle',
 }
 
 const STYLE_ID = 'dsh-skill-manager-styles'
@@ -248,6 +292,16 @@ const SHEET = `
 .skm-viewer-content hr{border:none;border-top:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.08));margin:10px 0}
 .skm-loose-empty{margin:2px;padding:4px 0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,#888)}
 .skm-visually-hidden{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+
+/* ── 技能/技能包开关（对齐官方开关样式） ─────────────────────── */
+.skm-toggle{flex:none;display:inline-flex;align-items:center;width:28px;height:16px;box-sizing:border-box;border-radius:8px;padding:2px;appearance:none;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.12));background:var(--dsw-alias-bg-base,#0e1116);cursor:pointer;transition:background 120ms,border-color 120ms}
+.skm-toggle:hover{filter:brightness(1.15)}
+.skm-toggle-on{border-color:transparent;background:var(--dsw-alias-state-business-primary,#4a9eff)}
+.skm-toggle-off{background:var(--dsw-alias-bg-layer-2,#262b36);border-color:var(--dsw-alias-border-l2,rgba(255,255,255,.14))}
+.skm-toggle-knob{display:block;width:10px;height:10px;border-radius:50%;background:var(--dsw-alias-label-tertiary,#888);transition:transform 120ms,background 120ms}
+.skm-toggle-on .skm-toggle-knob{transform:translateX(12px);background:var(--dsw-alias-label-primary,#fff)}
+.skm-toggle-off .skm-toggle-knob{transform:translateX(0);background:var(--dsw-alias-label-tertiary,#888)}
+.skm-bundle-toggle{flex:none;display:inline-flex;align-items:center;gap:4px;margin-right:6px}
 
 /* ── 移动端：面板加高、文件查看器左右分栏改上下堆叠 ───────────── */
 @media (max-width: 767.98px) {
@@ -410,10 +464,12 @@ function skillFileRows(files: string[]): ViewRow[] {
   return rows
 }
 
-/** 技能行：查看按钮 + 名称/描述 + 文件数 + compatibility + （可选）移除/归入按钮；点击查看按钮打开文件查看器。 */
-function SkillRowItem({ skill, bundleId, onView, onAssign, onRemove, onDelete }: {
+/** 技能行：开关 + 查看按钮 + 名称/描述 + 文件数 + compatibility + （可选）移除/归入按钮。 */
+function SkillRowItem({ skill, bundleId, enabled, onToggle, onView, onAssign, onRemove, onDelete }: {
   skill: SkillInfo
   bundleId: string | null
+  enabled: boolean
+  onToggle: (skill: SkillInfo, enabled: boolean) => void
   onView: (skill: SkillInfo) => void
   onAssign?: (skill: SkillInfo) => void
   onRemove?: (skill: SkillInfo) => void
@@ -422,6 +478,23 @@ function SkillRowItem({ skill, bundleId, onView, onAssign, onRemove, onDelete }:
   const files = Array.isArray(skill.files) ? skill.files : []
   const description = skill.description ?? ''
   const head: ReactNode[] = []
+  head.push(
+    <button
+      key="toggle"
+      type="button"
+      role="switch"
+      aria-checked={enabled}
+      aria-label={enabled ? skillT('disableSkill') : skillT('enableSkill')}
+      title={enabled ? skillT('disableSkill') : skillT('enableSkill')}
+      className={`${css.toggle} ${enabled ? css.toggleOn : css.toggleOff}`}
+      onClick={(event) => {
+        event.stopPropagation()
+        onToggle(skill, !enabled)
+      }}
+    >
+      <span className={css.toggleKnob} aria-hidden="true" />
+    </button>,
+  )
   if (files.length > 0) {
     head.push(
       <button key="view" type="button" className={css.skillExpand}
@@ -446,7 +519,7 @@ function SkillRowItem({ skill, bundleId, onView, onAssign, onRemove, onDelete }:
     head.push(
       <Tooltip key="remove" label={skillT('removeSkill')} side="bottom" delayMs={500}>
         <button type="button" className={css.iconAction} aria-label={skillT('removeSkill')} onClick={() => { onRemove?.(skill) }}>
-          <IconTrashOutline16 size={14} />
+          <IconCloseOutline16 size={14} />
         </button>
       </Tooltip>,
     )
@@ -505,8 +578,26 @@ export function SkillsPanel({ onClose, closing = false }: { onClose: () => void;
   const [installError, setInstallError] = useState<string | null>(null)
   const [dropActive, setDropActive] = useState(false)
   const fileInput = useRef<HTMLInputElement>(null)
+  // 技能/技能包开关状态（skillName → enabled；bundleId → enabled）
+  const [toggles, setToggles] = useState<{ skills: Record<string, boolean>; bundles: Record<string, boolean> }>({ skills: {}, bundles: {} })
+  // 切换进行中的 key（避免重复点击）
+  const [toggling, setToggling] = useState<Set<string>>(new Set())
 
-  const refresh = (): void => setReload((value) => value + 1)
+  const refresh = (): void => {
+    // 技能目录变更后,同步失效 skill-source 的 slash 菜单快照缓存。
+    void import('../../skill-source').then(({ invalidateSkillCache }) => invalidateSkillCache())
+    setReload((value) => value + 1)
+  }
+
+  /** 开关切换后静默同步:仅失效 slash 缓存并重拉开关状态,不重载整个面板(避免闪烁)。 */
+  const refreshTogglesOnly = (): void => {
+    void import('../../skill-source').then(({ invalidateSkillCache }) => invalidateSkillCache())
+    void skillApi.toggleStatus().then(
+      (status) => { setToggles(status) },
+      () => { /* 保持当前显示 */ },
+    )
+  }
+
   const t = skillT
 
   useEffect(() => {
@@ -520,10 +611,45 @@ export function SkillsPanel({ onClose, closing = false }: { onClose: () => void;
         if (current) setState({ status: 'error' })
       },
     )
+    void skillApi.toggleStatus().then(
+      (status) => {
+        if (current) setToggles(status)
+      },
+      () => {
+        // 开关接口不可用时保持空状态（开关仍可操作,失败会提示）。
+      },
+    )
     return () => { current = false }
     // reload 拆分为变化键；open 恒 true（本组件在打开时才渲染）
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reload])
+
+  const runToggle = async (key: string, action: () => Promise<unknown>): Promise<void> => {
+    if (toggling.has(key)) return
+    setToggling((current) => new Set(current).add(key))
+    setInstallError(null)
+    try {
+      await action()
+      // 开关只改 frontmatter,技能列表结构不变:静默同步即可,不重载面板。
+      refreshTogglesOnly()
+    } catch (error) {
+      setInstallError(skillT('toggleFailed', { message: error instanceof Error ? error.message : String(error) }))
+    } finally {
+      setToggling((current) => {
+        const next = new Set(current)
+        next.delete(key)
+        return next
+      })
+    }
+  }
+
+  const toggleSkill = (skill: SkillInfo, enabled: boolean): void => {
+    void runToggle(`skill:${skill.name}`, () => skillApi.setSkillEnabled(skill.name, enabled))
+  }
+
+  const toggleBundle = (bundle: BundleInfo, enabled: boolean): void => {
+    void runToggle(`bundle:${bundle.id}`, () => skillApi.setBundleEnabled(bundle.id, enabled))
+  }
 
   const toggleExpanded = (bundleId: string): void => {
     setExpanded((current) => {
@@ -843,6 +969,8 @@ export function SkillsPanel({ onClose, closing = false }: { onClose: () => void;
                 {bundles.map((bundle) => {
                   const open2 = expanded.has(bundle.id)
                   const renamingThis = renameTarget?.bundleId === bundle.id
+                  const bundleEnabled = toggles.bundles[bundle.id] !== false
+                  const bundleToggling = toggling.has(`bundle:${bundle.id}`)
                   return (
                     <li key={bundle.id} className={css.bundle} data-open={open2 ? 'true' : undefined}>
                       {renamingThis ? (
@@ -857,6 +985,23 @@ export function SkillsPanel({ onClose, closing = false }: { onClose: () => void;
                         </form>
                       ) : (
                         <>
+                          <span className={css.bundleToggle}>
+                            <button
+                              type="button"
+                              role="switch"
+                              aria-checked={bundleEnabled}
+                              aria-label={bundleEnabled ? t('disableBundle') : t('enableBundle')}
+                              title={bundleEnabled ? t('disableBundle') : t('enableBundle')}
+                              className={`${css.toggle} ${bundleEnabled ? css.toggleOn : css.toggleOff}`}
+                              disabled={bundleToggling || bundle.skillCount === 0}
+                              onClick={(event) => {
+                                event.stopPropagation()
+                                toggleBundle(bundle, !bundleEnabled)
+                              }}
+                            >
+                              <span className={css.toggleKnob} aria-hidden="true" />
+                            </button>
+                          </span>
                           <button type="button" className={css.bundleRow} aria-expanded={open2} onClick={() => { toggleExpanded(bundle.id) }}>
                             <span className={css.bundleName}>{bundle.name}</span>
                             <span className={css.bundleCount}>{t('skillsCount', { n: bundle.skillCount })}</span>
@@ -884,6 +1029,8 @@ export function SkillsPanel({ onClose, closing = false }: { onClose: () => void;
                             <li className={css.status}>{t('bundleNoSkills')}</li>
                           ) : bundle.skills.map((skill) => (
                             <SkillRowItem key={skill.name} skill={skill} bundleId={bundle.id}
+                              enabled={toggles.skills[skill.name] !== false}
+                              onToggle={toggleSkill}
                               onView={openViewer}
                               onRemove={(s) => { void removeFromBundle(bundle.id, s.name) }}
                               onDelete={(s) => { setConfirm({ kind: 'skill', name: s.name }) }} />
@@ -903,6 +1050,8 @@ export function SkillsPanel({ onClose, closing = false }: { onClose: () => void;
               <ul className={css.skillList}>
                 {loose.map((skill) => (
                   <SkillRowItem key={skill.name} skill={skill} bundleId={null}
+                    enabled={toggles.skills[skill.name] !== false}
+                    onToggle={toggleSkill}
                     onView={openViewer}
                     onAssign={(s) => { setAssignTarget(s) }}
                     onDelete={(s) => { setConfirm({ kind: 'skill', name: s.name }) }} />

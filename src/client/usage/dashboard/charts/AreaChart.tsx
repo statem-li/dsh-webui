@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { formatUnits } from '../format'
+import { formatExact, formatUnits } from '../format'
 import { ChartTooltip } from './ChartTooltip'
 
 export interface SeriesPoint { label: string; input: number; output: number; cache: number }
@@ -210,20 +210,24 @@ export function AreaChart({ data, height = 240, colors = DEFAULT_COLORS }: AreaC
         />
       </svg>
 
-      {/* tooltip：跟随鼠标；近视口顶部时翻转到下方 */}
+      {/* tooltip：跟随鼠标；近视口顶部时翻转到下方；每行「缩写 + 完整数字」 */}
       {hover !== null && hoverPoint !== undefined && (
         <ChartTooltip x={hover.x} y={hover.y} placement={hover.y < 180 ? 'bottom' : 'top'}>
           <div style={{ fontWeight: 600, color: 'var(--dsw-alias-label-primary)', marginBottom: 4 }}>{hoverPoint.label}</div>
           {(['input', 'output', 'cache'] as const).map(k => (
-            <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 150 }}>
+            <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 170 }}>
               <span style={{ width: 8, height: 8, borderRadius: 2, background: colors[k], flex: 'none' }} />
               <span style={{ color: 'var(--dsw-alias-label-secondary)' }}>{SERIES_NAME[k]}</span>
-              <span style={{ marginLeft: 'auto', color: 'var(--dsw-alias-label-primary)', fontFamily: 'ui-monospace, monospace' }}>{formatUnits(hoverPoint[k])}</span>
+              <span style={{ marginLeft: 'auto', color: 'var(--dsw-alias-label-primary)', fontFamily: 'ui-monospace, monospace' }}>
+                {formatUnits(hoverPoint[k])} <span style={{ color: 'var(--dsw-alias-label-tertiary)', fontSize: 11 }}>({formatExact(hoverPoint[k])})</span>
+              </span>
             </div>
           ))}
-          <div style={{ borderTop: '1px solid var(--dsw-alias-border-l1)', marginTop: 5, paddingTop: 5, display: 'flex', alignItems: 'center', gap: 8, minWidth: 150 }}>
+          <div style={{ borderTop: '1px solid var(--dsw-alias-border-l1)', marginTop: 5, paddingTop: 5, display: 'flex', alignItems: 'center', gap: 8, minWidth: 170 }}>
             <span style={{ color: 'var(--dsw-alias-label-secondary)' }}>合计</span>
-            <span style={{ marginLeft: 'auto', fontWeight: 600, color: 'var(--dsw-alias-label-primary)', fontFamily: 'ui-monospace, monospace' }}>{formatUnits(hoverTotal)}</span>
+            <span style={{ marginLeft: 'auto', fontWeight: 600, color: 'var(--dsw-alias-label-primary)', fontFamily: 'ui-monospace, monospace' }}>
+              {formatUnits(hoverTotal)} <span style={{ color: 'var(--dsw-alias-label-tertiary)', fontSize: 11 }}>({formatExact(hoverTotal)})</span>
+            </span>
           </div>
         </ChartTooltip>
       )}

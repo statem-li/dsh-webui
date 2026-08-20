@@ -64,9 +64,19 @@ export declare function navigateHistory(session: CdpSession, delta: number): Pro
     title: string;
 }>;
 /** 设置视口尺寸（无头 Chrome 默认视口过小，网页会以小屏响应式渲染；这里设成桌面尺寸）。 */
-export declare function setViewport(session: CdpSession, width: number, height: number): Promise<void>;
-/** 页面截图（jpeg base64） */
-export declare function captureScreenshot(session: CdpSession, quality?: number): Promise<string>;
+export declare function setViewport(session: CdpSession, width: number, height: number, deviceScaleFactor?: number): Promise<void>;
+/** 页面截图（默认 jpeg；format 可传 png 无损，适合文字/卡片）。 */
+export declare function captureScreenshot(session: CdpSession, quality?: number, format?: 'jpeg' | 'png'): Promise<string>;
+/** 启动 CDP screencast：Chrome 持续推送 JPEG 帧（仅变化时），供内嵌面板实时展示 + 交互。 */
+export declare function startScreencast(session: CdpSession, width: number, height: number, quality?: number): Promise<void>;
+/** 停止 screencast（幂等）。 */
+export declare function stopScreencast(session: CdpSession): Promise<void>;
+/** 确认收到一帧 screencast（CDP 要求逐帧 ack，否则暂停推送）。 */
+export declare function ackScreencast(session: CdpSession, screencastSessionId: number): Promise<void>;
+/** 真实鼠标滚轮（CDP Input 域 mouseWheel，delta 正=向下/向右）。 */
+export declare function dispatchMouseWheel(session: CdpSession, x: number, y: number, deltaX: number, deltaY: number): Promise<void>;
+/** 通用鼠标按下/释放（前端交互回传：拖拽、长按等）。 */
+export declare function dispatchMouseButton(session: CdpSession, type: 'mousePressed' | 'mouseReleased', x: number, y: number, button?: 'left' | 'right' | 'middle', clickCount?: number): Promise<void>;
 /** 页面执行 JS，返回 JSON 值 */
 export declare function evaluateJson(session: CdpSession, expression: string, awaitPromise?: boolean): Promise<any>;
 /** 读取视口尺寸（用于校验点击坐标是否落在可视区内） */
