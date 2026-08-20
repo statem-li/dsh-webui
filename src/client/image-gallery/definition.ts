@@ -39,8 +39,8 @@ interface GeneratedImagesState extends GeneratedImagesChatData {
   readonly promptRaw: string | null
 }
 
-/** 当前识别的图片工具名（宿主可增减；这里覆盖 dsh-vision-helper 的 generate_image 与 AI 浏览器的 browser_screenshot）。 */
-const IMAGE_TOOL_NAMES = new Set(['generate_image', 'browser_screenshot'])
+/** 当前识别的图片工具名（宿主可增减；这里覆盖 dsh-vision-helper 的 generate_image 与 AI 浏览器的 browser_screenshot / browser_see）。 */
+const IMAGE_TOOL_NAMES = new Set(['generate_image', 'browser_screenshot', 'browser_see'])
 
 function isImageToolName(value: string): boolean {
   return IMAGE_TOOL_NAMES.has(value)

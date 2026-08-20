@@ -97,7 +97,7 @@ async function saveImage(url: string, filename: string): Promise<SaveState> {
 
 export function GeneratedImageGallery({ node, t }: GalleryViewProps) {
   const images = node.data.images
-  const isScreenshot = node.data.toolName === 'browser_screenshot'
+  const isScreenshot = node.data.toolName === 'browser_screenshot' || node.data.toolName === 'browser_see'
   const [openIndex, setOpenIndex] = useState<number | null>(null)
   const [broken, setBroken] = useState<ReadonlySet<number>>(new Set())
   const [saveState, setSaveState] = useState<SaveState>('idle')

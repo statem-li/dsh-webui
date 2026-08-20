@@ -683,6 +683,7 @@ export function applyBrowser(ctx: PluginContext, config: Config): void {
 
           const snap = await snapshotFor(session, sessionId)
           log(sessionId, 'see', `vision=${vision ? 'ok' : 'fail'}`)
+          const fileName = path.basename(file)
           return {
             ok: true,
             url: snap.url,
@@ -691,6 +692,7 @@ export function applyBrowser(ctx: PluginContext, config: Config): void {
             vision,
             visionModel,
             screenshot: file,
+            imageUrl: `/api/dsh-browser/screenshot?sessionId=${encodeURIComponent(sessionId)}&file=${encodeURIComponent(fileName)}`,
             ...(visionError ? { visionError } : {}),
           }
         } catch (e: any) {
