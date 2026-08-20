@@ -234,6 +234,14 @@ export async function navigateHistory(session: CdpSession, delta: number): Promi
   return { url: current?.url || '', title: current?.title || '' }
 }
 
+/** 设置视口尺寸（无头 Chrome 默认视口过小，网页会以小屏响应式渲染；这里设成桌面尺寸）。 */
+export async function setViewport(session: CdpSession, width: number, height: number): Promise<void> {
+  const { conn, sessionId } = session
+  await conn.send('Emulation.setDeviceMetricsOverride', {
+    width, height, deviceScaleFactor: 1, mobile: false,
+  }, sessionId)
+}
+
 /** 页面截图（jpeg base64） */
 export async function captureScreenshot(
   session: CdpSession,

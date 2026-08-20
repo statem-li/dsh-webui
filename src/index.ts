@@ -227,7 +227,7 @@ export async function apply(ctx: Context, config: WebuiConfig = {}): Promise<voi
 
   // 7) AI 浏览器操作（自 dsh-browser 合并；config.browser 可选覆盖）。
   applyBrowser(ctx, {
-    chromePath: '', port: 0, headless: false, screenshotDir: '',
+    chromePath: '', port: 0, headless: true, screenshotDir: '',
     ...config.browser,
   })
 

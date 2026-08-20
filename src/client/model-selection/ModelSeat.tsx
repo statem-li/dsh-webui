@@ -5,6 +5,10 @@
  * 两级 root 菜单，改为：触发按钮直接弹出模型分组列表。推理等级由独立的
  * EffortSeat 单独弹出。数据与提交仍走同一个 per-session ModelDirectory，
  * 因此两个入口与 `/model` 弹窗状态互通。
+ *
+ * 选中模型时默认带上该模型支持的最高推理档位（pi-ai 的 `efforts` 按
+ * off→max 升序返回，末项即最高档），避免无 defaultEffort 的模型切换后
+ * 推理等级回落为「默认/关」；无推理元数据的模型保持不带 effort。
  */
 import {
   useEffect, useId, useMemo, useRef, useState, useSyncExternalStore,
@@ -176,7 +180,19 @@ export function ModelSeat({ available, directory, load, select }: ModelSeatProps
                     key={model.id}
                     title={model.name}
                     disabled={busy}
-                    onClick={() => { choose({ provider: activeGroup.id, model: model.id }) }}
+                    onClick={() => {
+                      // 默认推理等级 = 该模型支持的最高档位（efforts 升序末项），
+                      // 让选完模型即落在最大档，而不是回到「默认/关」。
+                      const efforts = model.reasoning?.efforts
+                      const highestEffort = efforts !== undefined && efforts.length > 0
+                        ? efforts[efforts.length - 1]!.id
+                        : undefined
+                      choose({
+                        provider: activeGroup.id,
+                        model: model.id,
+                        ...(highestEffort === undefined ? {} : { reasoningEffort: highestEffort }),
+                      })
+                    }}
                   >
                     <span className={css.msOptionCopy}>
                       <span className={css.msModelName}>{model.name}</span>

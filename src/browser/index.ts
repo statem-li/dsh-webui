@@ -8,7 +8,9 @@
  * - 操作后 DOM 静默检测（waitForSettle），拿到稳定快照，减少模型反复重试。
  * - 截图兜底：browser_screenshot 存文件返回路径，模型用 vision_describe
  *   （辅助视觉插件）看图。
- * - 独立 Chrome 实例：专属 user-data-dir（登录态持久化），用户实时可见可交互。
+ * - 会话隔离：每个会话（sessionId）独立 Chrome 实例 + 独立 user-data-dir，
+ *   登录态/Cookie/页面完全隔离，互不干扰；默认无头运行，画面经 HTTP 接口
+ *   内嵌到 Web GUI（client 侧）展示。
  * - 零依赖：Node 24 原生 WebSocket 实现 CDP 客户端。
  */
 import fs from 'node:fs'
@@ -23,6 +25,7 @@ import {
   navigateHistory,
   waitForPageReady,
   captureScreenshot,
+  setViewport,
   fetchBrowserWsUrl,
   evaluateJson,
   dispatchKey,
@@ -33,6 +36,7 @@ import {
   launchChrome,
   killChrome,
   findFreePort,
+  profileDirFor,
   DEFAULT_CHROME_CANDIDATES,
   type ChromeRuntime,
 } from './chrome.js'
@@ -54,9 +58,9 @@ export const inject = ['tools', 'webServer', 'fs', 'sandboxPolicy']
 export interface Config {
   /** Chrome/Edge 可执行文件路径（空 = 自动探测常见路径） */
   chromePath: string
-  /** CDP 端口（0 = 自动从 9222 起找空闲端口） */
+  /** CDP 起始端口（0 = 自动从 9222 起找空闲端口；每会话独立端口） */
   port: number
-  /** 无头模式 */
+  /** 无头模式（默认开启：画面经接口内嵌到 Web GUI，不弹独立窗口） */
   headless: boolean
   /** 截图输出目录（空 = Chrome profile 目录下 screenshots/） */
   screenshotDir: string
@@ -65,25 +69,59 @@ export interface Config {
 export const Config = z.object({
   chromePath: z.string().default(''),
   port: z.number().default(0),
-  headless: z.boolean().default(false),
+  headless: z.boolean().default(true),
   screenshotDir: z.string().default(''),
 })
 
 const MAX_LOG = 200
+const MAX_STEPS = 50
 const NAV_TIMEOUT_MS = 30000
+// 无头 Chrome 默认视口过小（约 800×600），网页会以小屏响应式渲染、截图也小；
+// 这里统一设成桌面视口，保证网页正常渲染、画面清晰（宽高比 1.6，与面板接近）。
+const VIEWPORT_WIDTH = 1440
+const VIEWPORT_HEIGHT = 900
+// 浏览器任务「engaged」判定：最后一次操作完成后，标识在 UI 上再保持这段时间，
+// 覆盖 AI 连续操作之间的 LLM 思考间隔，避免「单次操作结束标识就跳没」的闪烁。
+const ENGAGE_TIMEOUT_MS = 90_000
 // 操作后 DOM 静默检测参数
 const SETTLE_IDLE_MS = 250
 const SETTLE_TIMEOUT_MS = 2000
 // browser_see 视觉描述的默认提示词（聚焦「可操作」元素，服务网页操作场景）
 const DEFAULT_SEE_PROMPT = '描述当前浏览器页面可见区域：整体布局（顶部导航/侧边栏/主内容区）、所有可见的按钮、输入框、链接及它们的文字，以及当前是否有弹窗/对话框。用于辅助网页操作，请具体到可点击/可输入元素，看不清就直说。'
 
-interface BrowserState {
+/** 单个会话的浏览器运行态（CDP 连接 + 进程 + 截图目录）。 */
+interface SessionBrowserState {
   runtime: ChromeRuntime | null
   conn: CdpConnection | null
   session: CdpSession | null
   screenshotDir: string
   lastScreenshotPath: string | null
   log: Array<{ ts: string; action: string; detail: string }>
+}
+
+/** 一次浏览器操作在时间线上的记录（供 Web GUI 内嵌面板展示）。 */
+interface ActivityStep {
+  seq: number
+  tool: string
+  /** 人类可读动作名，如「打开 URL」「点击元素」。 */
+  label: string
+  /** 指令内容摘要（参数），如 URL / ref=3 / 按键名。 */
+  detail: string
+  status: 'running' | 'done' | 'error'
+  startedAt: number
+  finishedAt: number | null
+  /** 结果/错误摘要。 */
+  result: string
+}
+
+/** 每会话的浏览器活动时间线（活跃标记 + 最近操作）。 */
+interface SessionActivity {
+  active: boolean
+  /** 最后一次浏览器操作完成的时间戳（用于「任务期间标识持续显示」的 engaged 判定）。 */
+  lastActivityAt: number
+  url: string
+  title: string
+  steps: ActivityStep[]
 }
 
 export function applyBrowser(ctx: PluginContext, config: Config): void {
@@ -94,34 +132,88 @@ export function applyBrowser(ctx: PluginContext, config: Config): void {
   )
   const prefsFile = path.join(dataRoot, 'prefs.json')
 
-  // ═══ 「允许 AI 使用浏览器」开关（默认开启，持久化）═══
+  // ═══ 「允许 AI 使用浏览器」开关（默认开启，持久化）+ 无头模式（默认开）═══
   let allowBrowser = true
+  let headlessMode = config.headless
+  // 目标视口：默认桌面尺寸，client 侧会按用户屏幕分辨率动态上报覆盖。
+  let viewportWidth = VIEWPORT_WIDTH
+  let viewportHeight = VIEWPORT_HEIGHT
+  // Web GUI 自身 origin（client 上报），用于拒绝「导航到自身导致截图套娃」。
+  let webGuiOrigin = ''
   function loadPrefs(): void {
     try {
       const parsed = JSON.parse(fs.readFileSync(prefsFile, 'utf8'))
       allowBrowser = parsed?.allowBrowser !== false
-    } catch { allowBrowser = true }
+      if (typeof parsed?.headless === 'boolean') headlessMode = parsed.headless
+    } catch { allowBrowser = true; headlessMode = config.headless }
   }
   function savePrefs(): void {
     try {
       fs.mkdirSync(dataRoot, { recursive: true })
-      fs.writeFileSync(prefsFile, JSON.stringify({ allowBrowser }, null, 2) + '\n')
+      fs.writeFileSync(prefsFile, JSON.stringify({ allowBrowser, headless: headlessMode }, null, 2) + '\n')
     } catch { /* 持久化失败不影响运行 */ }
   }
   loadPrefs()
 
-  const state: BrowserState = {
-    runtime: null,
-    conn: null,
-    session: null,
-    screenshotDir: '',
-    lastScreenshotPath: null,
-    log: [],
+  // ═══ 会话隔离：sessionId → 独立浏览器运行态 + 活动时间线 ═══
+  const sessions = new Map<string, SessionBrowserState>()
+  const activity = new Map<string, SessionActivity>()
+  let seqCounter = 0
+
+  function ensureState(sessionId: string): SessionBrowserState {
+    let st = sessions.get(sessionId)
+    if (!st) {
+      st = { runtime: null, conn: null, session: null, screenshotDir: '', lastScreenshotPath: null, log: [] }
+      sessions.set(sessionId, st)
+    }
+    return st
   }
 
-  const log = (action: string, detail = ''): void => {
-    state.log.push({ ts: new Date().toISOString(), action, detail: String(detail).slice(0, 200) })
-    if (state.log.length > MAX_LOG) state.log.splice(0, state.log.length - MAX_LOG)
+  function ensureActivity(sessionId: string): SessionActivity {
+    let act = activity.get(sessionId)
+    if (!act) {
+      act = { active: false, lastActivityAt: 0, url: '', title: '', steps: [] }
+      activity.set(sessionId, act)
+    }
+    return act
+  }
+
+  /** 从工具执行上下文解析当前会话 id（agent.id === session.id）。 */
+  function sessionIdOf(exec: any): string {
+    const id = exec?.agent?.id ?? exec?.agent?.session?.id
+    return id != null && String(id) !== '' ? String(id) : 'default'
+  }
+
+  /** 记录一次操作开始，返回其 step 句柄。 */
+  function beginActivity(sessionId: string, tool: string, label: string, detail: string): ActivityStep {
+    const act = ensureActivity(sessionId)
+    const step: ActivityStep = {
+      seq: ++seqCounter, tool, label, detail,
+      status: 'running', startedAt: Date.now(), finishedAt: null, result: '',
+    }
+    act.steps.push(step)
+    if (act.steps.length > MAX_STEPS) act.steps.splice(0, act.steps.length - MAX_STEPS)
+    act.active = true
+    return step
+  }
+
+  /** 记录一次操作结束（done/error），并重算活跃标记。只允许从 running 结束，避免 finally 覆盖 catch 已标记的 error。 */
+  function finishActivity(sessionId: string, step: ActivityStep, status: 'done' | 'error', result = ''): void {
+    if (step.status !== 'running') return
+    step.status = status
+    step.finishedAt = Date.now()
+    if (result) step.result = String(result).slice(0, 200)
+    const act = activity.get(sessionId)
+    if (act) {
+      act.active = act.steps.some(s => s.status === 'running')
+      act.lastActivityAt = Date.now()
+    }
+  }
+
+  function log(sessionId: string, action: string, detail = ''): void {
+    const st = ensureState(sessionId)
+    st.log.push({ ts: new Date().toISOString(), action, detail: String(detail).slice(0, 200) })
+    if (st.log.length > MAX_LOG) st.log.splice(0, st.log.length - MAX_LOG)
   }
 
   // ═══ 浏览器工具门禁：开关关闭时拦截全部 browser_* 调用 ═══
@@ -132,71 +224,89 @@ export function applyBrowser(ctx: PluginContext, config: Config): void {
     return next()
   }), '@dsh-external/dsh-browser: allow gate')
 
-  // ═══ 生命周期：启动 / 停止 / 状态 ═══
+  // ═══ 生命周期：启动 / 停止 / 状态（按会话）═══
 
-  async function startBrowser(): Promise<any> {
-    if (state.conn?.connected && state.session) {
-      return { ok: true, alreadyRunning: true, ...(await statusFields()) }
+  async function startBrowserFor(sessionId: string): Promise<any> {
+    const st = ensureState(sessionId)
+    if (st.conn?.connected && st.session) {
+      return { ok: true, alreadyRunning: true, ...(await statusFieldsFor(sessionId)) }
     }
     // 进程真实存活判定：exitCode === null 表示还在跑（proc.killed 是本地标记，进程可能已被外部关闭）
-    const procAlive = !!state.runtime && state.runtime.proc.exitCode === null && !state.runtime.proc.killed
+    const procAlive = !!st.runtime && st.runtime.proc.exitCode === null && !st.runtime.proc.killed
     if (procAlive) {
       // 进程活着但连接断了：重连
-      if (state.conn) { try { state.conn.close() } catch {} }
-      state.conn = null
+      if (st.conn) { try { st.conn.close() } catch {} }
+      st.conn = null
     } else {
       const chromePath = config.chromePath || resolveChromePath(DEFAULT_CHROME_CANDIDATES)
-      const port = config.port || (await findFreePort(9222))
-      const profileDir = path.join(dataRoot, 'profiles', 'default')
-      const runtime = launchChrome(chromePath, profileDir, port, config.headless)
-      state.runtime = runtime
-      state.screenshotDir = config.screenshotDir || path.join(profileDir, 'screenshots')
-      fs.mkdirSync(state.screenshotDir, { recursive: true })
-      log('start', `${chromePath} port=${port} headless=${config.headless}`)
+      const port = await findFreePort(config.port || 9222)
+      const profileDir = profileDirFor(path.join(dataRoot, 'profiles'), sessionId)
+      const runtime = launchChrome(chromePath, profileDir, port, headlessMode)
+      st.runtime = runtime
+      st.screenshotDir = config.screenshotDir || path.join(profileDir, 'screenshots')
+      fs.mkdirSync(st.screenshotDir, { recursive: true })
+      log(sessionId, 'start', `${chromePath} port=${port} headless=${headlessMode}`)
     }
 
     // 等待 CDP 就绪并连接
-    const wsUrl = await fetchBrowserWsUrl(state.runtime!.port, 15000)
+    const wsUrl = await fetchBrowserWsUrl(st.runtime!.port, 15000)
     const conn = new CdpConnection(wsUrl)
     await conn.connect(10000)
-    state.conn = conn
+    st.conn = conn
     const session = await createPageSession(conn)
-    state.session = session
-    log('ready', wsUrl)
-    return { ok: true, ...(await statusFields()) }
+    await setViewport(session, viewportWidth, viewportHeight)
+    st.session = session
+    log(sessionId, 'ready', wsUrl)
+    return { ok: true, ...(await statusFieldsFor(sessionId)) }
   }
 
-  async function stopBrowser(): Promise<any> {
-    if (state.conn) { try { state.conn.close() } catch {} }
-    state.conn = null
-    state.session = null
-    killChrome(state.runtime)
-    state.runtime = null
-    log('stop', 'browser closed')
+  async function stopBrowserFor(sessionId: string): Promise<any> {
+    const st = sessions.get(sessionId)
+    if (!st) return { ok: true, running: false }
+    if (st.conn) { try { st.conn.close() } catch {} }
+    st.conn = null
+    st.session = null
+    killChrome(st.runtime)
+    st.runtime = null
+    log(sessionId, 'stop', 'browser closed')
     return { ok: true, running: false }
   }
 
-  async function requireSession(): Promise<CdpSession> {
-    if (!state.conn?.connected || !state.session) {
-      await startBrowser()
+  async function requireSession(sessionId: string): Promise<CdpSession> {
+    const st = ensureState(sessionId)
+    if (!st.conn?.connected || !st.session) {
+      await startBrowserFor(sessionId)
     }
-    if (!state.conn?.connected || !state.session) {
+    if (!st.conn?.connected || !st.session) {
       throw new Error('浏览器未就绪，请先调用 browser_start')
     }
-    return state.session
+    return st.session
   }
 
-  async function statusFields(): Promise<any> {
-    const running = !!state.runtime && !state.runtime.proc.killed && !!state.conn?.connected
+  /** 获取快照并把 url/title 回填到该会话活动（供内嵌面板显示）。 */
+  async function snapshotFor(session: CdpSession, sessionId: string) {
+    const snap = await getSnapshot(session)
+    const act = ensureActivity(sessionId)
+    act.url = snap.url
+    act.title = snap.title
+    return snap
+  }
+
+  async function statusFieldsFor(sessionId: string): Promise<any> {
+    const st = ensureState(sessionId)
+    const running = !!st.runtime && !st.runtime.proc.killed && !!st.conn?.connected
     let url = ''
     let title = ''
     let refCount = 0
-    if (running && state.session) {
+    if (running && st.session) {
       try {
-        const snap = await getSnapshot(state.session)
+        const snap = await getSnapshot(st.session)
         url = snap.url
         title = snap.title
         refCount = snap.refCount
+        const act = ensureActivity(sessionId)
+        act.url = url
+        act.title = title
       } catch { /* 页面可能未加载完 */ }
     }
     return {
@@ -204,8 +314,8 @@ export function applyBrowser(ctx: PluginContext, config: Config): void {
       url,
       title,
       refCount,
-      port: state.runtime?.port ?? null,
-      headless: config.headless,
+      port: st.runtime?.port ?? null,
+      headless: headlessMode,
     }
   }
 
@@ -213,12 +323,12 @@ export function applyBrowser(ctx: PluginContext, config: Config): void {
    * 操作后的统一收尾：等 DOM 静默（或等导航后的页面就绪），再返回最新快照。
    * 这是减少「快照陈旧 → 模型反复重试」的关键。
    */
-  async function settleAndSnapshot(session: CdpSession): Promise<{ snapshot: string; url: string; title: string; refCount: number; navigated: boolean }> {
+  async function settleAndSnapshot(session: CdpSession, sessionId: string): Promise<{ snapshot: string; url: string; title: string; refCount: number; navigated: boolean }> {
     const st = await waitForSettle(session, SETTLE_IDLE_MS, SETTLE_TIMEOUT_MS)
     if (st.nav) {
       await waitForPageReady(session, NAV_TIMEOUT_MS)
     }
-    const snap = await getSnapshot(session)
+    const snap = await snapshotFor(session, sessionId)
     return {
       snapshot: snap.text,
       url: snap.url,
@@ -233,11 +343,15 @@ export function applyBrowser(ctx: PluginContext, config: Config): void {
   const tools = [
     defineTool({
       name: 'browser_start',
-      description: '启动 AI 专用 Chrome 实例（独立配置目录、登录态持久化）。AI 操作浏览器前第一步调用；重复调用返回当前状态。',
+      description: '启动 AI 专用浏览器（每会话独立实例、登录态隔离，默认无头）。AI 操作浏览器前第一步调用；重复调用返回当前状态。',
       parameters: {},
       output: { schema: { type: 'json' }, render: (_a: unknown, v: unknown) => [{ type: 'text', text: JSON.stringify(v, null, 2) }] },
-      async execute(): Promise<any> {
-        try { return await startBrowser() } catch (e: any) { return { ok: false, error: String(e?.message || e) } }
+      async execute(_args: unknown, exec: any): Promise<any> {
+        const sessionId = sessionIdOf(exec)
+        const step = beginActivity(sessionId, 'browser_start', '启动浏览器', '')
+        try { return await startBrowserFor(sessionId) }
+        catch (e: any) { finishActivity(sessionId, step, 'error', String(e?.message || e)); return { ok: false, error: String(e?.message || e) } }
+        finally { finishActivity(sessionId, step, 'done') }
       },
     }),
     defineTool({
@@ -247,16 +361,34 @@ export function applyBrowser(ctx: PluginContext, config: Config): void {
         url: { type: 'string', required: true, description: '要打开的网址（http/https）' },
       },
       output: { schema: { type: 'json' }, render: (_a: unknown, v: unknown) => [{ type: 'text', text: JSON.stringify(v, null, 2) }] },
-      async execute(args: { url: string }): Promise<any> {
+      async execute(args: { url: string }, exec: any): Promise<any> {
+        const sessionId = sessionIdOf(exec)
+        const url = String(args.url).trim()
+        const step = beginActivity(sessionId, 'browser_navigate', '打开 URL', url)
         try {
-          const session = await requireSession()
-          const url = String(args.url).trim()
           if (!/^https?:\/\//i.test(url)) throw new Error('仅支持 http/https 地址')
+          // 防护：拒绝导航到 Web GUI 自身，避免截图递归套娃。
+          if (webGuiOrigin !== '') {
+            try {
+              if (new URL(url).origin === webGuiOrigin) {
+                throw new Error('不允许导航到 DSH Web 界面自身（会导致画面递归套娃）')
+              }
+            } catch (e: any) {
+              if (String(e?.message || '').includes('递归套娃')) throw e
+              // URL 解析失败则忽略，交给后续导航报错
+            }
+          }
+          const session = await requireSession(sessionId)
           const info = await navigateAndWait(session, url, NAV_TIMEOUT_MS)
-          const snap = await getSnapshot(session)
-          log('navigate', url)
+          const snap = await snapshotFor(session, sessionId)
+          log(sessionId, 'navigate', url)
           return { ok: true, url: info.url, title: info.title, snapshot: snap.text }
-        } catch (e: any) { return { ok: false, error: String(e?.message || e) } }
+        } catch (e: any) {
+          finishActivity(sessionId, step, 'error', String(e?.message || e))
+          return { ok: false, error: String(e?.message || e) }
+        } finally {
+          finishActivity(sessionId, step, 'done')
+        }
       },
     }),
     defineTool({
@@ -264,12 +396,19 @@ export function applyBrowser(ctx: PluginContext, config: Config): void {
       description: '获取当前页面 ref 树：元素以 [ref] 定位。页面变化后 ref 失效，操作前先获取最新 snapshot。',
       parameters: {},
       output: { schema: { type: 'json' }, render: (_a: unknown, v: unknown) => [{ type: 'text', text: JSON.stringify(v, null, 2) }] },
-      async execute(): Promise<any> {
+      async execute(_args: unknown, exec: any): Promise<any> {
+        const sessionId = sessionIdOf(exec)
+        const step = beginActivity(sessionId, 'browser_snapshot', '读取页面快照', '')
         try {
-          const session = await requireSession()
-          const snap = await getSnapshot(session)
+          const session = await requireSession(sessionId)
+          const snap = await snapshotFor(session, sessionId)
           return { ok: true, url: snap.url, title: snap.title, snapshot: snap.text }
-        } catch (e: any) { return { ok: false, error: String(e?.message || e) } }
+        } catch (e: any) {
+          finishActivity(sessionId, step, 'error', String(e?.message || e))
+          return { ok: false, error: String(e?.message || e) }
+        } finally {
+          finishActivity(sessionId, step, 'done')
+        }
       },
     }),
     defineTool({
@@ -280,14 +419,21 @@ export function applyBrowser(ctx: PluginContext, config: Config): void {
         returnSnapshot: { type: 'boolean', description: '是否返回操作后快照（默认 true）' },
       },
       output: { schema: { type: 'json' }, render: (_a: unknown, v: unknown) => [{ type: 'text', text: JSON.stringify(v, null, 2) }] },
-      async execute(args: { ref: number; returnSnapshot?: boolean }): Promise<any> {
+      async execute(args: { ref: number; returnSnapshot?: boolean }, exec: any): Promise<any> {
+        const sessionId = sessionIdOf(exec)
+        const step = beginActivity(sessionId, 'browser_click', '点击元素', `ref=${args.ref}`)
         try {
-          const session = await requireSession()
+          const session = await requireSession(sessionId)
           await clickRef(session, Number(args.ref))
-          log('click', `ref=${args.ref}`)
+          log(sessionId, 'click', `ref=${args.ref}`)
           if (args.returnSnapshot === false) return { ok: true }
-          return { ok: true, ...(await settleAndSnapshot(session)) }
-        } catch (e: any) { return { ok: false, error: String(e?.message || e) } }
+          return { ok: true, ...(await settleAndSnapshot(session, sessionId)) }
+        } catch (e: any) {
+          finishActivity(sessionId, step, 'error', String(e?.message || e))
+          return { ok: false, error: String(e?.message || e) }
+        } finally {
+          finishActivity(sessionId, step, 'done')
+        }
       },
     }),
     defineTool({
@@ -300,14 +446,21 @@ export function applyBrowser(ctx: PluginContext, config: Config): void {
         returnSnapshot: { type: 'boolean', description: '是否返回操作后快照（默认 true）' },
       },
       output: { schema: { type: 'json' }, render: (_a: unknown, v: unknown) => [{ type: 'text', text: JSON.stringify(v, null, 2) }] },
-      async execute(args: { ref: number; text: string; pressEnter?: boolean; returnSnapshot?: boolean }): Promise<any> {
+      async execute(args: { ref: number; text: string; pressEnter?: boolean; returnSnapshot?: boolean }, exec: any): Promise<any> {
+        const sessionId = sessionIdOf(exec)
+        const step = beginActivity(sessionId, 'browser_type', '输入文本', `ref=${args.ref} text=${String(args.text).slice(0, 40)}`)
         try {
-          const session = await requireSession()
+          const session = await requireSession(sessionId)
           await typeRef(session, Number(args.ref), String(args.text), args.pressEnter === true)
-          log('type', `ref=${args.ref} enter=${!!args.pressEnter}`)
+          log(sessionId, 'type', `ref=${args.ref} enter=${!!args.pressEnter}`)
           if (args.returnSnapshot === false) return { ok: true }
-          return { ok: true, ...(await settleAndSnapshot(session)) }
-        } catch (e: any) { return { ok: false, error: String(e?.message || e) } }
+          return { ok: true, ...(await settleAndSnapshot(session, sessionId)) }
+        } catch (e: any) {
+          finishActivity(sessionId, step, 'error', String(e?.message || e))
+          return { ok: false, error: String(e?.message || e) }
+        } finally {
+          finishActivity(sessionId, step, 'done')
+        }
       },
     }),
     defineTool({
@@ -319,14 +472,21 @@ export function applyBrowser(ctx: PluginContext, config: Config): void {
         returnSnapshot: { type: 'boolean', description: '是否返回操作后快照（默认 true）' },
       },
       output: { schema: { type: 'json' }, render: (_a: unknown, v: unknown) => [{ type: 'text', text: JSON.stringify(v, null, 2) }] },
-      async execute(args: { ref: number; value: string; returnSnapshot?: boolean }): Promise<any> {
+      async execute(args: { ref: number; value: string; returnSnapshot?: boolean }, exec: any): Promise<any> {
+        const sessionId = sessionIdOf(exec)
+        const step = beginActivity(sessionId, 'browser_select', '选择下拉项', `ref=${args.ref} value=${args.value}`)
         try {
-          const session = await requireSession()
+          const session = await requireSession(sessionId)
           await selectRef(session, Number(args.ref), String(args.value))
-          log('select', `ref=${args.ref} value=${args.value}`)
+          log(sessionId, 'select', `ref=${args.ref} value=${args.value}`)
           if (args.returnSnapshot === false) return { ok: true }
-          return { ok: true, ...(await settleAndSnapshot(session)) }
-        } catch (e: any) { return { ok: false, error: String(e?.message || e) } }
+          return { ok: true, ...(await settleAndSnapshot(session, sessionId)) }
+        } catch (e: any) {
+          finishActivity(sessionId, step, 'error', String(e?.message || e))
+          return { ok: false, error: String(e?.message || e) }
+        } finally {
+          finishActivity(sessionId, step, 'done')
+        }
       },
     }),
     defineTool({
@@ -337,14 +497,21 @@ export function applyBrowser(ctx: PluginContext, config: Config): void {
         returnSnapshot: { type: 'boolean', description: '是否返回操作后快照（默认 true）' },
       },
       output: { schema: { type: 'json' }, render: (_a: unknown, v: unknown) => [{ type: 'text', text: JSON.stringify(v, null, 2) }] },
-      async execute(args: { ref: number; returnSnapshot?: boolean }): Promise<any> {
+      async execute(args: { ref: number; returnSnapshot?: boolean }, exec: any): Promise<any> {
+        const sessionId = sessionIdOf(exec)
+        const step = beginActivity(sessionId, 'browser_hover', '悬停元素', `ref=${args.ref}`)
         try {
-          const session = await requireSession()
+          const session = await requireSession(sessionId)
           await hoverRef(session, Number(args.ref))
-          log('hover', `ref=${args.ref}`)
+          log(sessionId, 'hover', `ref=${args.ref}`)
           if (args.returnSnapshot === false) return { ok: true }
-          return { ok: true, ...(await settleAndSnapshot(session)) }
-        } catch (e: any) { return { ok: false, error: String(e?.message || e) } }
+          return { ok: true, ...(await settleAndSnapshot(session, sessionId)) }
+        } catch (e: any) {
+          finishActivity(sessionId, step, 'error', String(e?.message || e))
+          return { ok: false, error: String(e?.message || e) }
+        } finally {
+          finishActivity(sessionId, step, 'done')
+        }
       },
     }),
     defineTool({
@@ -356,14 +523,21 @@ export function applyBrowser(ctx: PluginContext, config: Config): void {
         returnSnapshot: { type: 'boolean', description: '是否返回操作后快照（默认 true）' },
       },
       output: { schema: { type: 'json' }, render: (_a: unknown, v: unknown) => [{ type: 'text', text: JSON.stringify(v, null, 2) }] },
-      async execute(args: { key: string; modifiers?: string[]; returnSnapshot?: boolean }): Promise<any> {
+      async execute(args: { key: string; modifiers?: string[]; returnSnapshot?: boolean }, exec: any): Promise<any> {
+        const sessionId = sessionIdOf(exec)
+        const step = beginActivity(sessionId, 'browser_press', '按键', `${(args.modifiers ?? []).join('+')}${(args.modifiers ?? []).length ? '+' : ''}${args.key}`)
         try {
-          const session = await requireSession()
+          const session = await requireSession(sessionId)
           await dispatchKey(session, String(args.key), Array.isArray(args.modifiers) ? args.modifiers : [])
-          log('press', String(args.key))
+          log(sessionId, 'press', String(args.key))
           if (args.returnSnapshot === false) return { ok: true }
-          return { ok: true, ...(await settleAndSnapshot(session)) }
-        } catch (e: any) { return { ok: false, error: String(e?.message || e) } }
+          return { ok: true, ...(await settleAndSnapshot(session, sessionId)) }
+        } catch (e: any) {
+          finishActivity(sessionId, step, 'error', String(e?.message || e))
+          return { ok: false, error: String(e?.message || e) }
+        } finally {
+          finishActivity(sessionId, step, 'done')
+        }
       },
     }),
     defineTool({
@@ -375,16 +549,23 @@ export function applyBrowser(ctx: PluginContext, config: Config): void {
         returnSnapshot: { type: 'boolean', description: '是否返回操作后快照（默认 true）' },
       },
       output: { schema: { type: 'json' }, render: (_a: unknown, v: unknown) => [{ type: 'text', text: JSON.stringify(v, null, 2) }] },
-      async execute(args: { direction: string; amount?: number; returnSnapshot?: boolean }): Promise<any> {
+      async execute(args: { direction: string; amount?: number; returnSnapshot?: boolean }, exec: any): Promise<any> {
+        const sessionId = sessionIdOf(exec)
+        const step = beginActivity(sessionId, 'browser_scroll', '滚动页面', String(args.direction))
         try {
           const dir = String(args.direction)
           if (!['up', 'down', 'left', 'right'].includes(dir)) throw new Error('direction 须为 up/down/left/right')
-          const session = await requireSession()
+          const session = await requireSession(sessionId)
           await scrollPage(session, dir as any, Number(args.amount) || 3)
-          log('scroll', dir)
+          log(sessionId, 'scroll', dir)
           if (args.returnSnapshot === false) return { ok: true }
-          return { ok: true, ...(await settleAndSnapshot(session)) }
-        } catch (e: any) { return { ok: false, error: String(e?.message || e) } }
+          return { ok: true, ...(await settleAndSnapshot(session, sessionId)) }
+        } catch (e: any) {
+          finishActivity(sessionId, step, 'error', String(e?.message || e))
+          return { ok: false, error: String(e?.message || e) }
+        } finally {
+          finishActivity(sessionId, step, 'done')
+        }
       },
     }),
     defineTool({
@@ -394,15 +575,22 @@ export function applyBrowser(ctx: PluginContext, config: Config): void {
         returnSnapshot: { type: 'boolean', description: '是否返回操作后快照（默认 true）' },
       },
       output: { schema: { type: 'json' }, render: (_a: unknown, v: unknown) => [{ type: 'text', text: JSON.stringify(v, null, 2) }] },
-      async execute(args: { returnSnapshot?: boolean }): Promise<any> {
+      async execute(args: { returnSnapshot?: boolean }, exec: any): Promise<any> {
+        const sessionId = sessionIdOf(exec)
+        const step = beginActivity(sessionId, 'browser_back', '后退', '')
         try {
-          const session = await requireSession()
+          const session = await requireSession(sessionId)
           const info = await navigateHistory(session, -1)
-          log('back', info.url)
+          log(sessionId, 'back', info.url)
           if (args.returnSnapshot === false) return { ok: true, ...info }
-          const snap = await getSnapshot(session)
+          const snap = await snapshotFor(session, sessionId)
           return { ok: true, ...info, snapshot: snap.text }
-        } catch (e: any) { return { ok: false, error: String(e?.message || e) } }
+        } catch (e: any) {
+          finishActivity(sessionId, step, 'error', String(e?.message || e))
+          return { ok: false, error: String(e?.message || e) }
+        } finally {
+          finishActivity(sessionId, step, 'done')
+        }
       },
     }),
     defineTool({
@@ -412,15 +600,22 @@ export function applyBrowser(ctx: PluginContext, config: Config): void {
         returnSnapshot: { type: 'boolean', description: '是否返回操作后快照（默认 true）' },
       },
       output: { schema: { type: 'json' }, render: (_a: unknown, v: unknown) => [{ type: 'text', text: JSON.stringify(v, null, 2) }] },
-      async execute(args: { returnSnapshot?: boolean }): Promise<any> {
+      async execute(args: { returnSnapshot?: boolean }, exec: any): Promise<any> {
+        const sessionId = sessionIdOf(exec)
+        const step = beginActivity(sessionId, 'browser_forward', '前进', '')
         try {
-          const session = await requireSession()
+          const session = await requireSession(sessionId)
           const info = await navigateHistory(session, 1)
-          log('forward', info.url)
+          log(sessionId, 'forward', info.url)
           if (args.returnSnapshot === false) return { ok: true, ...info }
-          const snap = await getSnapshot(session)
+          const snap = await snapshotFor(session, sessionId)
           return { ok: true, ...info, snapshot: snap.text }
-        } catch (e: any) { return { ok: false, error: String(e?.message || e) } }
+        } catch (e: any) {
+          finishActivity(sessionId, step, 'error', String(e?.message || e))
+          return { ok: false, error: String(e?.message || e) }
+        } finally {
+          finishActivity(sessionId, step, 'done')
+        }
       },
     }),
     defineTool({
@@ -430,13 +625,20 @@ export function applyBrowser(ctx: PluginContext, config: Config): void {
         expression: { type: 'string', required: true, description: '要执行的 JS 表达式，返回 JSON 可序列化的值' },
       },
       output: { schema: { type: 'json' }, render: (_a: unknown, v: unknown) => [{ type: 'text', text: JSON.stringify(v, null, 2) }] },
-      async execute(args: { expression: string }): Promise<any> {
+      async execute(args: { expression: string }, exec: any): Promise<any> {
+        const sessionId = sessionIdOf(exec)
+        const step = beginActivity(sessionId, 'browser_evaluate', '执行 JS', String(args.expression).slice(0, 80))
         try {
-          const session = await requireSession()
+          const session = await requireSession(sessionId)
           const value = await evaluateJson(session, String(args.expression))
-          log('evaluate', String(args.expression).slice(0, 120))
+          log(sessionId, 'evaluate', String(args.expression).slice(0, 120))
           return { ok: true, value }
-        } catch (e: any) { return { ok: false, error: String(e?.message || e) } }
+        } catch (e: any) {
+          finishActivity(sessionId, step, 'error', String(e?.message || e))
+          return { ok: false, error: String(e?.message || e) }
+        } finally {
+          finishActivity(sessionId, step, 'done')
+        }
       },
     }),
     defineTool({
@@ -446,13 +648,16 @@ export function applyBrowser(ctx: PluginContext, config: Config): void {
         prompt: { type: 'string', description: '可选的视觉描述要求（默认聚焦可操作元素与布局）' },
       },
       output: { schema: { type: 'json' }, render: (_a: unknown, v: unknown) => [{ type: 'text', text: JSON.stringify(v, null, 2) }] },
-      async execute(args: { prompt?: string }): Promise<any> {
+      async execute(args: { prompt?: string }, exec: any): Promise<any> {
+        const sessionId = sessionIdOf(exec)
+        const step = beginActivity(sessionId, 'browser_see', '查看画面', String(args.prompt || '').slice(0, 60))
         try {
-          const session = await requireSession()
+          const session = await requireSession(sessionId)
+          const st = ensureState(sessionId)
           const base64 = await captureScreenshot(session)
-          const file = path.join(state.screenshotDir, `see-${Date.now()}.jpg`)
+          const file = path.join(st.screenshotDir, `see-${Date.now()}.jpg`)
           fs.writeFileSync(file, Buffer.from(base64, 'base64'))
-          state.lastScreenshotPath = file
+          st.lastScreenshotPath = file
 
           // 视觉描述：复用 vision-helper 暴露的 cordis 服务（未装则降级为纯 ref 树）
           let vision = ''
@@ -476,8 +681,8 @@ export function applyBrowser(ctx: PluginContext, config: Config): void {
             visionError = '未检测到辅助视觉插件 dsh-vision-helper，仅返回 ref 树'
           }
 
-          const snap = await getSnapshot(session)
-          log('see', `vision=${vision ? 'ok' : 'fail'}`)
+          const snap = await snapshotFor(session, sessionId)
+          log(sessionId, 'see', `vision=${vision ? 'ok' : 'fail'}`)
           return {
             ok: true,
             url: snap.url,
@@ -488,7 +693,12 @@ export function applyBrowser(ctx: PluginContext, config: Config): void {
             screenshot: file,
             ...(visionError ? { visionError } : {}),
           }
-        } catch (e: any) { return { ok: false, error: String(e?.message || e) } }
+        } catch (e: any) {
+          finishActivity(sessionId, step, 'error', String(e?.message || e))
+          return { ok: false, error: String(e?.message || e) }
+        } finally {
+          finishActivity(sessionId, step, 'done')
+        }
       },
     }),
     defineTool({
@@ -496,39 +706,53 @@ export function applyBrowser(ctx: PluginContext, config: Config): void {
       description: '截图保存为文件并返回路径。需要看页面画面（图表/验证码/布局）时，用 vision_describe 读取该路径。',
       parameters: {},
       output: { schema: { type: 'json' }, render: (_a: unknown, v: unknown) => [{ type: 'text', text: JSON.stringify(v, null, 2) }] },
-      async execute(): Promise<any> {
+      async execute(_args: unknown, exec: any): Promise<any> {
+        const sessionId = sessionIdOf(exec)
+        const step = beginActivity(sessionId, 'browser_screenshot', '截图', '')
         try {
-          const session = await requireSession()
+          const session = await requireSession(sessionId)
+          const st = ensureState(sessionId)
           const base64 = await captureScreenshot(session)
-          const file = path.join(state.screenshotDir, `shot-${Date.now()}.jpg`)
+          const file = path.join(st.screenshotDir, `shot-${Date.now()}.jpg`)
           fs.writeFileSync(file, Buffer.from(base64, 'base64'))
-          state.lastScreenshotPath = file
-          log('screenshot', file)
+          st.lastScreenshotPath = file
+          log(sessionId, 'screenshot', file)
           return {
             ok: true,
             path: file,
             bytes: fs.statSync(file).size,
             hint: '如需看图内容，调用 vision_describe，image 参数传此路径',
           }
-        } catch (e: any) { return { ok: false, error: String(e?.message || e) } }
+        } catch (e: any) {
+          finishActivity(sessionId, step, 'error', String(e?.message || e))
+          return { ok: false, error: String(e?.message || e) }
+        } finally {
+          finishActivity(sessionId, step, 'done')
+        }
       },
     }),
     defineTool({
       name: 'browser_stop',
-      description: '关闭 AI 浏览器实例。',
+      description: '关闭当前会话的浏览器实例。',
       parameters: {},
       output: { schema: { type: 'json' }, render: (_a: unknown, v: unknown) => [{ type: 'text', text: JSON.stringify(v, null, 2) }] },
-      async execute(): Promise<any> {
-        try { return await stopBrowser() } catch (e: any) { return { ok: false, error: String(e?.message || e) } }
+      async execute(_args: unknown, exec: any): Promise<any> {
+        const sessionId = sessionIdOf(exec)
+        const step = beginActivity(sessionId, 'browser_stop', '关闭浏览器', '')
+        try { return await stopBrowserFor(sessionId) }
+        catch (e: any) { finishActivity(sessionId, step, 'error', String(e?.message || e)); return { ok: false, error: String(e?.message || e) } }
+        finally { finishActivity(sessionId, step, 'done') }
       },
     }),
     defineTool({
       name: 'browser_status',
-      description: '查询浏览器运行状态（运行中/URL/标题/元素数）。',
+      description: '查询当前会话浏览器运行状态（运行中/URL/标题/元素数）。',
       parameters: {},
       output: { schema: { type: 'json' }, render: (_a: unknown, v: unknown) => [{ type: 'text', text: JSON.stringify(v, null, 2) }] },
-      async execute(): Promise<any> {
-        try { return { ok: true, ...(await statusFields()) } } catch (e: any) { return { ok: false, error: String(e?.message || e) } }
+      async execute(_args: unknown, exec: any): Promise<any> {
+        const sessionId = sessionIdOf(exec)
+        try { return { ok: true, ...(await statusFieldsFor(sessionId)) } }
+        catch (e: any) { return { ok: false, error: String(e?.message || e) } }
       },
     }),
   ]
@@ -536,14 +760,122 @@ export function applyBrowser(ctx: PluginContext, config: Config): void {
   ctx.effect(() => {
     for (const tool of tools) ctx.tools.register(tool)
     return () => {
-      // 插件卸载/重载时清理浏览器进程
-      if (state.conn) { try { state.conn.close() } catch {} }
-      killChrome(state.runtime)
-      state.runtime = null
+      // 插件卸载/重载时清理全部会话的浏览器进程
+      for (const sessionId of [...sessions.keys()]) {
+        const st = sessions.get(sessionId)
+        if (!st) continue
+        if (st.conn) { try { st.conn.close() } catch {} }
+        killChrome(st.runtime)
+        st.runtime = null
+      }
+      sessions.clear()
     }
   }, '@dsh-external/dsh-browser: tools')
 
   // ═══ UI 路由（供 client 面板）═══
+
+  /** 解析请求 query 参数。 */
+  function queryOf(req: any): URLSearchParams {
+    try {
+      return new URL(String(req.url || '/'), 'http://localhost').searchParams
+    } catch { return new URLSearchParams() }
+  }
+
+  function json(res: any, status: number, payload: any): void {
+    res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' })
+    res.end(JSON.stringify(payload))
+  }
+
+  ctx.effect(() => {
+    const webServer = ctx.webServer
+    if (!webServer) return () => {}
+    return webServer.register({
+      kind: 'exact',
+      path: '/api/dsh-browser/active-sessions',
+      handler: (_req: any, res: any) => {
+        try {
+          const now = Date.now()
+          const sessionsList: any[] = []
+          for (const [sessionId, act] of activity) {
+            // 浏览器实例必须还在运行，且「正在操作」或「最近刚操作过」（engaged）。
+            const st = sessions.get(sessionId)
+            const running = !!st?.runtime && !st.runtime.proc.killed && !!st?.conn?.connected
+            if (!running) continue
+            const engaged = act.active || (now - act.lastActivityAt < ENGAGE_TIMEOUT_MS)
+            if (!engaged) continue
+            // 有进行中的操作优先；否则用最后一步（空闲时仍显示「上次在做什么」）。
+            const live = act.steps.find(s => s.status === 'running') ?? act.steps[act.steps.length - 1]
+            sessionsList.push({
+              sessionId,
+              active: act.active,
+              engaged: true,
+              url: act.url,
+              title: act.title,
+              tool: live?.tool ?? '',
+              label: live?.label ?? '',
+              detail: live?.detail ?? '',
+              startedAt: live?.startedAt ?? null,
+            })
+          }
+          json(res, 200, { ok: true, sessions: sessionsList })
+        } catch (e: any) {
+          json(res, 500, { ok: false, error: String(e?.message || e) })
+        }
+      },
+    })
+  }, '@dsh-external/dsh-browser: active-sessions route')
+
+  ctx.effect(() => {
+    const webServer = ctx.webServer
+    if (!webServer) return () => {}
+    return webServer.register({
+      kind: 'exact',
+      path: '/api/dsh-browser/session',
+      handler: (req: any, res: any) => {
+        try {
+          const sessionId = queryOf(req).get('sessionId') || 'default'
+          const act = activity.get(sessionId)
+          const st = sessions.get(sessionId)
+          json(res, 200, {
+            ok: true,
+            sessionId,
+            active: act?.active ?? false,
+            running: !!st?.runtime && !st.runtime.proc.killed && !!st?.conn?.connected,
+            url: act?.url ?? '',
+            title: act?.title ?? '',
+            steps: act !== undefined ? act.steps.slice(-MAX_STEPS) : [],
+          })
+        } catch (e: any) {
+          json(res, 500, { ok: false, error: String(e?.message || e) })
+        }
+      },
+    })
+  }, '@dsh-external/dsh-browser: session route')
+
+  ctx.effect(() => {
+    const webServer = ctx.webServer
+    if (!webServer) return () => {}
+    return webServer.register({
+      kind: 'exact',
+      path: '/api/dsh-browser/frame',
+      handler: async (req: any, res: any) => {
+        try {
+          const sessionId = queryOf(req).get('sessionId') || 'default'
+          const st = sessions.get(sessionId)
+          if (!st?.conn?.connected || !st?.session) {
+            json(res, 404, { ok: false, error: '浏览器未运行' })
+            return
+          }
+          const base64 = await captureScreenshot(st.session)
+          const data = Buffer.from(base64, 'base64')
+          res.writeHead(200, { 'content-type': 'image/jpeg', 'cache-control': 'no-store' })
+          res.end(data)
+        } catch (e: any) {
+          json(res, 500, { ok: false, error: String(e?.message || e) })
+        }
+      },
+    })
+  }, '@dsh-external/dsh-browser: frame route')
 
   ctx.effect(() => {
     const webServer = ctx.webServer
@@ -551,14 +883,30 @@ export function applyBrowser(ctx: PluginContext, config: Config): void {
     return webServer.register({
       kind: 'exact',
       path: '/api/dsh-browser/status',
-      handler: async (_req: any, res: any) => {
+      handler: async (req: any, res: any) => {
         try {
-          const body = JSON.stringify({ ok: true, ...(await statusFields()), log: state.log.slice(-10) })
-          res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
-          res.end(body)
+          const sessionId = queryOf(req).get('sessionId')
+          if (sessionId) {
+            const st = sessions.get(sessionId)
+            if (!st) {
+              json(res, 200, { ok: true, sessionId, running: false, url: '', title: '', refCount: 0, port: null, headless: headlessMode, log: [] })
+              return
+            }
+            const body = JSON.stringify({ ok: true, sessionId, ...(await statusFieldsFor(sessionId)), log: st.log.slice(-10) })
+            res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
+            res.end(body)
+            return
+          }
+          // 无 sessionId：返回所有会话的汇总状态
+          const all: any[] = []
+          for (const id of sessions.keys()) {
+            const st = sessions.get(id)
+            if (!st) continue
+            all.push({ sessionId: id, ...(await statusFieldsFor(id)), log: st.log.slice(-10) })
+          }
+          json(res, 200, { ok: true, sessions: all })
         } catch (e: any) {
-          res.writeHead(500, { 'content-type': 'application/json' })
-          res.end(JSON.stringify({ ok: false, error: String(e?.message || e) }))
+          json(res, 500, { ok: false, error: String(e?.message || e) })
         }
       },
     })
@@ -570,19 +918,19 @@ export function applyBrowser(ctx: PluginContext, config: Config): void {
     return webServer.register({
       kind: 'exact',
       path: '/api/dsh-browser/screenshot',
-      handler: async (_req: any, res: any) => {
+      handler: async (req: any, res: any) => {
         try {
-          if (!state.lastScreenshotPath || !fs.existsSync(state.lastScreenshotPath)) {
-            res.writeHead(404, { 'content-type': 'application/json' })
-            res.end(JSON.stringify({ ok: false, error: 'no screenshot yet' }))
+          const sessionId = queryOf(req).get('sessionId') || 'default'
+          const st = sessions.get(sessionId)
+          if (!st?.lastScreenshotPath || !fs.existsSync(st.lastScreenshotPath)) {
+            json(res, 404, { ok: false, error: 'no screenshot yet' })
             return
           }
-          const data = fs.readFileSync(state.lastScreenshotPath)
+          const data = fs.readFileSync(st.lastScreenshotPath)
           res.writeHead(200, { 'content-type': 'image/jpeg', 'cache-control': 'no-store' })
           res.end(data)
         } catch (e: any) {
-          res.writeHead(500, { 'content-type': 'application/json' })
-          res.end(JSON.stringify({ ok: false, error: String(e?.message || e) }))
+          json(res, 500, { ok: false, error: String(e?.message || e) })
         }
       },
     })
@@ -613,7 +961,6 @@ export function applyBrowser(ctx: PluginContext, config: Config): void {
             if (!body || typeof body.allow !== 'boolean') return respond(400, { ok: false, error: 'allow 须为布尔值' })
             allowBrowser = body.allow
             savePrefs()
-            log('allow', String(allowBrowser))
             return respond(200, { ok: true, allow: allowBrowser })
           }
           respond(200, { ok: true, allow: allowBrowser })
@@ -624,5 +971,88 @@ export function applyBrowser(ctx: PluginContext, config: Config): void {
     })
   }, '@dsh-external/dsh-browser: allow route')
 
-  ctx.logger?.info?.('[dsh-browser] loaded (headless=' + config.headless + ', port=' + config.port + ')')
+  ctx.effect(() => {
+    const webServer = ctx.webServer
+    if (!webServer) return () => {}
+    return webServer.register({
+      kind: 'exact',
+      path: '/api/dsh-browser/headless',
+      handler: async (req: any, res: any) => {
+        const respond = (status: number, payload: any) => {
+          res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' })
+          res.end(JSON.stringify(payload))
+        }
+        try {
+          if (req.method === 'POST') {
+            const body = await new Promise<any>((resolve) => {
+              let data = ''
+              req.on('data', (chunk: any) => { data += chunk })
+              req.on('end', () => {
+                try { resolve(JSON.parse(data || '{}')) } catch { resolve(null) }
+              })
+              req.on('error', () => resolve(null))
+            })
+            if (!body || typeof body.headless !== 'boolean') return respond(400, { ok: false, error: 'headless 须为布尔值' })
+            headlessMode = body.headless
+            savePrefs()
+            // 切换模式：关闭全部已运行实例，下次按需用新模式启动。
+            for (const sessionId of [...sessions.keys()]) {
+              await stopBrowserFor(sessionId)
+            }
+            return respond(200, { ok: true, headless: headlessMode })
+          }
+          respond(200, { ok: true, headless: headlessMode })
+        } catch (e: any) {
+          respond(500, { ok: false, error: String(e?.message || e) })
+        }
+      },
+    })
+  }, '@dsh-external/dsh-browser: headless route')
+
+  ctx.effect(() => {
+    const webServer = ctx.webServer
+    if (!webServer) return () => {}
+    return webServer.register({
+      kind: 'exact',
+      path: '/api/dsh-browser/viewport',
+      handler: async (req: any, res: any) => {
+        const respond = (status: number, payload: any) => {
+          res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' })
+          res.end(JSON.stringify(payload))
+        }
+        try {
+          if (req.method === 'POST') {
+            const body = await new Promise<any>((resolve) => {
+              let data = ''
+              req.on('data', (chunk: any) => { data += chunk })
+              req.on('end', () => {
+                try { resolve(JSON.parse(data || '{}')) } catch { resolve(null) }
+              })
+              req.on('error', () => resolve(null))
+            })
+            if (!body || typeof body.width !== 'number' || typeof body.height !== 'number') {
+              return respond(400, { ok: false, error: 'width/height 须为数字' })
+            }
+            viewportWidth = Math.min(Math.max(Math.round(body.width), 1280), 2560)
+            viewportHeight = Math.min(Math.max(Math.round(body.height), 800), 1600)
+            if (typeof body.origin === 'string' && body.origin.length > 0) {
+              webGuiOrigin = body.origin
+            }
+            // 已运行会话实时更新视口，下次截图即用新分辨率。
+            for (const st of sessions.values()) {
+              if (st.session) {
+                try { await setViewport(st.session, viewportWidth, viewportHeight) } catch { /* 忽略 */ }
+              }
+            }
+            return respond(200, { ok: true, width: viewportWidth, height: viewportHeight })
+          }
+          respond(200, { ok: true, width: viewportWidth, height: viewportHeight })
+        } catch (e: any) {
+          respond(500, { ok: false, error: String(e?.message || e) })
+        }
+      },
+    })
+  }, '@dsh-external/dsh-browser: viewport route')
+
+  ctx.logger?.info?.('[dsh-browser] loaded (headless=' + headlessMode + ', port=' + config.port + ', per-session isolation)')
 }

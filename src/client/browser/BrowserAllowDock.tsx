@@ -1,8 +1,10 @@
 /**
- * BrowserAllowSetting — 「设置 → 基础设置」页的浏览器开关条目。
+ * BrowserAllowSetting — 「设置 → 基础设置」页的浏览器设置条目：
+ *   1. 允许 AI 使用浏览器（allow）。
+ *   2. 无头模式（headless）：开启 = 后台运行、画面内嵌对话界面；关闭 = 弹可见 Chrome 窗口。
  *
- * 槽位：settings.general.item。形态完全对齐 zh-thinking 的「中文思考」
- * 标准开关行：左侧标题+描述，右侧圆钮 switch（button[role=switch]）。
+ * 槽位：settings.general.item。形态对齐 zh-thinking 的「中文思考」标准开关行：
+ * 左侧标题+描述，右侧圆钮 switch（button[role=switch]）。
  */
 import { useEffect, useState } from 'react'
 
@@ -13,7 +15,6 @@ const rowStyle: React.CSSProperties = {
   justifyContent: 'space-between',
   gap: 12,
   padding: '10px 0',
-  // 条目自绘分隔线（与 PermissionRow/LanguageRow 等标准条目一致；容器会去掉最后一条）
   borderBottom: '1px solid var(--dsw-alias-border-l2)',
 }
 const copyStyle: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }
@@ -33,55 +34,92 @@ const knobStyle: React.CSSProperties = {
 }
 const knobOnStyle: React.CSSProperties = { ...knobStyle, left: 20, background: '#fff' }
 
-function fetchState(): Promise<any> {
-  return fetch('/api/dsh-browser/allow', { cache: 'no-store' }).then((r) => r.json())
+function fetchJson(url: string): Promise<any> {
+  return fetch(url, { cache: 'no-store' }).then((r) => r.json())
 }
 
-function postState(allow: boolean): Promise<any> {
-  return fetch('/api/dsh-browser/allow', {
+function postJson(url: string, body: unknown): Promise<any> {
+  return fetch(url, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ allow }),
+    body: JSON.stringify(body),
   }).then((r) => r.json())
 }
 
-export function BrowserAllowSetting(_props: unknown): React.ReactElement {
-  const [allow, setAllow] = useState<boolean | null>(null) // null = 加载中
-
-  useEffect(() => {
-    let alive = true
-    fetchState()
-      .then((r: any) => { if (alive && r && typeof r.allow === 'boolean') setAllow(r.allow) })
-      .catch(() => {})
-    return () => { alive = false }
-  }, [])
-
-  const toggle = (): void => {
-    const next = !(allow === true)
-    setAllow(next)
-    postState(next).catch(() => {})
-  }
-
-  const btnStyle = allow === true ? switchOnStyle : switchStyle
-  const knob = allow === true ? knobOnStyle : knobStyle
-
+/** 一行标准开关（标题 + 描述 + 圆钮 switch）。 */
+function SwitchRow({ title, desc, checked, disabled, onToggle }: {
+  title: string
+  desc: string
+  checked: boolean
+  disabled: boolean
+  onToggle: () => void
+}) {
+  const btnStyle = checked ? switchOnStyle : switchStyle
+  const knob = checked ? knobOnStyle : knobStyle
   return (
     <div style={rowStyle}>
       <div style={copyStyle}>
-        <div style={titleStyle}>允许 AI 使用浏览器</div>
-        <div style={descStyle}>关闭后 AI 将无法调用浏览器工具（browser_*），默认开启。</div>
+        <div style={titleStyle}>{title}</div>
+        <div style={descStyle}>{desc}</div>
       </div>
       <button
         type="button"
         role="switch"
-        aria-checked={allow === true}
-        aria-label="允许 AI 使用浏览器开关"
+        aria-checked={checked}
+        aria-label={title}
         style={btnStyle}
-        onClick={toggle}
-        disabled={allow === null}
+        onClick={onToggle}
+        disabled={disabled}
       >
         <span style={knob} />
       </button>
     </div>
+  )
+}
+
+export function BrowserAllowSetting(_props: unknown): React.ReactElement {
+  const [allow, setAllow] = useState<boolean | null>(null) // null = 加载中
+  const [headless, setHeadless] = useState<boolean | null>(null)
+
+  useEffect(() => {
+    let alive = true
+    fetchJson('/api/dsh-browser/allow').then((r: any) => {
+      if (alive && r && typeof r.allow === 'boolean') setAllow(r.allow)
+    }).catch(() => {})
+    fetchJson('/api/dsh-browser/headless').then((r: any) => {
+      if (alive && r && typeof r.headless === 'boolean') setHeadless(r.headless)
+    }).catch(() => {})
+    return () => { alive = false }
+  }, [])
+
+  const toggleAllow = (): void => {
+    const next = !(allow === true)
+    setAllow(next)
+    postJson('/api/dsh-browser/allow', { allow: next }).catch(() => {})
+  }
+
+  const toggleHeadless = (): void => {
+    const next = !(headless === true)
+    setHeadless(next)
+    postJson('/api/dsh-browser/headless', { headless: next }).catch(() => {})
+  }
+
+  return (
+    <>
+      <SwitchRow
+        title="允许 AI 使用浏览器"
+        desc="关闭后 AI 将无法调用浏览器工具（browser_*），默认开启。"
+        checked={allow === true}
+        disabled={allow === null}
+        onToggle={toggleAllow}
+      />
+      <SwitchRow
+        title="无头模式"
+        desc="开启后浏览器后台运行、画面内嵌到对话界面（不弹窗口）；关闭则弹出可见的 Chrome 窗口。"
+        checked={headless === true}
+        disabled={headless === null}
+        onToggle={toggleHeadless}
+      />
+    </>
   )
 }
