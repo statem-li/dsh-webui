@@ -97,6 +97,7 @@ async function saveImage(url: string, filename: string): Promise<SaveState> {
 
 export function GeneratedImageGallery({ node, t }: GalleryViewProps) {
   const images = node.data.images
+  const isScreenshot = node.data.toolName === 'browser_screenshot'
   const [openIndex, setOpenIndex] = useState<number | null>(null)
   const [broken, setBroken] = useState<ReadonlySet<number>>(new Set())
   const [saveState, setSaveState] = useState<SaveState>('idle')
@@ -122,7 +123,7 @@ export function GeneratedImageGallery({ node, t }: GalleryViewProps) {
 
   return (
     <div className={css.gallery}>
-      <div className={css.head}>{t('gig.head', { n: images.length })}</div>
+      <div className={css.head}>{isScreenshot ? t('gig.headScreenshot', { n: images.length }) : t('gig.head', { n: images.length })}</div>
       <div className={css.row}>
         {images.map((image, index) => (
           <button

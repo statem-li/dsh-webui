@@ -717,9 +717,11 @@ export function applyBrowser(ctx: PluginContext, config: Config): void {
           fs.writeFileSync(file, Buffer.from(base64, 'base64'))
           st.lastScreenshotPath = file
           log(sessionId, 'screenshot', file)
+          const fileName = path.basename(file)
           return {
             ok: true,
             path: file,
+            imageUrl: `/api/dsh-browser/screenshot?sessionId=${encodeURIComponent(sessionId)}&file=${encodeURIComponent(fileName)}`,
             bytes: fs.statSync(file).size,
             hint: '如需看图内容，调用 vision_describe，image 参数传此路径',
           }
@@ -921,12 +923,21 @@ export function applyBrowser(ctx: PluginContext, config: Config): void {
       handler: async (req: any, res: any) => {
         try {
           const sessionId = queryOf(req).get('sessionId') || 'default'
+          const fileName = queryOf(req).get('file')
           const st = sessions.get(sessionId)
-          if (!st?.lastScreenshotPath || !fs.existsSync(st.lastScreenshotPath)) {
+          let filePath: string | null = null
+          if (fileName !== null && st !== undefined) {
+            // 只接受纯 basename（防路径穿越），从该会话的截图目录读取指定文件。
+            const base = path.basename(fileName)
+            if (base === fileName) filePath = path.join(st.screenshotDir, base)
+          } else if (st?.lastScreenshotPath) {
+            filePath = st.lastScreenshotPath
+          }
+          if (!filePath || !fs.existsSync(filePath)) {
             json(res, 404, { ok: false, error: 'no screenshot yet' })
             return
           }
-          const data = fs.readFileSync(st.lastScreenshotPath)
+          const data = fs.readFileSync(filePath)
           res.writeHead(200, { 'content-type': 'image/jpeg', 'cache-control': 'no-store' })
           res.end(data)
         } catch (e: any) {

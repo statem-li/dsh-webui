@@ -30,6 +30,8 @@ export interface GeneratedImageEntry {
 /** 发布到 Chat 渲染器的载荷。 */
 export interface GeneratedImagesChatData {
   readonly images: readonly GeneratedImageEntry[]
+  /** 来源工具名（generate_image / browser_screenshot），用于区分标题。 */
+  readonly toolName: string
 }
 
 interface GeneratedImagesState extends GeneratedImagesChatData {
@@ -37,8 +39,8 @@ interface GeneratedImagesState extends GeneratedImagesChatData {
   readonly promptRaw: string | null
 }
 
-/** 当前识别的生图工具名（宿主可增减；这里覆盖 dsh-vision-helper 的 generate_image）。 */
-const IMAGE_TOOL_NAMES = new Set(['generate_image'])
+/** 当前识别的图片工具名（宿主可增减；这里覆盖 dsh-vision-helper 的 generate_image 与 AI 浏览器的 browser_screenshot）。 */
+const IMAGE_TOOL_NAMES = new Set(['generate_image', 'browser_screenshot'])
 
 function isImageToolName(value: string): boolean {
   return IMAGE_TOOL_NAMES.has(value)
@@ -181,7 +183,7 @@ export const generatedImagesDefinition: ConversationNodeDefinition<GeneratedImag
       anchorSeq: anchor,
       location: locationOf(context),
       visibility: 'visible',
-      data: { images: state.images } satisfies GeneratedImagesChatData,
+      data: { images: state.images, toolName: state.toolName } satisfies GeneratedImagesChatData,
     }
   },
 }
