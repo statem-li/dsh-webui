@@ -44,9 +44,11 @@ import { injectStyles as injectToolSummaryStyles } from './tool-summary/styles'
 // StatsLine shadow：对话流下方统计条，缓存命中率保留两位小数。
 import { StatsLineShadow } from './chat-stats/StatsLineShadow'
 import { injectStatsStyles } from './chat-stats/styles'
+// 对话「退回」：user 消息复制按钮旁追加退回（文件回退 + 上下文分支）。
+import { applyRewindClient } from './rewind'
 const CUSTOM_COMPONENT_SCOPE = 'dsh-better-markdown'
 
-export const inject = ['slots', 'settingsScope', 'connection', 'conversationEvents', 'locale', 'remote']
+export const inject = ['slots', 'settingsScope', 'connection', 'conversationEvents', 'locale', 'remote', 'sessions', 'workspaces']
 
 export function apply(ctx: ClientContext): void {
   // ---- 原生 webui：右上角「对话/轨迹」图块 + 消息入口 --------------------
@@ -155,4 +157,7 @@ export function apply(ctx: ClientContext): void {
 
   // ---- 审批提醒：有工具调用等待审批时顶部弹 toast ---------------------------
   applyApprovalNotifier(ctx)
+
+  // ---- 对话「退回」：user 消息退回按钮（文件回退 + fork 上下文）--------------
+  applyRewindClient(ctx)
 }

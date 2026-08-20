@@ -27,6 +27,7 @@ import { applyFileExplorer } from './file-explorer.js'
 import { applyUsageHost } from './usage-host.js'
 import { applyVisionHelper } from './vision-helper.js'
 import { applyMail } from './mail.js'
+import { applyRewind } from './rewind.js'
 import {
   AnySearchSearchProvider,
   ANYSEARCH_DEFAULT_BASE_URL,
@@ -244,4 +245,7 @@ export async function apply(ctx: Context, config: WebuiConfig = {}): Promise<voi
 
   // 12) 邮箱验证码（自 dsh-mail 合并）：mail_get_code 工具 + /api/webui-mail 路由。
   applyMail(ctx, config.mail ?? {})
+
+  // 13) 对话「退回」（自 dsh-rewind）：user 消息文件快照 + /api/webui-rewind 回退路由。
+  applyRewind(ctx)
 }
