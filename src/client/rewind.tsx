@@ -4,7 +4,7 @@
  * 给「我发送的消息」（user 节点）在复制按钮旁增加一个「退回」按钮。点击后：
  *   1. 先调 host `/api/webui-rewind/restore` 回退工作区文件到该消息发送前；
  *   2. 文件回退成功后，再「原地回退」上下文：
- *        - 有上一条已完成 turn：fork 到该边界 → 归档原会话 → 打开子会话
+ *        - 有上一条已完成 turn：fork 到该边界 → 打开子会话 → 归档原会话
  *          （原对话从列表消失，只留回退后的对话）；
  *        - 第一条消息：归档原会话 → 回到空白会话。
  *
@@ -117,6 +117,22 @@ export interface RewindInjected {
   workspaces: Pick<IWorkspaces, 'startSession' | 'archiveSession'>
 }
 
+/**
+ * 归档原会话是退回闭环里的「清理」动作，不是核心目标（核心是文件回退 +
+ * fork 上下文）。归档失败不改变「已回退」的结果，降级为告警，避免把一次
+ * 已成功的退回误报成「退回失败」。
+ */
+async function archiveBestEffort(
+  workspaces: RewindInjected['workspaces'],
+  sessionId: SessionId,
+): Promise<void> {
+  try {
+    await workspaces.archiveSession(sessionId)
+  } catch (err) {
+    console.warn('[dsh-webui-rewind] archive original session failed:', err)
+  }
+}
+
 // ── 组件 ────────────────────────────────────────────────────────────────────
 
 /**
@@ -189,15 +205,18 @@ export const UserRewindNodeView = memo(function UserRewindNodeView({
         return
       }
       // 文件回退成功后，才「原地回退」：
-      //   - 有上一条已完成 turn：fork 到该边界 → 归档原会话 → 打开子会话。
+      //   - 有上一条已完成 turn：fork 到该边界 → 打开子会话 → 归档原会话。
       //   - 第一条消息：归档原会话 → 回到空白会话。
       try {
         if (prevTurnEnd !== undefined) {
           const childId = await sessions.fork({ sessionId, atSeq: prevTurnEnd })
-          await workspaces.archiveSession(sessionId)
+          // 先 open 后 archive：归档「当前会话」会触发会话列表把 current 清成
+          // no-session 空态。若 archive 在前，界面会先闪一下空白再切到子会话；
+          // 先 open 让 current 一步从原会话切到子会话，再归档原会话，无空白帧。
           sessions.open(childId)
+          await archiveBestEffort(workspaces, sessionId)
         } else {
-          await workspaces.archiveSession(sessionId)
+          await archiveBestEffort(workspaces, sessionId)
           workspaces.startSession()
         }
       } catch (err: unknown) {
