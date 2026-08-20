@@ -40,10 +40,10 @@ export function applyBrowserClient(ctx: ClientContext): void {
     }
   }, '@dsh-external/dsh-browser: activity + indicator')
 
-  // ---- 会话内浏览器常驻按钮（输入框工具行左端，记忆开关旁）------------
+  // ---- 会话内浏览器常驻按钮（输入框工具行左端，记忆开关右侧）------------
   ctx.slots.inject('conversation.input.left', () => ctx.slots.register({
     name: 'conversation.input.left',
     id: 'dsh-browser-seat',
-    order: 100,
+    order: 101,
   }, BrowserSeat))
 }

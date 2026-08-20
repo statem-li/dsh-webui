@@ -72,9 +72,12 @@ export class CdpConnection {
     }
     if (msg.method && this.listeners.has(msg.method)) {
       // flatten 模式下页面级事件会带顶层 sessionId；合并进 params 供监听器按 session 过滤。
+      // screencast 帧的 params.sessionId 是「screencast 会话号」（ack 用），与 target
+      // sessionId 同名冲突，故原值保留为 screencastSessionId。
+      const raw = msg.params || {}
       const params = msg.sessionId
-        ? { ...(msg.params || {}), sessionId: msg.sessionId }
-        : (msg.params || {})
+        ? { ...raw, sessionId: msg.sessionId, ...(raw.sessionId !== undefined ? { screencastSessionId: raw.sessionId } : {}) }
+        : raw
       for (const fn of this.listeners.get(msg.method)!) {
         try { fn(params) } catch { /* 监听器错误忽略 */ }
       }
@@ -255,6 +258,62 @@ export async function captureScreenshot(
   )
   if (!shot?.data) throw new Error('截图失败：CDP 未返回图像数据')
   return shot.data
+}
+
+/** 启动 CDP screencast：Chrome 持续推送 JPEG 帧（仅变化时），供内嵌面板实时展示 + 交互。 */
+export async function startScreencast(
+  session: CdpSession,
+  width: number,
+  height: number,
+  quality = 70,
+): Promise<void> {
+  const { conn, sessionId } = session
+  await conn.send('Page.startScreencast', {
+    format: 'jpeg',
+    quality,
+    maxWidth: width,
+    maxHeight: height,
+    everyNthFrame: 1,
+  }, sessionId)
+}
+
+/** 停止 screencast（幂等）。 */
+export async function stopScreencast(session: CdpSession): Promise<void> {
+  const { conn, sessionId } = session
+  try { await conn.send('Page.stopScreencast', {}, sessionId) } catch { /* 未启动则忽略 */ }
+}
+
+/** 确认收到一帧 screencast（CDP 要求逐帧 ack，否则暂停推送）。 */
+export async function ackScreencast(session: CdpSession, screencastSessionId: number): Promise<void> {
+  const { conn, sessionId } = session
+  await conn.send('Page.screencastFrameAck', { sessionId: screencastSessionId }, sessionId)
+}
+
+/** 真实鼠标滚轮（CDP Input 域 mouseWheel，delta 正=向下/向右）。 */
+export async function dispatchMouseWheel(
+  session: CdpSession,
+  x: number,
+  y: number,
+  deltaX: number,
+  deltaY: number,
+): Promise<void> {
+  const { conn, sessionId } = session
+  await conn.send('Input.dispatchMouseEvent', {
+    type: 'mouseWheel', x, y, deltaX, deltaY,
+  }, sessionId)
+}
+
+/** 通用鼠标按下/释放（前端交互回传：拖拽、长按等）。 */
+export async function dispatchMouseButton(
+  session: CdpSession,
+  type: 'mousePressed' | 'mouseReleased',
+  x: number,
+  y: number,
+  button: 'left' | 'right' | 'middle' = 'left',
+  clickCount = 1,
+): Promise<void> {
+  const { conn, sessionId } = session
+  await conn.send('Input.dispatchMouseEvent', { type, x, y, button, clickCount }, sessionId)
 }
 
 /** 页面执行 JS，返回 JSON 值 */

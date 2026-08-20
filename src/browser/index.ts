@@ -8,9 +8,9 @@
  * - 操作后 DOM 静默检测（waitForSettle），拿到稳定快照，减少模型反复重试。
  * - 截图兜底：browser_screenshot 存文件返回路径，模型用 vision_describe
  *   （辅助视觉插件）看图。
- * - 会话隔离：每个会话（sessionId）独立 Chrome 实例 + 独立 user-data-dir，
- *   登录态/Cookie/页面完全隔离，互不干扰；默认无头运行，画面经 HTTP 接口
- *   内嵌到 Web GUI（client 侧）展示。
+ * - 会话隔离：每个会话（sessionId）独立 Edge/Chrome 实例 + 独立 user-data-dir，
+ *   登录态/Cookie/页面完全隔离，互不干扰；默认无头（后台运行不弹窗口），画面经
+ *   CDP screencast 内嵌到 Web GUI（client 侧），用户可直接在面板内操作页面。
  * - 零依赖：Node 24 原生 WebSocket 实现 CDP 客户端。
  */
 import fs from 'node:fs'
@@ -29,6 +29,14 @@ import {
   fetchBrowserWsUrl,
   evaluateJson,
   dispatchKey,
+  dispatchMouseMove,
+  dispatchMouseClick,
+  insertText,
+  startScreencast,
+  stopScreencast,
+  ackScreencast,
+  dispatchMouseWheel,
+  dispatchMouseButton,
   type CdpSession,
 } from './cdp.js'
 import {
@@ -60,7 +68,7 @@ export interface Config {
   chromePath: string
   /** CDP 起始端口（0 = 自动从 9222 起找空闲端口；每会话独立端口） */
   port: number
-  /** 无头模式（默认开启：画面经接口内嵌到 Web GUI，不弹独立窗口） */
+  /** 无头模式（默认开启：后台运行不弹窗口，画面经 screencast 内嵌到对话面板且可交互；关闭则弹独立 Edge/Chrome 窗口） */
   headless: boolean
   /** 截图输出目录（空 = Chrome profile 目录下 screenshots/） */
   screenshotDir: string
@@ -97,6 +105,10 @@ interface SessionBrowserState {
   screenshotDir: string
   lastScreenshotPath: string | null
   log: Array<{ ts: string; action: string; detail: string }>
+  /** screencast 最新帧（内嵌面板实时画面 + 交互回传坐标基准）。 */
+  frame: { data: string; width: number; height: number; ts: number } | null
+  /** screencast 帧事件订阅的取消函数。 */
+  offFrame: (() => void) | null
 }
 
 /** 一次浏览器操作在时间线上的记录（供 Web GUI 内嵌面板展示）。 */
@@ -132,7 +144,7 @@ export function applyBrowser(ctx: PluginContext, config: Config): void {
   )
   const prefsFile = path.join(dataRoot, 'prefs.json')
 
-  // ═══ 「允许 AI 使用浏览器」开关（默认开启，持久化）+ 无头模式（默认开）═══
+  // ═══ 「允许 AI 使用浏览器」开关（默认开启，持久化）+ 无头模式（默认开 = 后台不弹窗）═══
   let allowBrowser = true
   let headlessMode = config.headless
   // 目标视口：默认桌面尺寸，client 侧会按用户屏幕分辨率动态上报覆盖。
@@ -163,7 +175,7 @@ export function applyBrowser(ctx: PluginContext, config: Config): void {
   function ensureState(sessionId: string): SessionBrowserState {
     let st = sessions.get(sessionId)
     if (!st) {
-      st = { runtime: null, conn: null, session: null, screenshotDir: '', lastScreenshotPath: null, log: [] }
+      st = { runtime: null, conn: null, session: null, screenshotDir: '', lastScreenshotPath: null, log: [], frame: null, offFrame: null }
       sessions.set(sessionId, st)
     }
     return st
@@ -256,6 +268,27 @@ export function applyBrowser(ctx: PluginContext, config: Config): void {
     const session = await createPageSession(conn)
     await setViewport(session, viewportWidth, viewportHeight)
     st.session = session
+    // 启动 screencast：Chrome 持续推送页面帧（仅变化时），供内嵌面板实时展示 +
+    // 交互回传（面板内鼠标/键盘/滚轮直接操作页面）。失败不阻塞浏览器可用性。
+    try {
+      await startScreencast(session, viewportWidth, viewportHeight, 70)
+      st.offFrame = conn.on('Page.screencastFrame', (p: any) => {
+        if (!p || typeof p.data !== 'string' || p.sessionId !== session.sessionId) return
+        // 逐帧 ack（CDP 要求，否则会暂停推送）
+        if (typeof p.screencastSessionId === 'number') {
+          ackScreencast(session, p.screencastSessionId).catch(() => {})
+        }
+        const meta = p.metadata || {}
+        st.frame = {
+          data: p.data,
+          width: Number(meta.deviceWidth) || viewportWidth,
+          height: Number(meta.deviceHeight) || viewportHeight,
+          ts: Date.now(),
+        }
+      })
+    } catch (e: any) {
+      log(sessionId, 'screencast-error', String(e?.message || e))
+    }
     log(sessionId, 'ready', wsUrl)
     return { ok: true, ...(await statusFieldsFor(sessionId)) }
   }
@@ -263,6 +296,9 @@ export function applyBrowser(ctx: PluginContext, config: Config): void {
   async function stopBrowserFor(sessionId: string): Promise<any> {
     const st = sessions.get(sessionId)
     if (!st) return { ok: true, running: false }
+    if (st.offFrame) { try { st.offFrame() } catch {} }
+    st.offFrame = null
+    st.frame = null
     if (st.conn) { try { st.conn.close() } catch {} }
     st.conn = null
     st.session = null
@@ -343,7 +379,7 @@ export function applyBrowser(ctx: PluginContext, config: Config): void {
   const tools = [
     defineTool({
       name: 'browser_start',
-      description: '启动 AI 专用浏览器（每会话独立实例、登录态隔离，默认无头）。AI 操作浏览器前第一步调用；重复调用返回当前状态。',
+      description: '启动 AI 专用浏览器（每会话独立实例、登录态隔离，默认无头：后台运行，画面内嵌到对话面板且可交互操作）。AI 操作浏览器前第一步调用；重复调用返回当前状态。',
       parameters: {},
       output: { schema: { type: 'json' }, render: (_a: unknown, v: unknown) => [{ type: 'text', text: JSON.stringify(v, null, 2) }] },
       async execute(_args: unknown, exec: any): Promise<any> {
@@ -870,9 +906,24 @@ export function applyBrowser(ctx: PluginContext, config: Config): void {
             json(res, 404, { ok: false, error: '浏览器未运行' })
             return
           }
-          const base64 = await captureScreenshot(st.session)
-          const data = Buffer.from(base64, 'base64')
-          res.writeHead(200, { 'content-type': 'image/jpeg', 'cache-control': 'no-store' })
+          // 优先返回 screencast 最新帧（实时、零截图开销）；无帧时回退截图。
+          let data: Buffer
+          let width = viewportWidth
+          let height = viewportHeight
+          if (st.frame !== null) {
+            data = Buffer.from(st.frame.data, 'base64')
+            width = st.frame.width
+            height = st.frame.height
+          } else {
+            const base64 = await captureScreenshot(st.session)
+            data = Buffer.from(base64, 'base64')
+          }
+          res.writeHead(200, {
+            'content-type': 'image/jpeg',
+            'cache-control': 'no-store',
+            'x-frame-width': String(width),
+            'x-frame-height': String(height),
+          })
           res.end(data)
         } catch (e: any) {
           json(res, 500, { ok: false, error: String(e?.message || e) })
@@ -880,6 +931,68 @@ export function applyBrowser(ctx: PluginContext, config: Config): void {
       },
     })
   }, '@dsh-external/dsh-browser: frame route')
+
+  // 交互回传：内嵌面板把用户鼠标/键盘/滚轮事件转发到 CDP Input 域，
+  // 让无头浏览器也能在面板内「像真实浏览器一样」被直接操作。
+  ctx.effect(() => {
+    const webServer = ctx.webServer
+    if (!webServer) return () => {}
+    return webServer.register({
+      kind: 'exact',
+      path: '/api/dsh-browser/input',
+      handler: async (req: any, res: any) => {
+        const respond = (status: number, payload: any) => {
+          res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' })
+          res.end(JSON.stringify(payload))
+        }
+        if (req.method !== 'POST') return respond(405, { ok: false, error: '仅支持 POST' })
+        try {
+          const body = await new Promise<any>((resolve) => {
+            let raw = ''
+            req.on('data', (chunk: any) => { raw += chunk })
+            req.on('end', () => {
+              try { resolve(JSON.parse(raw || '{}')) } catch { resolve(null) }
+            })
+            req.on('error', () => resolve(null))
+          })
+          if (!body || typeof body.sessionId !== 'string' || body.sessionId === '') {
+            return respond(400, { ok: false, error: 'sessionId 缺失' })
+          }
+          const st = sessions.get(body.sessionId)
+          if (!st?.conn?.connected || !st?.session) return respond(404, { ok: false, error: '浏览器未运行' })
+          const session = st.session
+          const x = Number(body.x)
+          const y = Number(body.y)
+          switch (body.type) {
+            case 'mouse': {
+              if (!Number.isFinite(x) || !Number.isFinite(y)) return respond(400, { ok: false, error: '坐标无效' })
+              const button = body.button === 'right' ? 'right' : body.button === 'middle' ? 'middle' : 'left'
+              if (body.event === 'move') await dispatchMouseMove(session, x, y)
+              else if (body.event === 'down') await dispatchMouseButton(session, 'mousePressed', x, y, button)
+              else if (body.event === 'up') await dispatchMouseButton(session, 'mouseReleased', x, y, button)
+              else await dispatchMouseClick(session, x, y)
+              break
+            }
+            case 'wheel':
+              if (!Number.isFinite(x) || !Number.isFinite(y)) return respond(400, { ok: false, error: '坐标无效' })
+              await dispatchMouseWheel(session, x, y, Number(body.deltaX) || 0, Number(body.deltaY) || 0)
+              break
+            case 'key':
+              await dispatchKey(session, String(body.key || ''), Array.isArray(body.modifiers) ? body.modifiers.map(String) : [])
+              break
+            case 'text':
+              await insertText(session, String(body.text || ''))
+              break
+            default:
+              return respond(400, { ok: false, error: '未知输入类型' })
+          }
+          respond(200, { ok: true })
+        } catch (e: any) {
+          respond(500, { ok: false, error: String(e?.message || e) })
+        }
+      },
+    })
+  }, '@dsh-external/dsh-browser: input route')
 
   ctx.effect(() => {
     const webServer = ctx.webServer

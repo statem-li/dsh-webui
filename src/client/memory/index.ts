@@ -44,11 +44,11 @@ export function applyMemoryClient(ctx: ClientContext): void {
     inject: panelInjected,
   }, MemoryEntry))
 
-  // 记忆注入开关：composer 输入框工具行左端（resident chrome 之后，小常驻控件）。
+  // 记忆注入开关：composer 输入框工具行左端（resident chrome 之后，浏览器开关之前）。
   ctx.slots.inject('conversation.input.left', () => ctx.slots.register({
     name: 'conversation.input.left',
     id: 'dsh-memory-inject-toggle',
-    order: 100,
+    order: 99,
     locale: NS,
     inject: panelInjected,
   }, MemoryToggle))

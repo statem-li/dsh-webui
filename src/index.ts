@@ -226,6 +226,7 @@ export async function apply(ctx: Context, config: WebuiConfig = {}): Promise<voi
   applyProxy(ctx)
 
   // 7) AI 浏览器操作（自 dsh-browser 合并；config.browser 可选覆盖）。
+  // 默认无头（headless=true）：后台运行不弹窗口，画面经 screencast 内嵌到对话面板（可交互操作）。
   applyBrowser(ctx, {
     chromePath: '', port: 0, headless: true, screenshotDir: '',
     ...config.browser,

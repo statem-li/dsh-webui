@@ -46,6 +46,8 @@ import { StatsLineShadow } from './chat-stats/StatsLineShadow'
 import { injectStatsStyles } from './chat-stats/styles'
 // 对话「退回」：user 消息复制按钮旁追加退回（文件回退 + 上下文分支）。
 import { applyRewindClient } from './rewind'
+// 对话输入框 Ctrl+Enter 换行。
+import { applyCtrlEnterNewline } from './ctrl-enter-newline'
 const CUSTOM_COMPONENT_SCOPE = 'dsh-better-markdown'
 
 export const inject = ['slots', 'settingsScope', 'connection', 'conversationEvents', 'locale', 'remote', 'sessions', 'workspaces']
@@ -160,4 +162,7 @@ export function apply(ctx: ClientContext): void {
 
   // ---- 对话「退回」：user 消息退回按钮（文件回退 + fork 上下文）--------------
   applyRewindClient(ctx)
+
+  // ---- 对话输入框 Ctrl+Enter 换行 -------------------------------------------
+  applyCtrlEnterNewline()
 }

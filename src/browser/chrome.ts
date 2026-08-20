@@ -8,12 +8,16 @@ import path from 'node:path'
 
 export const DEFAULT_CHROME_CANDIDATES: string[] = [
   process.env.CHROME_PATH || '',
-  'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-  'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+  // Edge 优先（用户偏好：不想用 Chrome；CDP 兼容，行为一致）。
   'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
   'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+  'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+  'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+  '/usr/bin/microsoft-edge',
+  '/usr/bin/microsoft-edge-stable',
   '/usr/bin/google-chrome',
   '/usr/bin/chromium',
+  '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
   '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
 ].filter(Boolean)
 

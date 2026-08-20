@@ -1,7 +1,7 @@
 /**
  * BrowserAllowSetting — 「设置 → 基础设置」页的浏览器设置条目：
  *   1. 允许 AI 使用浏览器（allow）。
- *   2. 无头模式（headless）：开启 = 后台运行、画面内嵌对话界面；关闭 = 弹可见 Chrome 窗口。
+ *   2. 无头模式（headless）：开启 = 后台运行、画面内嵌对话面板（可交互，默认）；关闭 = 弹独立 Edge/Chrome 窗口。
  *
  * 槽位：settings.general.item。形态对齐 zh-thinking 的「中文思考」标准开关行：
  * 左侧标题+描述，右侧圆钮 switch（button[role=switch]）。
@@ -115,7 +115,7 @@ export function BrowserAllowSetting(_props: unknown): React.ReactElement {
       />
       <SwitchRow
         title="无头模式"
-        desc="开启后浏览器后台运行、画面内嵌到对话界面（不弹窗口）；关闭则弹出可见的 Chrome 窗口。"
+        desc="开启后浏览器后台运行、画面内嵌到对话面板（可直接操作，不弹窗口）；关闭则弹出独立的 Edge/Chrome 窗口。"
         checked={headless === true}
         disabled={headless === null}
         onToggle={toggleHeadless}
