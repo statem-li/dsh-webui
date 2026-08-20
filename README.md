@@ -55,6 +55,9 @@ dsh plugin --profile web add github:statem-li/dsh-webui
 25. **邮箱验证码**（原 dsh-mail）：`mail_get_code` 工具 + 设置卡（QQ 邮箱验证码提取，支持字母数字混合）
 26. **单条消息截图**：assistant 消息 actions 行截图按钮（渲染会话长图 / 单条樱花主题截图）
 27. **输入框增强**：Ctrl+Enter 换行；移动端响应式（设置面板单列化等）
+28. **提示词优化**：对话框「自动优化提示词」图标，用当前选中模型流式优化草稿（loopback-only `/api/webui-prompt-optimize`，仅本地可调）
+29. **消息气泡宽度**：基础设置「我发送的对话宽度」（px/% 单位，settings.yaml 持久化），只作用于本人消息气泡
+30. **悬浮侧边栏**：设置「固定侧边栏」（默认开启=原生固定侧边栏；关闭=悬浮模式，左侧常驻热区悬停展开、移出自动折叠，overlay 覆盖不挤压主内容；设置持久化并即时切换）
 
 ## 构建（Windows）
 
@@ -71,9 +74,13 @@ Linux/macOS：`DSH_CHECKOUT=<checkout> bash scripts/build.sh`
 - `src/vision-helper.ts` — 辅助视觉 + 生图能力（vision_describe / generate_image / 图片降级 / HTTP 接口）
 - `src/workspace-dir-picker.ts` — 工作区目录选择器 host 路由
 - `src/usage-host.ts` — 用量统计 + 技能管理 host（复用 dsh-usage-skill lib）
+- `src/sidebar-float.ts` — 悬浮侧边栏设置（固定/悬浮模式开关，settings.yaml 持久化 + /api/sidebar-float）
+- `src/message-width.ts` — 消息气泡宽度设置（/api/webui-message-width）
+- `src/prompt-optimize.ts` — 提示词优化 host 路由（loopback-only，选中模型流式优化草稿）
 - `src/client/index.ts` — client 入口：注册各 UI 槽位（header utilities、settings.section 等）
 - `src/client/skill-source/` — 技能 slash 两级导航源（集合→技能）+ 技能工具行（SkillRow）
 - `src/client/provider-hub/` — 供应商设置页（对话供应商 + 视觉 + 生图）
+- `src/client/sidebar-float.ts` / `sidebar-float-row.tsx` — 悬浮侧边栏 client（固定/悬浮模式切换 + 左侧热区悬停展开/折叠 + 设置行）
 - `src/client/memory/` / `browser/` / `file-explorer/` / `image-gallery/` / `markdown/` / `tool-summary/` / `usage/` / `workspace-dir-picker/` / `approval-notify/` / `chat-stats/` / `peak-valley/` / `mail/` / `model-selection/` — 各融合模块
 - `src/client/styles.ts` — 注入样式（隐藏官方标签页、按钮布局等）
 
