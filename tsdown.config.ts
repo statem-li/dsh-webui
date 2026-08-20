@@ -143,6 +143,10 @@ const hostBundle: UserConfig = {
   },
   outputOptions: {
     entryFileNames: 'index.js',
+    // 禁用分包：index.ts 里的动态 import（如 dsh-usage-skill）若分 chunk，
+    // 会产生 lib-*.mjs 额外产物；GitHub 源若漏提交这些 chunk，动态 import 会 404。
+    // 内联成单个自包含 index.js，避免「源码装完缺运行时 chunk」的崩溃。
+    codeSplitting: false,
   },
 }
 

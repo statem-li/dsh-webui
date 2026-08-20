@@ -5,7 +5,6 @@ node_modules/
 # 构建/诊断临时产物
 _build-webui.log
 _build-fix*.log
-lib/lib-*.mjs
 # npm 误生成的锁文件（本项目用 pnpm）
 package-lock.json
 # SDD 工作区
