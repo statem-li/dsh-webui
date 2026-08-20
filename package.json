@@ -49,8 +49,7 @@
     "markstream-react": "0.0.55",
     "mermaid": "11.16.1",
     "shiki": "4.4.3",
-    "stream-markdown": "0.0.16",
-    "dsh-usage-skill": "link:D:/AI/Dsh/dsh-usage-skill"
+    "stream-markdown": "0.0.16"
   },
   "peerDependencies": {
     "cordis": ">=4.0.0-rc <5",
