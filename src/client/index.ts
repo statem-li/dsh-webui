@@ -26,6 +26,7 @@ import { registerMailCard } from './mail/MailCard'
 import { apply as registerZhThinking } from './zh-thinking'
 import { apply as registerTaskDoneSound } from './task-done-sound'
 import { apply as registerUpdater } from './updater'
+import { applyMessageWidthClient } from './message-width'
 import { apply as registerProxy } from './proxy'
 import { applyBrowserClient } from './browser'
 import { applyMemoryClient } from './memory'
@@ -55,13 +56,21 @@ import { applyMessageScreenshot } from './screenshot'
 import { injectResponsiveStyles } from './responsive'
 // 技能 slash 源（替代内核 ui-skill）：输入 / 先选集合再选技能 + 技能工具行。
 import { apply as applySkillSource } from './skill-source'
+// 提示词优化：对话框供应商左侧的「自动优化提示词」图标（用选中模型优化草稿）。
+import { applyPromptOptimize } from './prompt-optimize'
+// 左侧悬浮侧边栏：热区悬停展开/移出折叠（overlay）+「启动服务时默认折叠」设置行。
+import { applySidebarFloat } from './sidebar-float'
+import { applySidebarFloatSetting } from './sidebar-float-row'
 const CUSTOM_COMPONENT_SCOPE = 'dsh-better-markdown'
 
-export const inject = ['slots', 'settingsScope', 'connection', 'conversationEvents', 'locale', 'remote', 'sessions', 'workspaces', 'inputTriggers']
+export const inject = ['slots', 'settingsScope', 'connection', 'conversationEvents', 'locale', 'remote', 'sessions', 'workspaces', 'inputTriggers', 'layout']
 
 export function apply(ctx: ClientContext): void {
   // ---- 移动端响应式：全局覆盖样式（DSH 设置面板单列化等），随插件生命周期清理 ----
   ctx.effect(() => injectResponsiveStyles(), 'webui: responsive styles')
+
+  // ---- 我发送的对话宽度：启动即注入覆盖样式并恢复上次宽度（刷新后生效）----
+  applyMessageWidthClient(ctx)
 
   // ---- 原生 webui：右上角「对话/轨迹」图块 + 消息入口 --------------------
   ctx.slots.inject('conversation.session.header.utilities', () =>
@@ -184,4 +193,11 @@ export function apply(ctx: ClientContext): void {
 
   // ---- 技能 slash 源（替代内核 ui-skill）：输入 / 先选集合再选技能 ----------
   applySkillSource(ctx)
+
+  // ---- 提示词优化：供应商左侧图标，点击后用选中模型优化草稿 ---------------
+  applyPromptOptimize(ctx)
+
+  // ---- 左侧悬浮侧边栏：热区悬停展开/移出折叠 + 默认态设置 ----------------
+  applySidebarFloatSetting(ctx)
+  ctx.effect(() => applySidebarFloat(ctx), 'webui: sidebar float')
 }

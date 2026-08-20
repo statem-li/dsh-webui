@@ -1,0 +1,84 @@
+/**
+ * webui — 提示词优化入口样式（运行时幂等注入 <style>）。
+ *
+ * 图标按钮规格对齐 DSH 官方工具行小控件（与模型座位 .webui-ms-trigger 同源）：
+ * 28px 高、胶囊圆角、透明底、hover 用 interactive-bg-hover，主题变量一律走 DSH 令牌。
+ * popover 面板规格对齐模型座位弹出菜单（菜单底色/阴影/圆角同源）；开关对齐官方
+ * 开关规范（开启态 business-primary + 白钮，关闭态 border-l2 + 灰钮）。
+ */
+
+/** 类名常量（组件引用）。 */
+export const css = {
+  root: 'webui-po-root',
+  trigger: 'webui-po-trigger',
+  busy: 'webui-po-busy',
+  panel: 'webui-po-panel',
+  panelTitle: 'webui-po-panel-title',
+  chain: 'webui-po-chain',
+  chainNode: 'webui-po-chain-node',
+  chainModel: 'webui-po-chain-model',
+  chainArrow: 'webui-po-chain-arrow',
+  status: 'webui-po-status',
+  statusOptimizing: 'webui-po-status-optimizing',
+  statusDone: 'webui-po-status-done',
+  statusError: 'webui-po-status-error',
+  options: 'webui-po-options',
+  option: 'webui-po-option',
+  optionLabel: 'webui-po-option-label',
+  switch: 'webui-po-switch',
+  switchOn: 'webui-po-switch-on',
+  knob: 'webui-po-switch-knob',
+  knobOn: 'webui-po-switch-knob-on',
+  stop: 'webui-po-stop',
+} as const
+
+const STYLE_ID = 'dsh-webui-prompt-optimize-styles'
+
+const SHEET = `
+.webui-po-root{position:relative;display:grid;place-items:center}
+.webui-po-trigger{display:grid;place-items:center;width:28px;height:28px;padding:0;border:none;border-radius:14px;outline:none;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer}
+.webui-po-trigger:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+.webui-po-trigger:focus-visible{box-shadow:0 0 0 2px var(--dsw-alias-border-l3)}
+.webui-po-trigger:disabled{opacity:.5;cursor:default}
+.webui-po-busy{animation:webui-po-spin 1s linear infinite}
+@keyframes webui-po-spin{to{transform:rotate(360deg)}}
+.webui-po-panel{position:absolute;right:0;bottom:calc(100% + 10px);z-index:20;width:max-content;min-width:236px;max-width:320px;padding:14px 16px;border:1px solid var(--dsw-alias-border-inverted);border-radius:14px;background:var(--dsw-specific-menu);box-shadow:var(--dsw-shadow-lv3);color:var(--dsw-alias-label-primary);animation:webui-po-slide-in 160ms cubic-bezier(.2,.8,.2,1)}
+/* 透明桥接：覆盖卡片与图标之间的间隙，鼠标移动时命中卡片不中断 hover。 */
+.webui-po-panel::before{content:'';position:absolute;left:0;right:0;bottom:-10px;height:10px}
+@keyframes webui-po-slide-in{from{opacity:0;transform:translateY(6px) scale(.98)}to{opacity:1;transform:none}}
+.webui-po-panel-title{font-size:14px;font-weight:600;line-height:20px;margin-bottom:10px}
+.webui-po-chain{display:flex;align-items:center;gap:8px;font-size:12px;line-height:20px;color:var(--dsw-alias-label-secondary)}
+.webui-po-chain-node{flex:0 0 auto}
+.webui-po-chain-model{flex:0 1 auto;min-width:0;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-primary);font-weight:600}
+.webui-po-chain-arrow{flex:0 0 auto;color:var(--dsw-alias-label-caption)}
+.webui-po-options{display:flex;flex-direction:column;gap:10px;margin-top:12px;padding-top:12px;border-top:1px solid var(--dsw-alias-border-l2)}
+.webui-po-option{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.webui-po-option-label{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}
+.webui-po-switch{position:relative;width:34px;height:18px;border-radius:9px;border:none;padding:0;cursor:pointer;flex:none;background:var(--dsw-alias-border-l2);transition:background .15s}
+.webui-po-switch-on{background:var(--dsw-alias-state-business-primary)}
+.webui-po-switch-knob{position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:var(--dsw-alias-label-tertiary);transition:left .15s,background .15s;box-shadow:0 1px 2px rgba(0,0,0,.15)}
+.webui-po-switch-knob-on{left:18px;background:#fff}
+.webui-po-status{display:flex;align-items:center;gap:6px;margin-top:12px;padding-top:12px;border-top:1px solid var(--dsw-alias-border-l2);font-size:12px;line-height:18px;color:var(--dsw-alias-label-primary)}
+.webui-po-status-optimizing{color:var(--dsw-alias-state-business-primary)}
+.webui-po-status-done{color:var(--dsw-alias-state-success-primary)}
+.webui-po-status-error{color:var(--dsw-alias-state-error-primary)}
+.webui-po-stop{display:flex;align-items:center;justify-content:center;width:100%;height:28px;margin-top:10px;border:1px solid var(--dsw-alias-state-error-primary);border-radius:8px;background:var(--dsw-alias-interactive-bg-hover-danger);color:var(--dsw-alias-state-error-primary);font-size:12px;font-weight:600;cursor:pointer;transition:background .15s,color .15s}
+.webui-po-stop:hover{background:var(--dsw-alias-state-error-primary);color:#fff}
+`
+
+let injected = false
+
+/** 注入样式表（幂等；loader 卸载插件时会移除其 style 标签）。 */
+export function ensureStyles(): void {
+  if (typeof document === 'undefined') return
+  if (document.getElementById(STYLE_ID) !== null) return
+  const tag = document.createElement('style')
+  tag.id = STYLE_ID
+  tag.dataset.plugin = '@dsh-external/dsh-webui'
+  tag.dataset.pluginCss = 'webui/prompt-optimize'
+  tag.textContent = SHEET
+  document.head.appendChild(tag)
+  injected = true
+}
+
+export { injected }

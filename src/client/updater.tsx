@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
+import { MessageWidthRow } from './message-width'
 
 const BASE = '/api/dsh-updater'
 const POLL_MS = 3000
@@ -318,6 +319,7 @@ function BasicSettingsSection(): JSX.Element {
   return (
     <div style={sectionStyle}>
       <WidthCell />
+      <MessageWidthRow />
       <AutoStartCell ctx={ctx} />
       <CurrentVersionCell ctx={ctx} />
       <RemoteVersionCell ctx={ctx} />

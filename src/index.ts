@@ -18,6 +18,7 @@ import { launchEnvironmentOf } from '@deepseek-ai/dsh-launch-environment'
 import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-web'
 import { applyZhThinking } from './zh-thinking.js'
+import { applyMessageWidth } from './message-width.js'
 import { applyTaskDoneSound } from './task-done-sound.js'
 import { applyUpdater } from './updater.js'
 import { applyProxy } from './proxy.js'
@@ -31,6 +32,8 @@ import { applyMail } from './mail.js'
 import { applyRewind } from './rewind.js'
 import { applyScreenshot } from './screenshot.js'
 import { apply as applySkillToggles } from './skill-toggles.js'
+import { applyPromptOptimize } from './prompt-optimize.js'
+import { applySidebarFloat } from './sidebar-float.js'
 import {
   AnySearchSearchProvider,
   ANYSEARCH_DEFAULT_BASE_URL,
@@ -219,6 +222,9 @@ export async function apply(ctx: Context, config: WebuiConfig = {}): Promise<voi
   // 3) 中文思考开关（自 dsh-zh-thinking 合并）。
   applyZhThinking(ctx)
 
+  // 3.5) 我发送的对话宽度（本人消息气泡宽度）：settings 持久化 + /api/webui-message-width。
+  applyMessageWidth(ctx)
+
   // 4) 任务完成提示音 + 对话完成桌面卡片（自 dsh-task-done-sound 合并）。
   applyTaskDoneSound(ctx)
 
@@ -262,4 +268,10 @@ export async function apply(ctx: Context, config: WebuiConfig = {}): Promise<voi
 
   // 15) 技能开关（/api/skill-toggles）：每个技能禁用/开启 + 技能包一键开关。
   await applySkillToggles(ctx)
+
+  // 16) 提示词优化（/api/webui-prompt-optimize）：对话框内用选中模型优化提示词。
+  applyPromptOptimize(ctx)
+
+  // 17) 左侧悬浮侧边栏：设置项「启动服务时默认折叠」持久化 + /api/sidebar-float。
+  applySidebarFloat(ctx)
 }
