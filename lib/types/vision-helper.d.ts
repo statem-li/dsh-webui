@@ -42,5 +42,5 @@ export declare const Config: z<Schemastery.ObjectS<{
     fallbackDescribePrompt: z<string, string>;
     fallbackCacheSize: z<number, number>;
 }>>;
-export declare function applyVisionHelper(ctx: PluginContext, config: Config): void;
+export declare function applyVisionHelper(ctx: PluginContext, configInput: Partial<Config>): void;
 export {};

@@ -13,7 +13,7 @@
  * 约定省略（有安全风险）。文案使用本地中文字典，不依赖 locale 插件。
  */
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 import type { DiscoveredModelView, IApiClient } from '@deepseek-ai/dsh-api-remotes/client'
 import { messageOf } from './store.ts'
@@ -158,6 +158,16 @@ export function formatCapacity(value: number): string {
   if (value % CAPACITY_SCALE.m === 0) return `${String(value / CAPACITY_SCALE.m)}M`
   if (value % CAPACITY_SCALE.k === 0) return `${String(value / CAPACITY_SCALE.k)}K`
   return String(value)
+}
+
+/**
+ * 容量字段的常用档位，作为输入框的下拉预设；列表外的值仍可自由键入。
+ * 上下文窗口覆盖主流模型报价（含 Claude 的 200K 与 Gemini 的 1M/2M），
+ * 输出上限取常见的生成预算档位。
+ */
+const CAPACITY_PRESETS: Readonly<Record<CapacityField, readonly string[]>> = {
+  contextWindow: ['2M', '1M', '512K', '400K', '256K', '200K', '128K', '96K', '64K', '48K', '32K', '24K', '16K', '8K'],
+  maxTokens: ['256K', '128K', '64K', '32K', '24K', '16K', '12K', '8K', '4K', '2K'],
 }
 
 /**
@@ -339,10 +349,26 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set())
   // 行携带 id 与 name；容量是例外，折叠到披露里，免得每行挤四个输入框。
   const [expanded, setExpanded] = useState<ReadonlySet<number>>(new Set())
-  // 容量以文本编辑，因此字段的击键保存在这里，而不是每次变更都从解析值
-  // 重推——那会把 `1000` 中途重写为 `1K`。不可读文本保留到 blur 之后，让
-  // 拒绝文案点名用户仍可见的行；每个字段一个 buffer，互不挤占。
+  // 容量以「预设下拉 + 自由键入」的单框编辑，字段的击键保存在这里，而不
+  // 是每次变更都从解析值重推——那会把 `1000` 中途重写为 `1K`。不可读文本
+  // 保留到 blur 之后，让拒绝文案点名用户仍可见的行；每个字段一个 buffer，
+  // 互不挤占。
   const [editing, setEditing] = useState<ReadonlyMap<string, string>>(new Map())
+  // 当前展开预设面板的字段（`行:字段` 键）；undefined = 全部收起。同一时刻
+  // 至多一个面板展开。自绘面板而非原生 datalist：后者的弹出层由浏览器绘制，
+  // 在部分环境里点击无响应，且无法与主题同步。
+  const [capacityMenu, setCapacityMenu] = useState<string | undefined>(undefined)
+
+  // 预设项的悬停高亮无法用内联样式表达 :hover；随编辑器挂载注入一次规则。
+  useEffect(() => {
+    const marker = 'dsh-webui-capacity-menu'
+    if (document.getElementById(marker) !== null) return
+    const style = document.createElement('style')
+    style.id = marker
+    style.textContent =
+      '.dsh-capacity-menu-item:hover{background:var(--dsw-alias-interactive-bg-hover, rgba(22,93,255,0.08))}'
+    document.head.append(style)
+  }, [])
 
   /** 一个容量字段的 buffer 键；行移动时行号半段随之移动。 */
   const bufferKey = (index: number, field: CapacityField): string => `${String(index)}:${field}`
@@ -393,6 +419,7 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
     patch(index, { reasoningEfforts: next })
   }
 
+  /** 键入或选取一个容量拼写，即时解析进草稿。 */
   const editCapacity = (index: number, field: CapacityField, text: string): void => {
     setEditing(current => new Map(current).set(bufferKey(index, field), text))
     patch(index, { [field]: parseCapacity(text) })
@@ -584,32 +611,66 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
             ? (
               <>
                 <div style={{ display: 'flex', gap: 12, paddingLeft: 4 }}>
-                  <label style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1 }}>
-                    <span style={fieldLabelStyle}>{chatCopy.contextWindow}</span>
-                    <input
-                      style={inputStyle}
-                      type="text"
-                      inputMode="numeric"
-                      value={capacityText(model, index, 'contextWindow')}
-                      placeholder={CAPACITY_HINT.contextWindow}
-                      aria-label={`${chatCopy.contextWindow} ${index + 1}`}
-                      disabled={disabled}
-                      onChange={(event) => { editCapacity(index, 'contextWindow', event.target.value) }}
-                    />
-                  </label>
-                  <label style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1 }}>
-                    <span style={fieldLabelStyle}>{chatCopy.maxTokens}</span>
-                    <input
-                      style={inputStyle}
-                      type="text"
-                      inputMode="numeric"
-                      value={capacityText(model, index, 'maxTokens')}
-                      placeholder={CAPACITY_HINT.maxTokens}
-                      aria-label={`${chatCopy.maxTokens} ${index + 1}`}
-                      disabled={disabled}
-                      onChange={(event) => { editCapacity(index, 'maxTokens', event.target.value) }}
-                    />
-                  </label>
+                  {(['contextWindow', 'maxTokens'] as const).map((field) => {
+                    const menuKey = `${String(index)}:${field}`
+                    const menuOpen = capacityMenu === menuKey
+                    return (
+                      <div
+                        key={field}
+                        style={{ position: 'relative', display: 'flex', flexDirection: 'column', gap: 4, flex: 1, minWidth: 0 }}
+                      >
+                        <span style={fieldLabelStyle}>{chatCopy[field]}</span>
+                        <input
+                          style={capacityInputStyle}
+                          type="text"
+                          value={capacityText(model, index, field)}
+                          placeholder={CAPACITY_HINT[field]}
+                          aria-label={`${chatCopy[field]} ${index + 1}`}
+                          role="combobox"
+                          aria-expanded={menuOpen}
+                          aria-controls={`dsh-capacity-menu-${field}`}
+                          disabled={disabled}
+                          onChange={(event) => { editCapacity(index, field, event.target.value) }}
+                          onClick={() => { setCapacityMenu(current => current === menuKey ? undefined : menuKey) }}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Escape') setCapacityMenu(undefined)
+                          }}
+                        />
+                        {menuOpen
+                          ? (
+                            <>
+                              {/* 透明遮罩：点面板外任意处收起，免挂全局监听。 */}
+                              <div style={capacityMenuBackdropStyle} onClick={() => { setCapacityMenu(undefined) }} />
+                              <div
+                                id={`dsh-capacity-menu-${field}`}
+                                role="listbox"
+                                aria-label={chatCopy[field]}
+                                style={capacityMenuPanelStyle}
+                              >
+                                {CAPACITY_PRESETS[field].map(preset => (
+                                  <button
+                                    key={preset}
+                                    type="button"
+                                    className="dsh-capacity-menu-item"
+                                    style={capacityMenuItemStyle}
+                                    // mousedown 抢在 input blur 之前完成选择，
+                                    // 避免焦点抖动引起面板闪关。
+                                    onMouseDown={(event) => {
+                                      event.preventDefault()
+                                      editCapacity(index, field, preset)
+                                      setCapacityMenu(undefined)
+                                    }}
+                                  >
+                                    {preset}
+                                  </button>
+                                ))}
+                              </div>
+                            </>
+                          )
+                          : null}
+                      </div>
+                    )
+                  })}
                 </div>
                 <div style={effortBlockStyle}>
                   <span style={fieldLabelStyle}>{chatCopy.reasoningEfforts}</span>
@@ -714,6 +775,57 @@ const inputStyle: CSSProperties = {
   background: 'var(--dsw-alias-bg-layer-1, #fff)',
   color: 'var(--dsw-alias-label-primary, #1f2329)',
   outline: 'none',
+}
+
+/* 容量预设输入框：.input 规格叠加共享 chevron——点击弹出常用档位列表，
+ * 仍可自由键入任意值（如 131072）。 */
+const capacityInputStyle: CSSProperties = {
+  ...inputStyle,
+  paddingRight: 30,
+  backgroundImage: 'url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'12\' height=\'12\' viewBox=\'0 0 12 12\' fill=\'none\'%3E%3Cpath d=\'M3 4.5L6 7.5L9 4.5\' stroke=\'%2381858C\' stroke-width=\'1.5\' stroke-linecap=\'round\' stroke-linejoin=\'round\'/%3E%3C/svg%3E")',
+  backgroundRepeat: 'no-repeat',
+  backgroundPosition: 'right 10px center',
+  backgroundSize: '12px 12px',
+}
+
+/* 预设面板的透明遮罩：铺满视口承接「点外部收起」。 */
+const capacityMenuBackdropStyle: CSSProperties = {
+  position: 'fixed',
+  inset: 0,
+  zIndex: 990,
+}
+
+/* 预设面板：填充面 + 浮层阴影，贴着所属输入框下缘展开；深浅主题经令牌同步。 */
+const capacityMenuPanelStyle: CSSProperties = {
+  position: 'absolute',
+  top: 'calc(100% + 4px)',
+  left: 0,
+  right: 0,
+  zIndex: 991,
+  boxSizing: 'border-box',
+  maxHeight: 240,
+  overflowY: 'auto',
+  padding: 4,
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 2,
+  background: 'var(--dsw-alias-bg-module-platform, #fff)',
+  border: '1px solid var(--dsw-alias-border-l2, #dcdfe6)',
+  borderRadius: 8,
+  boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
+}
+
+/* 预设项：行内小按钮；悬停高亮由注入的 .dsh-capacity-menu-item:hover 提供。 */
+const capacityMenuItemStyle: CSSProperties = {
+  padding: '6px 10px',
+  fontSize: 13,
+  lineHeight: '20px',
+  textAlign: 'left',
+  border: 'none',
+  borderRadius: 6,
+  background: 'transparent',
+  color: 'var(--dsw-alias-label-primary, #1f2329)',
+  cursor: 'pointer',
 }
 
 const iconButtonStyle: CSSProperties = {
