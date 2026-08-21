@@ -17,6 +17,10 @@ import type { Context } from '@deepseek-ai/cordis'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 
 const ROUTE_PATH = '/api/webui-prompt-optimize'
+const STOP_PATH = '/api/webui-prompt-optimize/stop'
+
+/** 进行中的优化：sessionId → 该会话当前优化的 AbortController（用于显式停止）。 */
+const activeOptimizations = new Map<string, AbortController>()
 
 /** 优化超时（毫秒）：推理模型可能较慢，给足余量但不无限挂起。 */
 const OPTIMIZE_TIMEOUT_MS = 90_000
@@ -25,10 +29,8 @@ const OPTIMIZE_TIMEOUT_MS = 90_000
  * 优化结果的 system 提示词。
  * @param setTarget - 是否「设定目标提示词」：开启时额外要求为提示词设定明确、
  *   可衡量的目标；关闭时仅做常规优化。
- * @param verifyWithBrowser - 是否「使用 AI 浏览器验证」：开启时要求优化结果
- *   附带可执行的验证步骤（可交由 AI 浏览器实际验证）。
  */
-function optimizeSystem(setTarget: boolean, verifyWithBrowser: boolean): string {
+function optimizeSystem(setTarget: boolean): string {
   const rules = [
     'Keep the user\'s original intent and task essence — do not change what they are asking for.',
     'Answer in the SAME language as the user\'s prompt.',
@@ -37,9 +39,6 @@ function optimizeSystem(setTarget: boolean, verifyWithBrowser: boolean): string 
   ]
   if (setTarget) {
     rules.push('Set a clear, measurable target for the optimized prompt: state explicitly what the prompt should achieve and how success is judged.')
-  }
-  if (verifyWithBrowser) {
-    rules.push('Include a concrete verification step: state how the optimized prompt\'s result should be checked or validated (e.g. what an AI browser should open/confirm to verify success).')
   }
   rules.push('Output ONLY the optimized prompt text itself — no explanation, no preamble, no markdown code fence, no quotes around the whole answer.')
   return [
@@ -66,15 +65,25 @@ function buildUserText(text: string): string {
 }
 
 /**
- * 挂载 /api/webui-prompt-optimize 路由（disposer 随插件生命周期清理）。
+ * 挂载 /api/webui-prompt-optimize 与 /stop 路由（disposer 随插件生命周期清理）。
  * @param ctx - host 上下文（需要 llm + webServer 服务）。
  */
 export function applyPromptOptimize(ctx: Context): void {
-  ctx.effect(() => ctx.webServer.register({
-    kind: 'exact',
-    path: ROUTE_PATH,
-    handler: (req, res) => handle(ctx, req, res),
-  }), 'webui: prompt-optimize route')
+  ctx.effect(() => {
+    const disposers = [
+      ctx.webServer.register({
+        kind: 'exact',
+        path: ROUTE_PATH,
+        handler: (req, res) => handle(ctx, req, res),
+      }),
+      ctx.webServer.register({
+        kind: 'exact',
+        path: STOP_PATH,
+        handler: (req, res) => void handleStop(ctx, req, res),
+      }),
+    ]
+    return () => { for (const dispose of disposers) dispose() }
+  }, 'webui: prompt-optimize routes')
 }
 
 async function handle(ctx: Context, req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -100,8 +109,8 @@ async function handle(ctx: Context, req: IncomingMessage, res: ServerResponse): 
   const text = typeof body.text === 'string' ? body.text.trim() : ''
   // 是否「设定目标提示词」：缺省视为开启（与前端开关默认 ON 一致）。
   const setTarget = body.setTarget !== false
-  // 是否「使用 AI 浏览器验证」：缺省视为关闭（与前端开关默认 OFF 一致）。
-  const verifyWithBrowser = body.verifyWithBrowser === true
+  // 所属会话 id：作为「显式停止」的标识（客户端停止时用它定位本次优化的 controller）。
+  const sessionId = typeof body.sessionId === 'string' ? body.sessionId : ''
   if (provider === '' || model === '' || text === '') {
     json(res, 400, { ok: false, error: 'provider / model / text 不能为空' })
     return
@@ -132,6 +141,8 @@ async function handle(ctx: Context, req: IncomingMessage, res: ServerResponse): 
   // 客户端中途断开（刷新/切换会话）时中止模型调用，避免浪费 token。
   const onClose = (): void => { controller.abort() }
   req.on('close', onClose)
+  // 登记本次优化，供 /stop 接口按会话显式中止（比依赖 TCP 断开更即时可靠）。
+  if (sessionId !== '') activeOptimizations.set(sessionId, controller)
 
   const send = (payload: unknown): void => {
     if (res.writableEnded || res.destroyed) return
@@ -146,7 +157,7 @@ async function handle(ctx: Context, req: IncomingMessage, res: ServerResponse): 
         content: [{ type: 'text', text: buildUserText(text) }],
         source: { kind: 'plugin', plugin: 'dsh-webui' },
       })],
-      system: optimizeSystem(setTarget, verifyWithBrowser),
+      system: optimizeSystem(setTarget),
       maxTokens: 4096,
       signal: controller.signal,
     }
@@ -188,9 +199,37 @@ async function handle(ctx: Context, req: IncomingMessage, res: ServerResponse): 
     }
   } finally {
     clearTimeout(timer)
+    if (activeOptimizations.get(sessionId) === controller) activeOptimizations.delete(sessionId)
     req.removeListener('close', onClose)
     res.end()
   }
+}
+
+/** 处理显式停止请求：按会话中止正在进行的优化模型调用。 */
+async function handleStop(ctx: Context, req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!loopbackAllowed(req)) {
+    json(res, 403, { ok: false, error: 'loopback-only' })
+    return
+  }
+  if (req.method !== 'POST') {
+    json(res, 405, { ok: false, error: 'method not allowed' })
+    return
+  }
+  let body: Record<string, unknown>
+  try {
+    body = await readBody(req) as Record<string, unknown>
+  } catch (error) {
+    json(res, 400, { ok: false, error: error instanceof Error ? error.message : 'invalid JSON body' })
+    return
+  }
+  const sessionId = typeof body.sessionId === 'string' ? body.sessionId : ''
+  if (sessionId === '') {
+    json(res, 400, { ok: false, error: 'sessionId 不能为空' })
+    return
+  }
+  const controller = activeOptimizations.get(sessionId)
+  if (controller !== undefined) controller.abort()
+  json(res, 200, { ok: true, stopped: controller !== undefined })
 }
 
 // ── HTTP plumbing（dsh-memory 同款） ────────────────────────────────────────

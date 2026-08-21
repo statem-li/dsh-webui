@@ -11,7 +11,7 @@
  */
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import clsx from 'clsx'
-import type { SnapshotStore } from '@deepseek-ai/dsh-client-runtime/client'
+import type { SessionId, SnapshotStore } from '@deepseek-ai/dsh-client-runtime/client'
 import type { ModelDirectoryState } from '@deepseek-ai/dsh-client-ui-model-selection/client'
 import { IconLoadingOutline16, IconSparkle16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { css, ensureStyles } from './styles'
@@ -22,6 +22,8 @@ export interface PromptOptimizeInjected {
   available: boolean
   /** 会话共享的模型目录 store（读当前选中 provider/model）。 */
   directory: SnapshotStore<ModelDirectoryState>
+  /** 所属会话 id：POST 时回传，供 host 端「显式停止」定位本次优化。 */
+  sessionId: SessionId
 }
 
 /** 组件完整 props：注入面 + owner（草稿）+ 标准 kit（写回）。 */
@@ -75,7 +77,7 @@ function writeFlag(key: string, value: boolean): void {
  * @param props - injected face + owner + standard kit。
  * @returns 图标按钮，或 null（subagent 会话不渲染）。
  */
-export function PromptOptimizeButton({ available, directory, input, inputActions }: PromptOptimizeProps) {
+export function PromptOptimizeButton({ available, directory, input, inputActions, sessionId }: PromptOptimizeProps) {
   ensureStyles()
   const state = useSyncExternalStore(
     fn => directory.subscribe(fn),
@@ -149,9 +151,15 @@ export function PromptOptimizeButton({ available, directory, input, inputActions
     })
   }
 
-  /** 紧急停止：中止正在进行的优化请求（fetch 中止 → host 侧随连接断开而 abort 模型调用）。 */
+  /** 紧急停止：中止 fetch，并显式通知 host 中止模型调用（不依赖 TCP 断开检测）。 */
   const stop = (): void => {
     abortRef.current?.abort()
+    // 显式停止：host 端按会话定位本次优化并 abort 模型，确保真正停止生成。
+    void fetch('/api/webui-prompt-optimize/stop', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId }),
+    }).catch(() => { /* 停止通知失败不影响 fetch 中止 */ })
   }
 
   // 当前选中模型的显示名（用于链路展示；供应商已在图标旁单独展示，此处只显示模型）。
@@ -184,7 +192,7 @@ export function PromptOptimizeButton({ available, directory, input, inputActions
       const response = await fetch('/api/webui-prompt-optimize', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ provider: current.provider, model: current.model, text: draft, setTarget, verifyWithBrowser }),
+        body: JSON.stringify({ provider: current.provider, model: current.model, text: draft, setTarget, verifyWithBrowser, sessionId }),
         signal: controller.signal,
       })
       if (!response.ok) throw new Error(`优化请求失败（HTTP ${String(response.status)}）`)
@@ -205,7 +213,22 @@ export function PromptOptimizeButton({ available, directory, input, inputActions
         }
         if (payload.type === 'done') {
           sawTerminal = true
-          finish('done', formatMs(payload.elapsedMs))
+          // 两个开关都不自动触发任何任务：只决定写回草稿的形式，
+          // 全部由用户点发送后才生效（/goal 命令 / 附加验证要求）。
+          const objective = accumulated.trim()
+          if (objective === '') {
+            finish('done', formatMs(payload.elapsedMs))
+            return
+          }
+          if (setTarget) {
+            inputActions.setDraft(`/goal ${objective}`)
+            finish('done', '已完成 · 已生成 /goal')
+          } else if (verifyWithBrowser) {
+            inputActions.setDraft(`${objective}\n\n请用 AI 浏览器实际验证上面这条提示词能否正常工作，并简要报告验证结论。`)
+            finish('done', '已完成 · 已附加浏览器验证')
+          } else {
+            finish('done', formatMs(payload.elapsedMs))
+          }
           return
         }
         if (payload.type === 'error') {
@@ -235,7 +258,10 @@ export function PromptOptimizeButton({ available, directory, input, inputActions
       buffer += decoder.decode()
 
       // 流结束但未收到 done/error（罕见异常）：按已生成内容兜底。
+      // 若此时是用户主动停止（signal 已 abort），交给 catch 显示「已停止优化」，
+      // 不要误判为「已完成」。
       if (!sawTerminal) {
+        if (controller.signal.aborted) throw new Error('stopped')
         if (wroteDraft) finish('done', '已完成')
         else throw new Error('响应流意外结束')
       }

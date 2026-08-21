@@ -53,6 +53,7 @@ const SCHEMA_FORM_ENTRY = resolveSchemaFormEntry()
 const CSS_PREFIX = '\0webui-css:'
 const CSS_SUFFIX = '.mjs'
 const STREAM_MONACO_STUB = '\0webui-stream-monaco-stub'
+const RAW_PREFIX = '\0webui-raw:'
 
 const clientBundle: UserConfig = {
   entry: { client: 'src/client/index.ts' },
@@ -118,6 +119,23 @@ const clientBundle: UserConfig = {
         '  document.head.appendChild(tag);',
         '}',
       ].join('\n')
+    },
+  }, {
+    name: 'webui-raw',
+    async resolveId(source, importer) {
+      if (!source.endsWith('?raw')) return null
+      const clean = source.slice(0, -'?raw'.length)
+      if (clean.startsWith('.')) {
+        if (importer === undefined) return null
+        return RAW_PREFIX + resolve(dirname(importer), clean)
+      }
+      return RAW_PREFIX + fileURLToPath(import.meta.resolve(clean))
+    },
+    async load(id) {
+      if (!id.startsWith(RAW_PREFIX)) return null
+      const path = id.slice(RAW_PREFIX.length)
+      const text = await readFile(path, 'utf8')
+      return `export default ${JSON.stringify(text)}`
     },
   }],
   outputOptions: {

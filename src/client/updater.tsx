@@ -41,7 +41,7 @@ const progressTrack: React.CSSProperties = {
 }
 const progressFill: React.CSSProperties = {
   height: '100%', borderRadius: 4,
-  background: 'var(--dsw-alias-brand-primary, #4f8cff)',
+  background: 'var(--dsw-alias-state-business-primary, #4176e6)',
   transition: 'width .5s ease',
 }
 const logStyle: React.CSSProperties = {
@@ -145,7 +145,7 @@ function WidthCell(): JSX.Element {
         <input
           type="range" min={WIDTH_MIN} max={WIDTH_MAX} step={WIDTH_STEP}
           value={String(width)} onChange={e => setWidth(Number(e.target.value))}
-          style={{ width: 160, accentColor: 'var(--dsw-alias-brand-primary)', cursor: 'pointer' }}
+          style={{ width: 160, accentColor: 'var(--dsw-alias-state-business-primary)', cursor: 'pointer' }}
         />
         <div style={cellValue}>{width}px</div>
         <Button variant="outline" onClick={() => setWidth(WIDTH_DEFAULT)}>默认</Button>
@@ -188,7 +188,7 @@ function AutoStartCell({ ctx }: { ctx: UpdaterState }): JSX.Element {
         checked={Boolean(auto && auto.enabled)}
         disabled={!auto}
         onChange={onToggle}
-        style={{ width: 16, height: 16, accentColor: 'var(--dsw-alias-brand-primary)', cursor: 'pointer' }}
+        style={{ width: 16, height: 16, accentColor: 'var(--dsw-alias-state-business-primary)', cursor: 'pointer' }}
       />
     </div>
   )

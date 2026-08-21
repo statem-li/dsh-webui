@@ -31,23 +31,6 @@ const STORE_KEY = '__dshBrowserActivityStore__'
 const POLL_MS = 800
 
 let pollTimer: number | null = null
-let lastViewportReport = 0
-
-/** 把用户屏幕分辨率（含 HiDPI 缩放，最高 2x）上报给 host，让无头浏览器截图匹配屏幕。带 5 秒节流，可持续重试。 */
-function reportViewport(): void {
-  if (typeof window === 'undefined' || typeof window.screen === 'undefined') return
-  const now = Date.now()
-  if (now - lastViewportReport < 5000) return
-  lastViewportReport = now
-  const dpr = Math.min(window.devicePixelRatio || 1, 2)
-  const width = Math.round(window.screen.width * dpr)
-  const height = Math.round(window.screen.height * dpr)
-  fetch('/api/dsh-browser/viewport', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ width, height }),
-  }).catch(() => {})
-}
 
 function sameValue(a: ActiveBrowserSession | undefined, b: ActiveBrowserSession): boolean {
   if (a === undefined) return false
@@ -80,9 +63,7 @@ export function browserActivityStore(): BrowserActivityStore {
     },
     startPolling: () => {
       if (pollTimer !== null) return
-      reportViewport()
       const poll = async (): Promise<void> => {
-        reportViewport()
         try {
           const res = await fetch('/api/dsh-browser/active-sessions', { cache: 'no-store' })
           const data: any = await res.json()

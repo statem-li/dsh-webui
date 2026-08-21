@@ -87,20 +87,6 @@ function BrowserPanel({ sessionId, onClose }: { sessionId: string; onClose: () =
   const frameElRef = useRef<HTMLImageElement | null>(null)
   const frameSizeRef = useRef<{ width: number; height: number }>({ width: 0, height: 0 })
 
-  // 打开面板即上报屏幕分辨率（含 HiDPI 缩放），让 host 把浏览器视口/帧分辨率
-  // 对齐当前屏幕——screencast 帧分辨率跟随屏幕，画面才清晰（自适应分辨率）。
-  useEffect(() => {
-    if (typeof window === 'undefined' || typeof window.screen === 'undefined') return
-    const dpr = Math.min(window.devicePixelRatio || 1, 2)
-    const width = Math.round(window.screen.width * dpr)
-    const height = Math.round(window.screen.height * dpr)
-    fetch('/api/dsh-browser/viewport', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ width, height }),
-    }).catch(() => {})
-  }, [])
-
   // 轮询操作详情（时间线 + url/title）。
   useEffect(() => {
     let alive = true

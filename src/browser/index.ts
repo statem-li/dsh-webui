@@ -33,7 +33,6 @@ import {
   dispatchMouseClick,
   insertText,
   startScreencast,
-  stopScreencast,
   ackScreencast,
   dispatchMouseWheel,
   dispatchMouseButton,
@@ -147,9 +146,9 @@ export function applyBrowser(ctx: PluginContext, config: Config): void {
   // ═══ 「允许 AI 使用浏览器」开关（默认开启，持久化）+ 无头模式（默认开 = 后台不弹窗）═══
   let allowBrowser = true
   let headlessMode = config.headless
-  // 目标视口：默认桌面尺寸，client 侧会按用户屏幕分辨率动态上报覆盖。
-  let viewportWidth = VIEWPORT_WIDTH
-  let viewportHeight = VIEWPORT_HEIGHT
+  // 目标视口：固定桌面尺寸（不随屏幕分辨率放大，画面直接按此尺寸截图）。
+  const viewportWidth = VIEWPORT_WIDTH
+  const viewportHeight = VIEWPORT_HEIGHT
   function loadPrefs(): void {
     try {
       const parsed = JSON.parse(fs.readFileSync(prefsFile, 'utf8'))
@@ -1133,54 +1132,6 @@ export function applyBrowser(ctx: PluginContext, config: Config): void {
       },
     })
   }, '@dsh-external/dsh-browser: headless route')
-
-  ctx.effect(() => {
-    const webServer = ctx.webServer
-    if (!webServer) return () => {}
-    return webServer.register({
-      kind: 'exact',
-      path: '/api/dsh-browser/viewport',
-      handler: async (req: any, res: any) => {
-        const respond = (status: number, payload: any) => {
-          res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' })
-          res.end(JSON.stringify(payload))
-        }
-        try {
-          if (req.method === 'POST') {
-            const body = await new Promise<any>((resolve) => {
-              let data = ''
-              req.on('data', (chunk: any) => { data += chunk })
-              req.on('end', () => {
-                try { resolve(JSON.parse(data || '{}')) } catch { resolve(null) }
-              })
-              req.on('error', () => resolve(null))
-            })
-            if (!body || typeof body.width !== 'number' || typeof body.height !== 'number') {
-              return respond(400, { ok: false, error: 'width/height 须为数字' })
-            }
-            viewportWidth = Math.min(Math.max(Math.round(body.width), 1280), 2560)
-            viewportHeight = Math.min(Math.max(Math.round(body.height), 800), 1600)
-            // 已运行会话实时更新视口；screencast 的 maxWidth/maxHeight 是启动时锁定的，
-            // 不会随视口变化自动更新（否则帧一直停留在旧分辨率、画面模糊），
-            // 因此用新尺寸重启 screencast 让帧分辨率跟上屏幕。
-            for (const st of sessions.values()) {
-              if (st.session) {
-                try { await setViewport(st.session, viewportWidth, viewportHeight) } catch { /* 忽略 */ }
-                try {
-                  await stopScreencast(st.session)
-                  await startScreencast(st.session, viewportWidth, viewportHeight, 85)
-                } catch { /* 忽略：screencast 失败不阻塞 */ }
-              }
-            }
-            return respond(200, { ok: true, width: viewportWidth, height: viewportHeight })
-          }
-          respond(200, { ok: true, width: viewportWidth, height: viewportHeight })
-        } catch (e: any) {
-          respond(500, { ok: false, error: String(e?.message || e) })
-        }
-      },
-    })
-  }, '@dsh-external/dsh-browser: viewport route')
 
   ctx.logger?.info?.('[dsh-browser] loaded (headless=' + headlessMode + ', port=' + config.port + ', per-session isolation)')
 }

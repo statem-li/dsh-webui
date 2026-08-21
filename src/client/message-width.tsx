@@ -2,14 +2,14 @@
  * webui — client 半身「我发送的对话宽度」（本人消息气泡宽度）设置行。
  *
  * - 基础设置页（settings.section id='basic'，由 updater 持有）里的一行：
- *   数字输入（px / %）+ 单位下拉 + 「默认」按钮。
+ *   数字输入 + px/% 分段按钮 + 「默认」按钮。
  * - 宽度通过 CSS 变量 `--webui-user-bubble-width` 应用到本人消息气泡
  *   （[data-chat-flow-kind="user" | "steering"] 下的 .userStack），
  *   仅影响本人消息，不影响对方/系统消息。
- * - 读 /api/webui-message-width；改动即 POST 持久化（settings.yaml），
- *   重启/刷新后由 bootstrap 恢复。
+ * - 读 /api/webui-message-width；输入即 POST 持久化（debounce 400ms，
+ *   不依赖失焦），刷新/重启后由 bootstrap 恢复。
  */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 
@@ -83,17 +83,27 @@ const cellText: React.CSSProperties = { flex: 1, minWidth: 0, display: 'flex', f
 const cellTitle: React.CSSProperties = { fontSize: 14, fontWeight: 400, lineHeight: '22px', color: 'var(--dsw-alias-label-primary)' }
 const cellCaption: React.CSSProperties = { fontSize: 12, lineHeight: '18px', color: 'var(--dsw-alias-label-secondary)' }
 const numberStyle: React.CSSProperties = {
-  width: 88, height: 32, boxSizing: 'border-box', padding: '0 10px',
-  fontSize: 14, lineHeight: '22px', borderRadius: 8,
+  width: 92, height: 36, boxSizing: 'border-box', padding: '0 10px',
+  fontSize: 14, borderRadius: 8,
   border: '1px solid var(--dsw-alias-border-l2)',
   background: 'var(--dsw-alias-bg-layer-1)',
   color: 'var(--dsw-alias-label-primary)',
   fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace',
 }
-const selectStyle: React.CSSProperties = {
-  ...numberStyle, width: 72, appearance: 'none', paddingRight: 28, cursor: 'pointer',
-  backgroundImage: "url(\"data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M3 4.5l3 3 3-3' fill='none' stroke='%2381858C' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E\")",
-  backgroundRepeat: 'no-repeat', backgroundPosition: 'right 12px center',
+// 分段按钮（px / %）：选中态用品牌蓝，避免 --dsw-alias-brand-primary 反色坑。
+const segBase: React.CSSProperties = {
+  height: 36, padding: '0 14px', fontSize: 12, cursor: 'pointer',
+  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+  boxSizing: 'border-box', background: 'transparent',
+  color: 'var(--dsw-alias-label-secondary)',
+  border: '1px solid var(--dsw-alias-border-l1)',
+  transition: 'color .12s, background .12s, border-color .12s',
+}
+const segOn: React.CSSProperties = {
+  color: 'var(--dsw-alias-state-business-primary)',
+  background: 'var(--dsw-alias-state-business-tertiary)',
+  borderColor: 'var(--dsw-alias-state-business-primary)',
+  position: 'relative', zIndex: 1,
 }
 
 /** 基础设置页里的一行：「我发送的对话宽度」。 */
@@ -101,6 +111,7 @@ export function MessageWidthRow(): JSX.Element {
   const [value, setValue] = useState<number | null>(null) // null = 加载中
   const [unit, setUnit] = useState<Unit>('px')
   const [input, setInput] = useState('') // 输入框草稿（不夹紧，避免打断输入）
+  const debounceRef = useRef<number>(0)
 
   useEffect(() => {
     let alive = true
@@ -122,27 +133,39 @@ export function MessageWidthRow(): JSX.Element {
     return () => { alive = false }
   }, [])
 
-  /** 提交（夹紧 + 应用 + 持久化）：blur / Enter / 单位切换 / 「默认」时调用。 */
-  const commit = useCallback((raw: number, nextUnit: Unit): void => {
-    const clamped = clampValue(raw, nextUnit)
+  /** 立即应用视觉；persist 为 true 时 debounce 持久化。 */
+  const applyNow = useCallback((clamped: number, nextUnit: Unit, persist: boolean): void => {
     setValue(clamped)
     setUnit(nextUnit)
-    setInput(String(clamped))
     applyWidth(clamped, nextUnit)
-    postState(clamped, nextUnit).catch(() => {})
+    if (!persist) return
+    if (debounceRef.current) window.clearTimeout(debounceRef.current)
+    debounceRef.current = window.setTimeout(() => { postState(clamped, nextUnit).catch(() => {}) }, 400)
   }, [])
 
-  // 输入过程中即时预览（夹紧到安全范围，但不覆盖输入框草稿、不立即写盘）。
+  /** 立即落盘（不 debounce）：blur / 单位切换 / 「默认」。 */
+  const commitNow = useCallback((clamped: number, nextUnit: Unit): void => {
+    if (debounceRef.current) window.clearTimeout(debounceRef.current)
+    applyNow(clamped, nextUnit, false)
+    postState(clamped, nextUnit).catch(() => {})
+  }, [applyNow])
+
+  // 输入过程：即时预览 + debounce 持久化（不依赖失焦，避免「输入后直接关面板丢值」）。
   const onNumberChange = (raw: string): void => {
     setInput(raw)
     const n = Number(raw)
-    if (raw.trim() !== '' && Number.isFinite(n)) applyWidth(clampValue(n, unit), unit)
+    if (raw.trim() !== '' && Number.isFinite(n)) applyNow(clampValue(n, unit), unit, true)
   }
 
   const onNumberBlur = (): void => {
     const n = Number(input)
-    if (input.trim() !== '' && Number.isFinite(n)) commit(n, unit)
-    else setInput(String(value ?? DEFAULT.value))
+    if (input.trim() !== '' && Number.isFinite(n)) {
+      const clamped = clampValue(n, unit)
+      setInput(String(clamped))
+      commitNow(clamped, unit)
+    } else {
+      setInput(String(value ?? DEFAULT.value))
+    }
   }
 
   const onNumberKeyDown = (e: React.KeyboardEvent<HTMLInputElement>): void => {
@@ -150,26 +173,33 @@ export function MessageWidthRow(): JSX.Element {
   }
 
   const onUnitChange = (nextUnit: Unit): void => {
+    if (nextUnit === unit) return
     const n = Number(input)
     const base = input.trim() !== '' && Number.isFinite(n) ? n : (value ?? DEFAULT.value)
-    commit(base, nextUnit)
+    const clamped = clampValue(base, nextUnit)
+    setInput(String(clamped))
+    commitNow(clamped, nextUnit)
   }
 
-  const reset = (): void => { commit(DEFAULT.value, DEFAULT.unit) }
+  const reset = (): void => {
+    setInput(String(DEFAULT.value))
+    commitNow(DEFAULT.value, DEFAULT.unit)
+  }
 
   const disabled = value === null
+  const range = RANGE[unit]
 
   return (
     <div style={cellRow}>
       <div style={cellText}>
         <div style={cellTitle}>我发送的对话宽度</div>
-        <div style={cellCaption}>控制你本人发送消息气泡的宽度，仅影响自己的消息（默认 {DEFAULT.value}px）</div>
+        <div style={cellCaption}>调整你本人消息气泡的宽度（默认 {DEFAULT.value}px）</div>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 'none' }}>
         <input
           type="number"
-          min={RANGE[unit].min}
-          max={RANGE[unit].max}
+          min={range.min}
+          max={range.max}
           step={1}
           value={input}
           disabled={disabled}
@@ -179,16 +209,26 @@ export function MessageWidthRow(): JSX.Element {
           style={numberStyle}
           aria-label="我发送的对话宽度数值"
         />
-        <select
-          value={unit}
-          disabled={disabled}
-          onChange={e => onUnitChange(e.target.value === '%' ? '%' : 'px')}
-          style={selectStyle}
-          aria-label="我发送的对话宽度单位"
-        >
-          <option value="px">px</option>
-          <option value="%">%</option>
-        </select>
+        <div style={{ display: 'flex', flex: 'none' }}>
+          <button
+            type="button"
+            onClick={() => onUnitChange('px')}
+            disabled={disabled}
+            style={{ ...segBase, borderTopLeftRadius: 8, borderBottomLeftRadius: 8, ...(unit === 'px' ? segOn : {}) }}
+            aria-pressed={unit === 'px'}
+          >
+            px
+          </button>
+          <button
+            type="button"
+            onClick={() => onUnitChange('%')}
+            disabled={disabled}
+            style={{ ...segBase, borderTopRightRadius: 8, borderBottomRightRadius: 8, marginLeft: -1, ...(unit === '%' ? segOn : {}) }}
+            aria-pressed={unit === '%'}
+          >
+            %
+          </button>
+        </div>
         <Button variant="outline" onClick={reset} disabled={disabled}>默认</Button>
       </div>
     </div>
