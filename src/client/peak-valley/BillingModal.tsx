@@ -397,7 +397,7 @@ export function BillingModal({ closing, onClose }: BillingModalProps): JSX.Eleme
   }, [])
 
   const clock = beijingClock(nowMs)
-  const peak = isPeak(clock.day, clock.hour, clock.minute)
+  const peak = isPeak(clock.hour, clock.minute)
   const next = nextTransition(clock)
   const peakLabel = peak ? '峰时（高峰计价）' : '谷时（低谷优惠）'
   const countdownLabel = `${peak ? '距谷时' : '距峰时'} ${formatDelta(next.deltaMinutes)}`

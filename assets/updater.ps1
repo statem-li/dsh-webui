@@ -3,13 +3,28 @@
 #      -> 恢复 stash -> 写结果 -> 杀壳子 -> 重新拉起 exe
 # 进度：每个阶段写 progress JSON 到 cfg.progressFile，前端 state 轮询读取渲染进度条。
 param(
-    [Parameter(Mandatory = $true)]
     [string]$ConfigFile
 )
 
 $ErrorActionPreference = 'Continue'
 
-$cfg = Get-Content -LiteralPath $ConfigFile -Raw | ConvertFrom-Json
+# 独立启动标记：即使后续 config 解析失败，也能确认脚本被 PowerShell 加载并留下痕迹
+$bootMarker = Join-Path $env:TEMP 'dsh-updater-boot.log'
+try {
+    Add-Content -LiteralPath $bootMarker -Value ("[{0}] updater.ps1 已启动 pid={1} config={2}" -f (Get-Date -Format 'HH:mm:ss'), $PID, $ConfigFile) -Encoding utf8
+} catch {}
+
+# config 容错：解析失败（参数缺失/文件不存在）时写标记退出，避免无参数交互卡死
+$cfg = $null
+try {
+    $cfg = Get-Content -LiteralPath $ConfigFile -Raw | ConvertFrom-Json
+} catch {
+    try { Add-Content -LiteralPath $bootMarker -Value ("[{0}] config 解析失败: {1}" -f (Get-Date -Format 'HH:mm:ss'), $_.Exception.Message) -Encoding utf8 } catch {}
+}
+if (-not $cfg) {
+    try { Add-Content -LiteralPath $bootMarker -Value ("[{0}] 无法读取 config（参数缺失或文件不存在），退出" -f (Get-Date -Format 'HH:mm:ss')) -Encoding utf8 } catch {}
+    exit 1
+}
 $progressFile = if ($cfg.progressFile) { $cfg.progressFile } else { Join-Path (Split-Path $ConfigFile -Parent) 'progress.json' }
 
 function Log($msg) {
@@ -54,19 +69,29 @@ try {
 Start-Sleep -Seconds 2
 Set-Progress -stage 'stop-service' -percent 8 -msg '服务已停止'
 
-# 2) 记录壳子进程（可执行文件在 shellDir 下的 Electron 进程）和要重新拉起的 exe
+# 2) 记录壳子进程（可执行文件在 shellDir / 实际壳子目录下的 Electron 进程）和要重新拉起的 exe
 $shellPids = @()
 $relaunch = $null
 $relaunchArgs = @()
 try {
+    # 候选壳子目录：配置的 shellDir + 常见实际安装目录（D:\AI\DeepSeek Harness）
+    $shellDirs = @($cfg.shellDir)
+    $realShellDir = Join-Path 'D:\AI' 'DeepSeek Harness'
+    if (Test-Path -LiteralPath $realShellDir) { $shellDirs += $realShellDir }
     $shellPids = @(Get-CimInstance Win32_Process | Where-Object {
-        $_.ExecutablePath -and $_.ExecutablePath.StartsWith($cfg.shellDir, [System.StringComparison]::OrdinalIgnoreCase)
+        $_.ExecutablePath -and ($shellDirs | Where-Object { $_.ExecutablePath.StartsWith($_, [System.StringComparison]::OrdinalIgnoreCase) })
     } | ForEach-Object { $_.ProcessId })
     foreach ($p in $shellPids) { Log "shell pid $p" }
+    # 重启目标候选（按修改时间最新优先）：shellDir\dist\*.exe → 实际壳子目录 exe → dev electron
+    $candidates = @()
     $distExe = Get-ChildItem -LiteralPath (Join-Path $cfg.shellDir 'dist') -Filter '*.exe' -ErrorAction SilentlyContinue |
         Sort-Object LastWriteTime -Descending | Select-Object -First 1
-    if ($distExe) {
-        $relaunch = $distExe.FullName
+    if ($distExe) { $candidates += $distExe.FullName }
+    $realExe = Get-ChildItem -LiteralPath $realShellDir -Filter '*.exe' -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    if ($realExe) { $candidates += $realExe.FullName }
+    if ($candidates.Count -gt 0) {
+        $relaunch = $candidates[0]
         Log "relaunch target: $relaunch"
     } else {
         $devElectron = Join-Path $cfg.shellDir 'node_modules\electron\dist\electron.exe'

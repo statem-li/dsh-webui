@@ -4,9 +4,6 @@
  */
 
 export const css = {
-  entry: 'dsh-memory-entry',
-  entryBadge: 'dsh-memory-entry-badge',
-  label: 'dsh-memory-label',
   modal: 'dsh-memory-modal',
   modalBody: 'dsh-memory-modal-body',
   panel: 'dsh-memory-panel',
@@ -65,23 +62,10 @@ export const css = {
 const STYLE_ID = 'dsh-memory-styles'
 
 const SHEET = `
-/* usage-skill 的合并按钮（用量+技能，order 10）默认 flex:none;width:100% 占满整行，
-   会把同行的记忆按钮挤成图标；实测固定 150px（用量/技能各 75px 完整显示），
-   记忆按钮占剩余空间（约 102px），三者均无文字挤压。rail 收起态恢复 usage 原宽。 */
-.usg_layer{flex:none !important;width:150px !important;min-width:0}
-.usg_layer.usg_rail{width:36px !important}
-.usg_layer .usg_footerButtons{flex-wrap:nowrap}
-.usg_layer .usg_footerButtons > *{min-width:0}
-.dsh-memory-entry{flex:1 1 auto !important;min-width:0;position:relative;display:inline-flex;align-items:center;gap:8px;height:32px;box-sizing:border-box;border:none;border-radius:10px;padding:0 8px;background:transparent;cursor:pointer;color:var(--dsw-alias-label-primary,#eee);font-family:inherit;font-size:14px;line-height:20px;overflow:hidden}
-.dsh-memory-entry:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.06))}
-.dsh-memory-entry[aria-expanded='true']{background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.06));color:var(--dsw-alias-label-primary,#eee)}
-.dsh-memory-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.dsh-memory-entry-badge{position:absolute;top:2px;right:2px;min-width:16px;height:16px;box-sizing:border-box;padding:0 4px;display:flex;align-items:center;justify-content:center;border-radius:8px;background:var(--dsw-alias-state-warn-primary,#e8a33d);color:#0e1116;font-size:10px;font-weight:700;line-height:16px}
-.dsh-memory-modal{width:min(1120px,calc(100vw - 48px))}
 .dsh-memory-modal-body{overflow:hidden;display:flex;flex-direction:column}
 .dsh-memory-change-old{color:var(--dsw-alias-label-tertiary,#888);text-decoration:line-through;opacity:.8}
 .dsh-memory-change-new{color:var(--dsw-alias-label-primary,#eee)}
-.dsh-memory-panel{display:flex;flex-direction:column;gap:10px;max-height:min(720px,calc(100vh - 160px));overflow-y:auto;padding:2px 2px 6px;box-sizing:border-box}
+.dsh-memory-panel{flex:1;min-height:0;display:flex;flex-direction:column;gap:10px;overflow-y:auto;padding:2px 2px 6px;box-sizing:border-box}
 .dsh-memory-tabs{flex:none;display:flex;align-items:center;gap:2px;padding:2px;box-sizing:border-box;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.12));border-radius:10px;background:var(--dsw-alias-bg-layer-1,#1c1f26)}
 .dsh-memory-tab{flex:1;appearance:none;border:none;background:transparent;border-radius:8px;padding:5px 10px;font-size:14px;line-height:22px;color:var(--dsw-alias-label-secondary,#999);cursor:pointer}
 .dsh-memory-tab:hover{color:var(--dsw-alias-label-primary,#eee)}
@@ -141,9 +125,9 @@ const SHEET = `
 .dsh-memory-error{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-state-error-primary,#e0434b)}
 .dsh-memory-visually-hidden{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
 
-/* ── 移动端：全屏面板、收紧筛选控件 ───────────────────────────── */
+/* ── 移动端：收紧筛选控件 ──────────────────────────────────────── */
 @media (max-width: 767.98px) {
-  .dsh-memory-panel{max-height:none;padding:2px}
+  .dsh-memory-panel{padding:2px}
   .dsh-memory-project-chip{max-width:150px}
   .dsh-memory-tag-select{max-width:150px}
 }

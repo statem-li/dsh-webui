@@ -2,8 +2,8 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { OverviewTab } from './OverviewTab'
 import { UsageTab } from './UsageTab'
 import { AccountsTab } from './AccountsTab'
-import { modalAnimClass, modalMaskAnimClass } from '../../modal-animation'
-import { useIsMobile } from '../../responsive'
+import { modalStaggerClass } from '../../modal-animation'
+import { PopoverShell, type PopoverAnchor } from '../../popover-shell'
 
 export type TabKey = 'overview' | 'usage' | 'accounts'
 
@@ -14,8 +14,6 @@ const NAV: Array<{ key: TabKey; label: string }> = [
 ]
 
 const css = {
-  shell: { position: 'fixed', inset: 0, zIndex: 6000, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(8,10,14,.5)', backdropFilter: 'blur(2px)' } as React.CSSProperties,
-  modal: { width: 'min(1350px, calc(100vw - 48px))', maxWidth: 'calc(100vw - 48px)', height: '82vh', minHeight: 480, maxHeight: 'calc(100vh - 48px)', display: 'flex', flexDirection: 'column', background: 'var(--dsw-alias-bg-base)', borderRadius: 16, boxShadow: '0 24px 64px rgba(0,0,0,.5)', overflow: 'hidden' } as React.CSSProperties,
   topbar: { height: 48, display: 'flex', alignItems: 'center', gap: 12, padding: '0 16px', borderBottom: '1px solid var(--dsw-alias-border-l1)', flex: 'none' } as React.CSSProperties,
   tabNav: { flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, padding: '0 12px', height: 44, borderBottom: '1px solid var(--dsw-alias-border-l1)', background: 'var(--dsw-alias-bg-base)' } as React.CSSProperties,
   tabItem: (active: boolean): React.CSSProperties => ({
@@ -33,22 +31,16 @@ const css = {
 
 export interface WorkbenchProps {
   onClose?: () => void
-  /** 正在播放收回动画（此时弹窗仍挂载，播放 pop-out）。 */
+  /** 正在播放收回动画（此时弹窗仍挂载，播放滑出）。 */
   closing?: boolean
+  /** 入口锚点（按钮右缘+顶缘视口坐标）：卡片贴其右侧滑出；null 回退底部 sheet。 */
+  anchor?: PopoverAnchor | null
   renderTab?: (tab: TabKey) => ReactNode
 }
 
-export function Workbench({ onClose, closing = false, renderTab }: WorkbenchProps): JSX.Element {
+export function Workbench({ onClose, closing = false, anchor = null, renderTab }: WorkbenchProps): JSX.Element {
   const [tab, setTab] = useState<TabKey>('overview')
-  const isMobile = useIsMobile()
-
-  // 移动端：全屏面板 + 收紧内容留白（桌面 1350×82vh 的尺寸在手机上不可用）。
-  const modalStyle: React.CSSProperties = isMobile
-    ? { ...css.modal, width: '100vw', maxWidth: '100vw', height: '100dvh', minHeight: 0, maxHeight: '100dvh', borderRadius: 0 }
-    : css.modal
-  const contentStyle: React.CSSProperties = isMobile
-    ? { ...css.content, padding: '12px 16px 32px' }
-    : css.content
+  const close = onClose ?? (() => {})
 
   // prefers-reduced-motion：检测并注入 CSS 变量（已知限制：图表内联 transition 未逐处改造，见任务报告）
   useEffect(() => {
@@ -76,23 +68,21 @@ export function Workbench({ onClose, closing = false, renderTab }: WorkbenchProp
     accounts: <AccountsTab />,
   }
   return (
-    <div style={css.shell} className={modalMaskAnimClass(closing)} onClick={onClose}>
-      <div style={modalStyle} className={modalAnimClass(closing)} onClick={e => e.stopPropagation()}>
-        <div style={css.topbar}>
-          <span style={css.title}>用量工作台</span>
-          <button type="button" style={css.close} aria-label="关闭" onClick={onClose}>✕</button>
-        </div>
-        <div style={css.tabNav}>
-          {NAV.map(item => (
-            <button key={item.key} type="button" style={css.tabItem(tab === item.key)} onClick={() => setTab(item.key)}>
-              {item.label}
-            </button>
-          ))}
-        </div>
-        <main style={contentStyle}>
-          {renderTab ? renderTab(tab) : tabContent[tab]}
-        </main>
+    <PopoverShell closing={closing} onClose={close} anchor={anchor} width={1080} ariaLabel="用量工作台">
+      <div style={css.topbar}>
+        <span style={css.title}>用量工作台</span>
+        <button type="button" style={css.close} aria-label="关闭" onClick={close}>✕</button>
       </div>
-    </div>
+      <div style={css.tabNav}>
+        {NAV.map(item => (
+          <button key={item.key} type="button" style={css.tabItem(tab === item.key)} onClick={() => setTab(item.key)}>
+            {item.label}
+          </button>
+        ))}
+      </div>
+      <main style={css.content} className={modalStaggerClass}>
+        {renderTab ? renderTab(tab) : tabContent[tab]}
+      </main>
+    </PopoverShell>
   )
 }

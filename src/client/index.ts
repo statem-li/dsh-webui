@@ -61,6 +61,8 @@ import { applyPromptOptimize } from './prompt-optimize'
 // 左侧悬浮侧边栏：热区悬停展开/移出折叠（overlay）+「启动服务时默认折叠」设置行。
 import { applySidebarFloat } from './sidebar-float'
 import { applySidebarFloatSetting } from './sidebar-float-row'
+// 自动化：侧边栏「新会话」下方菜单项 + 一级设置卡片 + 二级内容选择抽屉。
+import { applyAutomation } from './automation'
 const CUSTOM_COMPONENT_SCOPE = 'dsh-better-markdown'
 
 export const inject = ['slots', 'settingsScope', 'connection', 'conversationEvents', 'locale', 'remote', 'sessions', 'workspaces', 'inputTriggers', 'layout']
@@ -161,7 +163,7 @@ export function apply(ctx: ClientContext): void {
   // ---- dsh-browser：设置页「允许 AI 使用浏览器」开关 ---------------------
   applyBrowserClient(ctx)
 
-  // ---- dsh-memory：侧边栏记忆面板 + 注入开关 ----------------------------
+  // ---- dsh-memory：侧边栏导航行记忆面板 + 注入开关 ------------------------
   applyMemoryClient(ctx)
 
   // ---- dsh-provider-hub：供应商设置页（对话 + 视觉 + 生图）---------------
@@ -173,10 +175,10 @@ export function apply(ctx: ClientContext): void {
   // ---- 工作区目录选择器：自写弹窗（添加工作区选文件夹，shadow 官方 native）---
   applyWorkspaceDirPickerClient(ctx)
 
-  // ---- 用量工作台 + 技能面板（自 dsh-usage-skill 融合）：footer 独立入口 ---
+  // ---- 用量工作台 + 技能面板（自 dsh-usage-skill 融合）：侧边栏导航行入口 ----
   applyUsageEntries(ctx)
 
-  // ---- DeepSeek 峰谷时刻卡片（footer 首行，位于用量/技能/记忆上方）--------
+  // ---- DeepSeek 峰谷时刻卡片（footer 首行）---------------------------------
   applyPeakValley(ctx)
 
   // ---- 审批提醒：有工具调用等待审批时顶部弹 toast ---------------------------
@@ -200,4 +202,7 @@ export function apply(ctx: ClientContext): void {
   // ---- 左侧悬浮侧边栏：热区悬停展开/移出折叠 + 默认态设置 ----------------
   applySidebarFloatSetting(ctx)
   ctx.effect(() => applySidebarFloat(ctx), 'webui: sidebar float')
+
+  // ---- 自动化：菜单项（新会话下方）+ 一级设置卡片 + 二级内容选择抽屉 -------
+  applyAutomation(ctx)
 }

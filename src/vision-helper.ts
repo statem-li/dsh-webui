@@ -134,7 +134,7 @@ async function resolveImageData(
 
   // 尝试按相对路径解析（相对工作区根）
   try {
-    const resolved = await ctx.fs.resolve(raw)
+    const resolved = String(await ctx.fs.resolve(raw))
     if (fs.existsSync(resolved) && fs.statSync(resolved).isFile()) {
       return readImageFile(ctx, resolved)
     }
@@ -150,7 +150,7 @@ async function resolveImageData(
 }
 
 async function readImageFile(ctx: PluginContext, filePath: string) {
-  const resolved = path.isAbsolute(filePath) ? filePath : await ctx.fs.resolve(filePath)
+  const resolved = String(path.isAbsolute(filePath) ? filePath : await ctx.fs.resolve(filePath))
   if (!fs.existsSync(resolved)) throw new Error(`图片文件不存在：${resolved}`)
   const stat = fs.statSync(resolved)
   if (!stat.isFile()) throw new Error(`不是文件：${resolved}`)
@@ -168,9 +168,9 @@ function providerConfig(ctx: PluginContext, providerId: string): any {
     const entries = ctx.llm.listConfigurableProviders()
     const entry = entries.find((e: any) => e.provider === providerId)
     if (!entry || !entry.settingsNs) return null
-    const section = ctx.settings.get(entry.settingsNs)
+    const section = ctx.settings.get(entry.settingsNs as any)
     if (!section || typeof section !== 'object') return null
-    let node = section
+    let node: any = section
     const pathKeys = Array.isArray(entry.settingsPath) ? entry.settingsPath : []
     for (const key of pathKeys) {
       if (node && typeof node === 'object' && key in node) node = node[key]
@@ -323,13 +323,15 @@ async function callVisionChat(
 
 // ── 插件主体 ────────────────────────────────────────────
 
-export function applyVisionHelper(ctx: PluginContext, config: Config): void {
+export function applyVisionHelper(ctx: PluginContext, configInput: Partial<Config>): void {
   // 配置契约校验：调用方（webui apply）直接透传未解析的 Partial<Config>，
   // 未显式配置的字段（visionModels / timeoutMs / maxTokens / fallbackCacheSize
   // 等）在这里补上 schemastery 默认值，避免后续 resolveVisionModels 等读到
   // undefined 而抛出 `Cannot read properties of undefined (reading 'length')`。
   // schemastery 的 schema 是函数形态：调用即解析（含默认值），非 zod 的 .parse。
-  config = Config(config)
+  // 用 const 重新声明，保证闭包（describe / resolveVisionModels 等）中 config 的
+  // 类型收窄为完整 Config（对参数重新赋值时 TS 会把闭包引用推断为联合类型）。
+  const config: Config = Config(configInput)
 
   // ═══ 生图能力（自 dsh-image-gen 合并；模型配置存 model-router.json 的 imageActive）═══
   let imageActive = ''
@@ -721,7 +723,7 @@ export function applyVisionHelper(ctx: PluginContext, config: Config): void {
   // 模型配置快照：webServer 只读接口（供设置页 / 排查）
   ctx.effect(() => {
     const webServer = ctx.webServer
-    if (!webServer) return
+    if (!webServer) return () => {}
     return webServer.register({
       kind: 'exact',
       path: '/api/vision-helper/snapshot',
@@ -787,7 +789,7 @@ export function applyVisionHelper(ctx: PluginContext, config: Config): void {
 
   ctx.effect(() => {
     const webServer = ctx.webServer
-    if (!webServer) return
+    if (!webServer) return () => {}
     return webServer.register({
       kind: 'exact',
       path: '/api/vision-helper/providers',
@@ -819,7 +821,7 @@ export function applyVisionHelper(ctx: PluginContext, config: Config): void {
 
   ctx.effect(() => {
     const webServer = ctx.webServer
-    if (!webServer) return
+    if (!webServer) return () => {}
     return webServer.register({
       kind: 'exact',
       path: '/api/vision-helper/config',
@@ -858,7 +860,7 @@ export function applyVisionHelper(ctx: PluginContext, config: Config): void {
 
   ctx.effect(() => {
     const webServer = ctx.webServer
-    if (!webServer) return
+    if (!webServer) return () => {}
     return webServer.register({
       kind: 'exact',
       path: '/api/image-gen/snapshot',
@@ -884,7 +886,7 @@ export function applyVisionHelper(ctx: PluginContext, config: Config): void {
 
   ctx.effect(() => {
     const webServer = ctx.webServer
-    if (!webServer) return
+    if (!webServer) return () => {}
     return webServer.register({
       kind: 'exact',
       path: '/api/image-gen/config',

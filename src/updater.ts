@@ -235,12 +235,37 @@ export function applyUpdater(ctx: any, config: UpdaterConfig = {}): void {
       mkdirSync(RUN_DIR, { recursive: true })
       writeFileSync(CONFIG_FILE, JSON.stringify({ dshDir, shellDir, logFile: LOG_FILE, resultFile: RESULT_FILE, progressFile: PROGRESS_FILE }, null, 2), 'utf8')
       try { writeFileSync(PROGRESS_FILE, JSON.stringify({ stage: 'queued', percent: 0, msg: '更新任务已排队，脚本即将启动' }), 'utf8') } catch { /* 忽略 */ }
-      const child = spawn('powershell.exe', [
-        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', SCRIPT_FILE, '-ConfigFile', CONFIG_FILE,
+      // 本机实测：child_process 的 stdio:'ignore'（无论 detached 与否）spawn 出的
+      // 子进程「句柄已创建但从未执行」（无 error 事件、无任何落盘痕迹）；
+      // 相对路径 exe（powershell.exe）在壳子精简 PATH 下也可能解析失败。
+      // 可靠模式：绝对路径 + stdio:'inherit'（实测唯一能真正执行的组合）。
+      // 更新脚本自身的 Log/Set-Progress 全部 try/catch，stdio 失效不影响执行。
+      const cmdExe = process.env.ComSpec || 'C:\\Windows\\System32\\cmd.exe'
+      const psExe = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'
+      // spawn 前先落盘诊断信息，若仍失败可从 progress.json 直接定位。
+      try {
+        writeFileSync(PROGRESS_FILE, JSON.stringify({
+          stage: 'spawning', percent: 0,
+          msg: `启动更新脚本（${cmdExe} → ${psExe}）…`,
+          script: SCRIPT_FILE,
+          config: CONFIG_FILE,
+          at: new Date().toISOString(),
+        }), 'utf8')
+      } catch { /* 忽略 */ }
+      const child = spawn(cmdExe, [
+        '/d', '/c', 'start', '', '/b',
+        psExe, '-NoProfile', '-ExecutionPolicy', 'Bypass',
+        '-File', SCRIPT_FILE, '-ConfigFile', CONFIG_FILE,
       ], {
-        detached: true,
-        stdio: 'ignore',
+        stdio: 'inherit',
         windowsHide: true,
+      })
+      // spawn 失败（ENOENT/EPERM 等）时把错误写进进度文件，避免前端永远卡在 queued。
+      child.on('error', (err: any) => {
+        try {
+          writeFileSync(PROGRESS_FILE, JSON.stringify({ stage: 'spawn-error', percent: 0, msg: `启动更新脚本失败: ${String(err?.message ?? err)}` }), 'utf8')
+        } catch { /* 忽略 */ }
+        state.busy = null
       })
       child.unref()
       state.busy = 'updating'

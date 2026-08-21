@@ -19,7 +19,12 @@ if [ ! -x "$TSC" ] && [ ! -f "$TSC.cmd" ]; then
 fi
 
 link_pkg() {
-  local target="$CHECKOUT/$2"
+  # $2 可为 checkout 相对路径，也可为绝对路径（如外部目录 D:/AI/Dsh/dsh-usage-skill）
+  local target="$2"
+  case "$target" in
+    /* | [A-Za-z]:/*) ;;
+    *) target="$CHECKOUT/$2" ;;
+  esac
   if [ ! -e "$target" ]; then
     echo "build: dependency target missing: $target" >&2
     exit 1

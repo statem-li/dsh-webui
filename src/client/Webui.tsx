@@ -4,8 +4,8 @@
  * 能力：
  *  1. 右上角「对话/轨迹」图块按钮：接管原生标签页，做成图块并排放在
  *     右上角 utilities 区（与 Session log 同行）；点击切换会话视图。
- *  2. 右上角「消息 N」按钮 → 弹出本会话全部已发送消息（user + steering）；
- *     点击某条 → 会话自动滚动到该消息并高亮闪烁。
+ *  2. 右上角「消息 N」按钮 → 弹出本会话全部已发送消息（user + steering +
+ *     斜杠命令如 /goal）；点击某条 → 会话自动滚动到该消息并高亮闪烁。
  *  3. 右侧中间「消息横条」：透明无背景的一列细横条，每条横条 = 一条你
  *     发送的消息；点击跳转、悬停预览。面板整体指针穿透，热区仅横条本身，
  *     右侧空白区域不拦截滚轮/点击（全部落到对话区）。
@@ -88,6 +88,12 @@ function messageText(node: ChatNode): string {
     case 'steering':
     case 'context':
       return blocksText(node.data.content)
+    case 'command': {
+      // 斜杠命令消息（如 /goal）：还原为「/名称 参数」形式。
+      const name = node.data.name ?? 'command'
+      const args = node.data.args?.trim() ?? ''
+      return args === '' ? `/${name}` : `/${name} ${args}`
+    }
     default:
       return ''
   }
@@ -99,6 +105,8 @@ function messageTime(node: ChatNode): number {
     case 'user':
     case 'steering':
     case 'context':
+      return node.data.time
+    case 'command':
       return node.data.time
     default:
       return 0
@@ -148,7 +156,7 @@ export function Webui(props: WebuiProps): ReactNode {
   const scrollTargetRef = useRef(0)
   const scrollRafRef = useRef(0)
 
-  // 本会话已发送消息（user + steering，按时间正序 = 流顺序）。
+  // 本会话已发送消息（user + steering + 斜杠命令，按时间正序 = 流顺序）。
   const userMessages = useMemo(() => {
     const chat = snapshot?.chat
     if (chat === undefined) return [] as Array<{ key: string; node: ChatNode }>
@@ -156,7 +164,9 @@ export function Webui(props: WebuiProps): ReactNode {
     for (const key of chat.order) {
       const node = chat.nodes.get(key) as ChatNode | undefined
       if (node === undefined || node.visibility === 'hidden') continue
-      if (node.kind === 'user' || node.kind === 'steering') out.push({ key, node })
+      if (node.kind === 'user' || node.kind === 'steering' || node.kind === 'command') {
+        out.push({ key, node })
+      }
     }
     return out
   }, [snapshot])
@@ -263,7 +273,8 @@ export function Webui(props: WebuiProps): ReactNode {
         const key = row.dataset.chatAnchorKey
         if (key === undefined) continue
         const node = (snapshot?.chat.nodes.get(key) as ChatNode | undefined)
-        if (node === undefined || (node.kind !== 'user' && node.kind !== 'steering')) continue
+        if (node === undefined
+          || (node.kind !== 'user' && node.kind !== 'steering' && node.kind !== 'command')) continue
         const rect = row.getBoundingClientRect()
         if (rect.height <= 0) continue
         if (rect.bottom <= sr.top + 1) {

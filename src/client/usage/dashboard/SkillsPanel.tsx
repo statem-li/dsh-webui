@@ -11,7 +11,8 @@ import {
   Button, IconChevronDownOutline14, IconCloseOutline16, IconEditOutline16, IconFolderOpenOutline16,
   IconPlusOutline16, IconRefreshOutline14, IconTrashOutline16, Modal, Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
-import { modalAnimClass } from '../../modal-animation'
+import { modalStaggerClass } from '../../modal-animation'
+import { PshBody, PshHead, PopoverShell, type PopoverAnchor } from '../../popover-shell'
 
 /** ---------------------------------------------------------------- 数据模型 */
 
@@ -206,9 +207,8 @@ const SHEET = `
 .skm-entry[aria-expanded='true']{background:transparent;color:var(--dsw-alias-label-primary,#eee)}
 .skm-entry:focus,.skm-entry:focus-visible{outline:none;border:none}
 .skm-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.skm-modal{width:min(520px,calc(100vw - 48px))}
 .skm-modal-body{overflow:hidden;display:flex;flex-direction:column}
-.skm-panel{display:flex;flex-direction:column;gap:8px;max-height:min(640px,calc(100vh - 220px));overflow-y:auto;padding:2px 2px 6px;box-sizing:border-box}
+.skm-panel{flex:1;min-height:0;display:flex;flex-direction:column;gap:8px;overflow-y:auto;padding:2px 2px 6px;box-sizing:border-box}
 .skm-top-row{flex:none;display:flex;align-items:center;justify-content:flex-end;gap:8px}
 .skm-new-bundle{flex:none;display:inline-flex;align-items:center;gap:4px;appearance:none;border:none;border-radius:12px;padding:4px 10px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#999);background:transparent;cursor:pointer}
 .skm-new-bundle:hover,.skm-new-bundle[aria-expanded='true']{background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.06));color:var(--dsw-alias-label-primary,#eee)}
@@ -305,7 +305,6 @@ const SHEET = `
 
 /* ── 移动端：面板加高、文件查看器左右分栏改上下堆叠 ───────────── */
 @media (max-width: 767.98px) {
-  .skm-panel{max-height:calc(100vh - 140px)}
   .skm-viewer-body{height:calc(100vh - 60px)}
   .skm-viewer-layout{flex-direction:column}
   .skm-viewer-nav{width:100%;border-right:none;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.08));flex:none;max-height:40%}
@@ -556,7 +555,7 @@ type ViewerState = { skill: SkillInfo; file: string; loading: boolean; error?: s
 
 const SKILL_NAME_PATTERN = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/
 
-export function SkillsPanel({ onClose, closing = false }: { onClose: () => void; closing?: boolean }): JSX.Element {
+export function SkillsPanel({ onClose, closing = false, anchor = null }: { onClose: () => void; closing?: boolean; anchor?: PopoverAnchor | null }): JSX.Element {
   ensureStyles()
   const [state, setState] = useState<PanelState>({ status: 'loading' })
   const [reload, setReload] = useState(0)
@@ -855,18 +854,28 @@ export function SkillsPanel({ onClose, closing = false }: { onClose: () => void;
       : t('deleteSkillConfirm', { name: confirm.name })
 
   return (
-    <Modal
-      open
+    <PopoverShell
+      closing={closing}
       onClose={() => {
+        // 安装/确认进行中禁止关闭；二级弹窗（确认/查看器/归组）打开时 Esc 归二级弹窗。
         if (installing || confirming) return
+        if (confirm !== null || viewer !== null || assignTarget !== null) return
         onClose()
       }}
-      closeLabel={t('close')}
-      title={t('panelTitle')}
-      className={`${css.modal} ${modalAnimClass(closing)}`}
-      contentClassName={css.modalBody}
+      anchor={anchor}
+      width={620}
+      ariaLabel={t('panelTitle')}
     >
-      <div className={css.panel} aria-busy={state.status === 'loading'}>
+      <PshHead
+        title={t('panelTitle')}
+        closeLabel={t('close')}
+        onClose={() => {
+          if (installing || confirming) return
+          onClose()
+        }}
+      />
+      <PshBody className={css.modalBody}>
+      <div className={`${css.panel} ${modalStaggerClass}`} aria-busy={state.status === 'loading'}>
         <div className={css.topRow}>
           <Tooltip label={t('newBundle')} side="bottom" delayMs={500}>
             <button type="button" className={css.newBundleButton} aria-label={t('newBundle')} aria-expanded={newBundleOpen}
@@ -1061,6 +1070,7 @@ export function SkillsPanel({ onClose, closing = false }: { onClose: () => void;
           </>
         )}
       </div>
+      </PshBody>
 
       <Modal
         open={confirm !== null}
@@ -1142,6 +1152,6 @@ export function SkillsPanel({ onClose, closing = false }: { onClose: () => void;
           </div>
         </Modal>
       )}
-    </Modal>
+    </PopoverShell>
   )
 }

@@ -129,3 +129,30 @@ export const en = {
   addSaved: 'Memory added',
   autoMemory: 'Auto-memory',
 } satisfies Record<MemoryLocaleKey, string>
+
+/** 轻量翻译函数类型（面板/入口组件共用）。 */
+export type MemoryT = (key: MemoryLocaleKey, vars?: Record<string, string | number>) => string
+
+const DICTS: Record<'zh' | 'en', Record<MemoryLocaleKey, string>> = { zh, en }
+
+/** 当前语言：跟随 DSH 同步到 <html lang> 的主子标签（缺省 zh）。 */
+function currentLang(): 'zh' | 'en' {
+  try {
+    const lang = document.documentElement.lang.toLowerCase().split('-')[0]
+    if (lang === 'en') return 'en'
+  } catch { /* 非 DOM 环境 */ }
+  return 'zh'
+}
+
+/** 轻量翻译：{n} 占位插值（与 automation locales.makeT 同款实现）。 */
+export function makeT(): MemoryT {
+  return (key, vars) => {
+    let text: string = DICTS[currentLang()][key] ?? zh[key]
+    if (vars !== undefined) {
+      for (const [name, value] of Object.entries(vars)) {
+        text = text.replaceAll(`{${name}}`, String(value))
+      }
+    }
+    return text
+  }
+}

@@ -12,14 +12,14 @@ import {
   IconFolderOpenOutline16,
   IconRefreshOutline14,
   IconTrashOutline16,
-  Modal,
   Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { InjectFace, PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ChangeView, MemoryApi, MemoryEntryView, MemoryListResponse, ProjectView } from './api.js'
 import { css, ensureStyles } from './styles.js'
 import { changeActionLabel } from './Notify.tsx'
-import { modalAnimClass } from '../modal-animation.js'
+import { makeT, type MemoryT } from './locales.js'
+import { modalStaggerClass } from '../modal-animation.js'
+import { PshBody, PshHead, PopoverShell, type PopoverAnchor } from '../popover-shell.js'
 
 /** 面板 Tab。 */
 export type MemoryTab = 'all' | 'changes'
@@ -55,11 +55,15 @@ interface MoveState {
 /** 面板 props。 */
 export type MemoryPanelProps = {
   open: boolean
-  /** 正在播放收回动画（此时 Modal 仍挂载，播放 pop-out）。 */
+  /** 正在播放收回动画（此时卡片仍挂载，播放滑出）。 */
   closing?: boolean
   onClose: () => void
   initialTab?: MemoryTab
-} & InjectFace<MemoryApi> & PropsLocale<'dshMemory'>
+  /** 入口锚点（按钮右缘+顶缘视口坐标）：卡片贴其右侧滑出；null 回退底部 sheet。 */
+  anchor?: PopoverAnchor | null
+  /** 轻量翻译函数（入口经 makeT 提供）。 */
+  t?: MemoryT
+} & MemoryApi
 
 /** 分割标签输入（逗号/空格/中文逗号）。 */
 function splitTags(raw: string): string[] {
@@ -158,7 +162,7 @@ export function PinIcon({ size = 16, filled = false }: { size?: number; filled?:
 }
 
 /** 主面板。 */
-export function MemoryPanel({ open, closing = false, onClose, initialTab, t, ...api }: MemoryPanelProps): JSX.Element {
+export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor = null, t = makeT(), ...api }: MemoryPanelProps): JSX.Element {
   ensureStyles()
   // slots 的 inject 函数每次渲染返回新 api 对象；用 ref 固定引用，
   // 否则 load 的 useCallback 依赖 api 每次变化 → useEffect 无限重触发请求风暴。
@@ -555,16 +559,19 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, t, ...
 
   const renderEmpty = (text: string): JSX.Element => <div className={css.empty}>{text}</div>
 
+  if (!open) return null
+
   return (
-    <Modal
-      open={open}
+    <PopoverShell
+      closing={closing}
       onClose={onClose}
-      closeLabel={t('close')}
-      title={t('panelTitle')}
-      className={`${css.modal ?? ''} ${modalAnimClass(closing)}`}
-      contentClassName={css.modalBody ?? ''}
+      anchor={anchor}
+      width={680}
+      ariaLabel={t('panelTitle')}
     >
-      <div className={css.panel} aria-busy={state.status === 'loading'}>
+      <PshHead title={t('panelTitle')} closeLabel={t('close')} onClose={onClose} />
+      <PshBody className={css.modalBody ?? ''}>
+      <div className={`${css.panel} ${modalStaggerClass}`} aria-busy={state.status === 'loading'}>
         {/* Tab：全部 / 变更 */}
         <div className={css.tabs} role="tablist">
           {(['all', 'changes'] as const).map(key => (
@@ -799,6 +806,7 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, t, ...
           </>
         )}
       </div>
-    </Modal>
+      </PshBody>
+    </PopoverShell>
   )
 }
