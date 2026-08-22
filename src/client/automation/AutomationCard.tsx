@@ -1,29 +1,28 @@
 /**
- * automation — 一级卡片：TAB 容器（定时 / 执行任务 / 执行日志）。
+ * automation — 一级卡片：TAB 容器（执行任务 / 执行日志）。
  *
  * 从「自动化」菜单右侧滑出（popover）；窄屏或右侧空间不足回退底部 sheet。
  * 卡片宽度高度随选中 TAB 平滑变化（transition 240ms）：日志页最大。
  * 面板切换淡入 + 内容错落渐显；关闭时整体反向收回。
+ * v3：调度归属到每个任务（执行计划在任务抽屉内编辑），全局「定时」页移除。
  */
 
 import { useState } from 'react'
 import type { CSSProperties } from 'react'
 import { AutomationIcon, CloseIcon } from './icons.tsx'
 import { ensureStyles } from './styles.ts'
-import { LogsPanel, SchedulePanel, TasksPanel } from './panels.tsx'
+import { LogsPanel, TasksPanel } from './panels.tsx'
 import type { T } from './locales.ts'
 import type {
   AutomationCatalog,
   AutomationLogEntry,
-  ScheduleConfig,
 } from './types.ts'
 
 /** TAB 标识。 */
-export type AutomationTab = 'schedule' | 'tasks' | 'logs'
+export type AutomationTab = 'tasks' | 'logs'
 
 /** 每个 TAB 的卡片尺寸（px）：日志需要很大的卡片。 */
 const TAB_SIZES: Record<AutomationTab, { width: number; height: number }> = {
-  schedule: { width: 400, height: 330 },
   tasks: { width: 480, height: 460 },
   logs: { width: 720, height: 560 },
 }
@@ -35,9 +34,11 @@ export interface AutomationCardProps {
   open: boolean
   closing: boolean
   onClose: () => void
+  /** 鼠标进入卡片（hover 模式：取消自动收回）。 */
+  onCardMouseEnter?: () => void
+  /** 鼠标离开卡片（hover 模式：启动自动收回计时）。 */
+  onCardMouseLeave?: () => void
   t: T
-  schedule: ScheduleConfig
-  onScheduleChange: (patch: Partial<ScheduleConfig>) => void
   catalog: AutomationCatalog
   onCatalogChange: (catalog: AutomationCatalog) => void
   logs: AutomationLogEntry[]
@@ -52,11 +53,11 @@ export interface AutomationCardProps {
 
 /** 渲染 TAB 式一级卡片（含遮罩）。 */
 export function AutomationCard({
-  open, closing, onClose, t, schedule, onScheduleChange, catalog, logs, onClearLogs,
+  open, closing, onClose, onCardMouseEnter, onCardMouseLeave, t, catalog, onCatalogChange, logs, onClearLogs,
   onNewTask, onEditTask, anchor,
 }: AutomationCardProps): JSX.Element | null {
   // Hooks 在条件 return 之前（跨渲染数量一致）。
-  const [tab, setTab] = useState<AutomationTab>('schedule')
+  const [tab, setTab] = useState<AutomationTab>('tasks')
 
   if (!open) return null
   ensureStyles()
@@ -80,7 +81,6 @@ export function AutomationCard({
   }
 
   const tabs: Array<{ key: AutomationTab; label: string }> = [
-    { key: 'schedule', label: t('tabSchedule') },
     { key: 'tasks', label: t('tabTasks') },
     { key: 'logs', label: t('tabLogs') },
   ]
@@ -95,6 +95,8 @@ export function AutomationCard({
         style={style}
         role="dialog"
         aria-label={t('cardTitle')}
+        onMouseEnter={onCardMouseEnter}
+        onMouseLeave={onCardMouseLeave}
       >
         <div className="auto-card-head">
           <span className="auto-card-title">
@@ -123,15 +125,18 @@ export function AutomationCard({
         </div>
 
         <div className="auto-card-body">
-          {tab === 'schedule' && (
-            <SchedulePanel t={t} config={schedule} onConfigChange={onScheduleChange} />
-          )}
           {tab === 'tasks' && (
             <TasksPanel
               t={t}
               catalog={catalog}
               onNewTask={onNewTask}
               onEditTask={onEditTask}
+              onToggleTask={(taskId, enabled) => {
+                onCatalogChange({
+                  ...catalog,
+                  tasks: catalog.tasks.map(task => (task.id === taskId ? { ...task, enabled } : task)),
+                })
+              }}
               onDeleteTask={taskId => {
                 onCatalogChange({ ...catalog, tasks: catalog.tasks.filter(task => task.id !== taskId) })
               }}

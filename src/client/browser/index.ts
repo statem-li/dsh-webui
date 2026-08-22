@@ -1,7 +1,7 @@
 /**
  * @dsh-external/dsh-browser — client 半身：
- *  1. 设置页「允许 AI 使用浏览器」+「无头模式」开关。
- *  2. 会话内浏览器常驻按钮（conversation.input.left，记忆开关旁）+ 内嵌画面/时间线面板。
+ *  1. 设置页「允许 AI 使用浏览器」开关（浏览器固定有头运行）。
+ *  2. 会话内浏览器常驻按钮（conversation.input.left，记忆开关旁）+ 右侧滑出预览抽屉。
  *  3. 侧边栏会话列表浏览器标识（DOM 注入）。
  *  4. 浏览器活动轮询 store。
  */

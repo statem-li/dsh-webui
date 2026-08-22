@@ -1,19 +1,14 @@
 /**
- * automation — 类型定义（v2）。
+ * automation — 类型定义（v3）。
  *
- * 「自动化」卡片为 TAB 式：定时 / 执行任务 / 执行日志。
- *  - ScheduleConfig：「定时」页配置（执行日期 + 每日开关）；
- *  - AutomationTask：「执行任务」页的任务（可绑定模型与推理强度，归入分类）；
+ * 「自动化」卡片为 TAB 式：执行任务 / 执行日志。
+ *  - AutomationTask：「执行任务」页的任务——每个任务自带执行计划
+ *    （schedule，借鉴 openhanako：interval/daily/weekly/monthly/once 五模式），
+ *    可绑定模型与推理强度，归入分类，可启用/停用；
  *  - AutomationLogEntry：「执行日志」页的记录（每天有没有执行都有据可查）。
  */
 
-/** 「定时」页配置（localStorage 持久化）。 */
-export interface ScheduleConfig {
-  /** 执行日期（本地时区 yyyy-MM-dd）；空字符串表示未设定。 */
-  date: string
-  /** 是否每天定时执行。 */
-  daily: boolean
-}
+import type { StoredSchedule } from './schedule.ts'
 
 /** 推理强度选项（来自模型目录的 adapter 元数据）。 */
 export interface EffortOption {
@@ -44,6 +39,10 @@ export interface AutomationTask {
   name: string
   /** 归入的分类 id。 */
   categoryId: string
+  /** 执行计划（缺省 = 每天 09:00）。 */
+  schedule?: StoredSchedule
+  /** 启用开关（缺省启用；false = 停用，调度器跳过）。 */
+  enabled?: boolean
   /** 绑定的模型 id（provider 内）。 */
   model?: string
   /** 模型所属 provider 路由 id。 */

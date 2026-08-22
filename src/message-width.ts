@@ -1,5 +1,5 @@
 /**
- * webui — 「我发送的对话宽度」（本人消息气泡宽度）设置。
+ * webui — 「发送对话宽度」（本人消息气泡宽度）设置。
  *
  * - settings 命名空间 `message-width` 持久化（value + unit，默认 525px）
  * - HTTP API：GET /api/webui-message-width → { value, unit }
@@ -45,7 +45,7 @@ function normalize(value: unknown, unit: unknown): { value: number; unit: Messag
   return { value: Math.round(v), unit: u }
 }
 
-/** 注册「我发送的对话宽度」设置：settings 持久化 + HTTP API。 */
+/** 注册「发送对话宽度」设置：settings 持久化 + HTTP API。 */
 export function applyMessageWidth(ctx: PluginContext): void {
   // 命名空间注册在 host 层，settings.yaml 持久化；重复注册会抛错，先探测。
   let scope: any

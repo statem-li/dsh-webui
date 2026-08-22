@@ -8,6 +8,8 @@
 import type { ClientContext, SessionId } from '@deepseek-ai/dsh-client-runtime/client'
 // Type-only: 拉入 modelDirectories 服务的 Context 声明（ui-model-selection 提供）。
 import type { ModelDirectoryState } from '@deepseek-ai/dsh-client-ui-model-selection/client'
+// Type-only: 拉入 theme 服务的 Context 声明（ui-theme 提供；玻璃质感 token 层用）。
+import type {} from '@deepseek-ai/dsh-client-ui-theme/client'
 // Type-only: 拉入 ui-conversation 的 SlotMap 合并声明（槽位注册的类型契约）。
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 // Type-only: 激活 ui-tool 的 SlotMap 合并（conversation.chat.node 的 tool-call key）。
@@ -25,6 +27,7 @@ import { registerAnySearchCard } from './AnySearchCard'
 import { registerMailCard } from './mail/MailCard'
 import { apply as registerZhThinking } from './zh-thinking'
 import { apply as registerTaskDoneSound } from './task-done-sound'
+import { applyDonePill } from './done-pill'
 import { apply as registerUpdater } from './updater'
 import { applyMessageWidthClient } from './message-width'
 import { apply as registerProxy } from './proxy'
@@ -54,6 +57,8 @@ import { applyCtrlEnterNewline } from './ctrl-enter-newline'
 import { applyMessageScreenshot } from './screenshot'
 // 移动端响应式：手机断点识别 + DSH 设置面板单列化等全局覆盖。
 import { injectResponsiveStyles } from './responsive'
+// 壳子窗口控制按钮共存：详情面板头部为右上角「最小化/最大化/关闭」让位。
+import { injectShellTitlebarStyles } from './shell-titlebar'
 // 技能 slash 源（替代内核 ui-skill）：输入 / 先选集合再选技能 + 技能工具行。
 import { apply as applySkillSource } from './skill-source'
 // 提示词优化：对话框供应商左侧的「自动优化提示词」图标（用选中模型优化草稿）。
@@ -61,15 +66,23 @@ import { applyPromptOptimize } from './prompt-optimize'
 // 左侧悬浮侧边栏：热区悬停展开/移出折叠（overlay）+「启动服务时默认折叠」设置行。
 import { applySidebarFloat } from './sidebar-float'
 import { applySidebarFloatSetting } from './sidebar-float-row'
+// 外观主题：玻璃质感（Glassmorphism）——启动恢复 + 通用设置里的外观开关行。
+import { bootGlass, retractGlass } from './glass'
+import { registerGlassSetting } from './glass-row'
 // 自动化：侧边栏「新会话」下方菜单项 + 一级设置卡片 + 二级内容选择抽屉。
 import { applyAutomation } from './automation'
+// 会话切换柔和过渡：内容区淡入浮入 + 侧边栏行选中底色平滑渐变。
+import { applySessionSwitchMotion } from './session-motion'
 const CUSTOM_COMPONENT_SCOPE = 'dsh-better-markdown'
 
-export const inject = ['slots', 'settingsScope', 'connection', 'conversationEvents', 'locale', 'remote', 'sessions', 'workspaces', 'inputTriggers', 'layout']
+export const inject = ['slots', 'settingsScope', 'connection', 'conversationEvents', 'locale', 'remote', 'sessions', 'workspaces', 'inputTriggers', 'layout', 'theme']
 
 export function apply(ctx: ClientContext): void {
   // ---- 移动端响应式：全局覆盖样式（DSH 设置面板单列化等），随插件生命周期清理 ----
   ctx.effect(() => injectResponsiveStyles(), 'webui: responsive styles')
+
+  // ---- 壳子标题栏共存：详情面板头部为右上角窗口按钮让位（同一行对齐）----
+  ctx.effect(() => injectShellTitlebarStyles(), 'webui: shell titlebar styles')
 
   // ---- 我发送的对话宽度：启动即注入覆盖样式并恢复上次宽度（刷新后生效）----
   applyMessageWidthClient(ctx)
@@ -151,6 +164,9 @@ export function apply(ctx: ClientContext): void {
   // ---- dsh-task-done-sound：提示音开关 + 回合结束上报 ---------------------
   registerTaskDoneSound(ctx)
 
+  // ---- 对话完成胶囊：顶部居中胶囊 + 完成记录面板（含对话全文）--------------
+  applyDonePill(ctx)
+
   // ---- dsh-image-gallery：生图画廊（generate_image 结果渲染）----------------
   applyImageGallery(ctx)
 
@@ -203,6 +219,18 @@ export function apply(ctx: ClientContext): void {
   applySidebarFloatSetting(ctx)
   ctx.effect(() => applySidebarFloat(ctx), 'webui: sidebar float')
 
+  // ---- 外观主题：玻璃质感（Glassmorphism）--------------------------------
+  // 启动即按持久化状态恢复（localStorage 同步 + 服务端校正）；插件卸载时
+  // 仅撤销视觉效果，不触碰持久化值。设置行注册进「通用」分区外观区域。
+  registerGlassSetting(ctx)
+  ctx.effect(() => {
+    bootGlass(ctx.theme)
+    return () => { retractGlass(ctx.theme) }
+  }, 'webui: glass appearance')
+
   // ---- 自动化：菜单项（新会话下方）+ 一级设置卡片 + 二级内容选择抽屉 -------
   applyAutomation(ctx)
+
+  // ---- 会话切换柔和过渡：内容区淡入浮入 + 侧边栏行底色平滑 ----------------
+  ctx.effect(() => applySessionSwitchMotion(), 'webui: session switch motion')
 }

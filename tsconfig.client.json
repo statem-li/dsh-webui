@@ -27,6 +27,8 @@
       "@deepseek-ai/dsh-client-runtime": ["D:/AI/deepseek-harness/packages/client/runtime/lib/types/index.d.ts"],
       "@deepseek-ai/dsh-client-schema-form": ["D:/AI/deepseek-harness/packages/client/schema-form/lib/types/index.d.ts"],
       "@deepseek-ai/dsh-client-ui-settings": ["D:/AI/deepseek-harness/packages/client/ui-settings/lib/types/index.d.ts"],
+      "@deepseek-ai/dsh-client-ui-theme/client": ["D:/AI/deepseek-harness/packages/client/ui-theme/lib/types/client/index.d.ts"],
+      "@deepseek-ai/dsh-client-ui-theme": ["D:/AI/deepseek-harness/packages/client/ui-theme/lib/types/index.d.ts"],
       "@deepseek-ai/dsh-client-ui-workspace/client": ["D:/AI/deepseek-harness/packages/client/ui-workspace/lib/types/client/index.d.ts"],
       "@deepseek-ai/dsh-client-ui-input-trigger/client": ["D:/AI/deepseek-harness/packages/client/ui-input-trigger/lib/types/client/index.d.ts"],
       "@deepseek-ai/dsh-client-ui-input-trigger": ["D:/AI/deepseek-harness/packages/client/ui-input-trigger/lib/types/index.d.ts"],

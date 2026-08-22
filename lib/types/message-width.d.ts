@@ -6,6 +6,6 @@ export declare const MESSAGE_WIDTH_DEFAULT: {
     readonly value: 525;
     readonly unit: "px";
 };
-/** 注册「我发送的对话宽度」设置：settings 持久化 + HTTP API。 */
+/** 注册「发送对话宽度」设置：settings 持久化 + HTTP API。 */
 export declare function applyMessageWidth(ctx: PluginContext): void;
 export {};

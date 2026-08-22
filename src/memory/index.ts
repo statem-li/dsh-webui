@@ -145,9 +145,11 @@ async function extractTurn(
   const transcript = transcriptFromEvents(buffer)
   if (transcript.trim() === '') return
   // 工作区自动记忆开关：该工作区关闭自动记忆时跳过提取（手动记忆/注入不受影响）。
+  // cwd 判定失败（hash=null）时同样跳过——无法查开关就宁可不记，避免关了开关
+  // 的项目因 cwd 缺失而把记忆以 global 层漏进来。
   const workspaceHash = workspaceHashOf(agent.session.header)
-  if (workspaceHash !== null && !(await store.isAutoMemoryEnabled(workspaceHash))) {
-    ctx.logger?.debug?.(`[dsh-memory] extract skipped (auto-memory off): ${workspaceHash}`)
+  if (workspaceHash === null || !(await store.isAutoMemoryEnabled(workspaceHash))) {
+    ctx.logger?.debug?.(`[dsh-memory] extract skipped (auto-memory off or no cwd): ${workspaceHash ?? 'null'}`)
     return
   }
   // 频率控制：turn 编号对 extractEveryTurns 取模（turn 从 1 开始）。

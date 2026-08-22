@@ -1,20 +1,70 @@
+/**
+ * UsageTab — 明细 tab（DSH 设置页设计语言）：
+ *  - 「热力」rowCard ×2 并排：本月 / 本年（点击格子下钻当日模型明细）；
+ *  - 「模型消耗排行」rowCard（查询范围内）；
+ *  - 「每日明细」rowCard：DSH 表格风——caption 表头 + 行分隔细线 + mono 数值。
+ * 查询范围由 Workbench 全局持有，本 tab 只消费区间。
+ */
 import { useEffect, useState } from 'react'
 import { usageApi } from './api'
 import { sumTokens, type UsageDay } from './aggregate'
+import { filterDays, type DateRange } from './range'
 import { formatHitRate, formatUnits } from './format'
-import { providerPalette } from './theme'
-import { AreaChart, type SeriesPoint } from './charts/AreaChart'
+import { RankBars } from './charts/RankBars'
 import { Heatmap } from './charts/Heatmap'
 import { ErrorCard } from './primitives/ErrorCard'
 import { useIsMobile } from '../../responsive'
 
-type ViewMode = 'day' | 'month' | 'year'
+export interface UsageTabProps {
+  range: DateRange
+  rangeLabel: string
+  refreshTick?: number
+}
 
-export interface UsageTabProps { refreshTick?: number }
+const MONO = 'ui-monospace, SFMono-Regular, Menlo, monospace'
 
-export function UsageTab({ refreshTick }: UsageTabProps): JSX.Element {
+/** `.rowCard`：描边行卡片。 */
+const rowCard: React.CSSProperties = {
+  border: '1px solid var(--dsw-alias-border-l2)',
+  borderRadius: 12,
+  padding: '12px 14px',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 12,
+  minWidth: 0,
+}
+
+/** `.rowHead`：卡头。 */
+function CardHead({ name, meta }: { name: string; meta?: string }): JSX.Element {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+      <span style={{ fontSize: 14, lineHeight: '22px', fontWeight: 500, color: 'var(--dsw-alias-label-primary)' }}>{name}</span>
+      {meta !== undefined && <span style={{ marginLeft: 'auto', fontSize: 12, lineHeight: '18px', color: 'var(--dsw-alias-label-tertiary)' }}>{meta}</span>}
+    </div>
+  )
+}
+
+/** DSH 表格单元格通用样式。 */
+const thStyle: React.CSSProperties = {
+  textAlign: 'left',
+  padding: '6px 8px',
+  fontSize: 12,
+  lineHeight: '18px',
+  fontWeight: 500,
+  color: 'var(--dsw-alias-label-secondary)',
+  borderBottom: '1px solid var(--dsw-alias-border-l2)',
+  whiteSpace: 'nowrap',
+}
+const tdStyle: React.CSSProperties = {
+  padding: '6px 8px',
+  fontSize: 13,
+  lineHeight: '20px',
+  color: 'var(--dsw-alias-label-primary)',
+}
+const tdMono: React.CSSProperties = { ...tdStyle, fontFamily: MONO }
+
+export function UsageTab({ range, rangeLabel, refreshTick }: UsageTabProps): JSX.Element {
   const [usage, setUsage] = useState<UsageDay[] | null>(null)
-  const [mode, setMode] = useState<ViewMode>('day')
   const [selectedDay, setSelectedDay] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [retryTick, setRetryTick] = useState(0)
@@ -34,36 +84,24 @@ export function UsageTab({ refreshTick }: UsageTabProps): JSX.Element {
   if (error) {
     return <ErrorCard message={error} onRetry={() => setRetryTick(t => t + 1)} />
   }
-  if (usage === null) return <div style={{ color: 'var(--dsw-alias-label-tertiary)' }}>加载中…</div>
+  if (usage === null) return <div style={{ padding: '24px 0', textAlign: 'center', fontSize: 13, color: 'var(--dsw-alias-label-tertiary)' }}>加载中…</div>
 
   const now = new Date()
   const year = now.getFullYear()
   const month = now.getMonth() + 1
-  const todayStr = `${year}-${String(month).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
-  // 趋势数据与视图一致：日=近 30 天、月=近 12 月（按 YYYY-MM 聚合）、年=按年聚合。
-  const sorted = [...usage].sort((a, b) => a.date.localeCompare(b.date))
-  const trend = (() => {
-    if (mode === 'day') {
-      return sorted.slice(-30).map(d => ({ label: d.date, input: d.inputTokens, output: d.outputTokens, cache: (d.cacheReadTokens ?? 0) + (d.cacheWriteTokens ?? 0) }))
-    }
-    const group = (len: number): SeriesPoint[] => {
-      const map = new Map<string, UsageDay[]>()
-      for (const d of sorted) {
-        const key = d.date.slice(0, len)
-        const arr = map.get(key)
-        if (arr) arr.push(d)
-        else map.set(key, [d])
-      }
-      return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([label, days]) => {
-        const s = sumTokens(days)
-        return { label, input: s.input, output: s.output, cache: s.cache }
-      })
-    }
-    return mode === 'month' ? group(7).slice(-12) : group(4)
-  })()
   const monthPrefix = `${year}-${String(month).padStart(2, '0')}`
-  const monthDays = usage.filter(d => d.date.startsWith(monthPrefix))
+
+  // 查询范围内数据（排行与每日明细表消费）
+  const filtered = filterDays(usage, range)
+  const filteredSorted = [...filtered].sort((a, b) => b.date.localeCompare(a.date))
+
+  // 模型排行（范围内）
+  const models = new Map<string, number>()
+  for (const d of filtered) for (const m of d.models ?? []) models.set(m.model, (models.get(m.model) ?? 0) + m.tokens)
+  const modelRank = [...models.entries()].map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value)
+
   // 月视图热力：本月天数（按当前月实际天数补齐空档）
+  const monthDays = usage.filter(d => d.date.startsWith(monthPrefix))
   const daysInMonth = new Date(year, month, 0).getDate()
   const monthCells = Array.from({ length: daysInMonth }, (_, i) => {
     const dateStr = `${monthPrefix}-${String(i + 1).padStart(2, '0')}`
@@ -76,6 +114,7 @@ export function UsageTab({ refreshTick }: UsageTabProps): JSX.Element {
       hitRate: hit?.cacheHitRate,
     }
   })
+  // 年度热力：2 行 × 6 列（1-6 月 / 7-12 月），格子尺寸与月热力协调
   const yearCells = Array.from({ length: 12 }, (_, i) => {
     const key = `${year}-${String(i + 1).padStart(2, '0')}`
     const days = usage.filter(d => d.date.startsWith(key))
@@ -88,64 +127,66 @@ export function UsageTab({ refreshTick }: UsageTabProps): JSX.Element {
       hitRate: days.length > 0 ? days.reduce((acc, d) => acc + (d.cacheHitRate ?? 0), 0) / days.length : undefined,
     }
   })
-  const models = new Map<string, number>()
-  for (const d of usage) for (const m of d.models ?? []) models.set(m.model, (models.get(m.model) ?? 0) + m.tokens)
-  const modelRank = [...models.entries()].map(([model, tokens]) => ({ model, tokens })).sort((a, b) => b.tokens - a.tokens)
-  const maxModel = modelRank[0]?.tokens ?? 1
-  const palette = providerPalette()
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-        {(['day', 'month', 'year'] as ViewMode[]).map(m => (
-          <button key={m} type="button" onClick={() => setMode(m)}
-            style={{ padding: '4px 12px', fontSize: 12, borderRadius: 6, border: '1px solid var(--dsw-alias-border-l1)', cursor: 'pointer',
-              background: mode === m ? 'var(--dsw-alias-button-ghost-active-fill)' : 'transparent',
-              color: mode === m ? 'var(--dsw-alias-label-primary)' : 'var(--dsw-alias-label-secondary)' }}>
-            {m === 'day' ? '日' : m === 'month' ? '月' : '年'}
-          </button>
-        ))}
-        <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--dsw-alias-label-tertiary)' }}>共 {usage.length} 天 · 截至 {todayStr}</span>
-      </div>
-      <div style={{ border: '1px solid var(--dsw-alias-border-l1)', borderRadius: 12, background: 'var(--dsw-alias-bg-layer-2)', padding: 16 }}>
-        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12, color: 'var(--dsw-alias-label-primary)' }}>{mode === 'day' ? '近 30 天' : mode === 'month' ? '近 12 月' : '年度'}用量趋势</div>
-        <AreaChart data={trend} />
-      </div>
-      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', flexDirection: isMobile ? 'column' : undefined }}>
-        <div style={{ flex: isMobile ? '1 1 auto' : '1 1 45%', border: '1px solid var(--dsw-alias-border-l1)', borderRadius: 12, background: 'var(--dsw-alias-bg-layer-2)', padding: 16, minWidth: 0, overflow: 'hidden' }}>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12, color: 'var(--dsw-alias-label-primary)' }}>{year} 年 {month} 月热力</div>
-          <div style={{ overflowX: 'auto' }}><Heatmap cells={monthCells} onSelect={c => setSelectedDay(c.label)} /></div>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {/* 热力行：grid 强制两列（flex wrap 会被年热力的宽内容撑到换行） */}
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 8, alignItems: 'start' }}>
+        <div style={rowCard}>
+          <CardHead name={`${year} 年 ${month} 月热力`} meta="点击格子看当日模型明细" />
+          <Heatmap cells={monthCells} onSelect={c => setSelectedDay(c.label)} />
         </div>
-        <div style={{ flex: isMobile ? '1 1 auto' : '1 1 45%', border: '1px solid var(--dsw-alias-border-l1)', borderRadius: 12, background: 'var(--dsw-alias-bg-layer-2)', padding: 16, minWidth: 0, overflow: 'hidden' }}>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12, color: 'var(--dsw-alias-label-primary)' }}>{year} 年度热力</div>
-          <div style={{ overflowX: 'auto' }}><Heatmap cells={yearCells} rows={1} /></div>
+        <div style={rowCard}>
+          <CardHead name={`${year} 年度热力`} meta="1-6 月 / 7-12 月" />
+          <Heatmap cells={yearCells} rows={2} />
         </div>
       </div>
-      <div style={{ border: '1px solid var(--dsw-alias-border-l1)', borderRadius: 12, background: 'var(--dsw-alias-bg-layer-2)', padding: 16 }}>
-        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12, color: 'var(--dsw-alias-label-primary)' }}>模型消耗排行</div>
-        {modelRank.slice(0, 10).map((row, i) => {
-          return (
-            <div key={row.model} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0' }}>
-              <span style={{ width: 10, height: 10, borderRadius: 2, background: palette[i % palette.length], flex: 'none' }} />
-              <span style={{ width: isMobile ? 110 : 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--dsw-alias-label-primary)', fontSize: 12 }} title={row.model}>{row.model}</span>
-              <div style={{ flex: 1, height: 8, borderRadius: 4, background: 'var(--dsw-alias-border-l2)', overflow: 'hidden' }}>
-                <div style={{ height: '100%', width: `${(row.tokens / maxModel) * 100}%`, background: palette[i % palette.length], borderRadius: 4 }} />
-              </div>
-              <span style={{ color: 'var(--dsw-alias-label-secondary)', fontSize: 12, fontFamily: 'ui-monospace, monospace' }}>{formatUnits(row.tokens)}</span>
-            </div>
-          )
-        })}
-        {modelRank.length > 10 && <div style={{ fontSize: 12, color: 'var(--dsw-alias-label-tertiary)' }}>其他 {modelRank.length - 10} 个模型</div>}
-      </div>
+
+      {/* 点热力格子：当日模型明细 */}
       {selectedDay !== null && (
-        <div style={{ border: '1px solid var(--dsw-alias-border-l1)', borderRadius: 12, background: 'var(--dsw-alias-bg-layer-2)', padding: 16 }}>
-          <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
-            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--dsw-alias-label-primary)' }}>{selectedDay} 明细</div>
-            <button type="button" onClick={() => setSelectedDay(null)} style={{ marginLeft: 'auto', border: 'none', background: 'transparent', color: 'var(--dsw-alias-label-tertiary)', cursor: 'pointer' }}>✕</button>
-          </div>
+        <div style={rowCard}>
+          <CardHead name={`${selectedDay} 模型明细`} />
           <DayDetailTable day={usage.find(d => d.date === selectedDay)} />
         </div>
       )}
+
+      <div style={rowCard}>
+        <CardHead name="模型消耗排行" meta={`${rangeLabel} · Top ${Math.min(10, modelRank.length)}`} />
+        {modelRank.length === 0
+          ? <div style={{ border: '1px dashed var(--dsw-alias-border-l3)', borderRadius: 8, padding: 12, textAlign: 'center', fontSize: 12, lineHeight: '18px', color: 'var(--dsw-alias-label-tertiary)' }}>该范围暂无用量</div>
+          : <RankBars rows={modelRank} nameWidth={220} />}
+      </div>
+
+      <div style={rowCard}>
+        <CardHead name="每日明细" meta={`${rangeLabel} · ${filteredSorted.length} 天`} />
+        {filteredSorted.length === 0 ? (
+          <div style={{ border: '1px dashed var(--dsw-alias-border-l3)', borderRadius: 8, padding: 12, textAlign: 'center', fontSize: 12, lineHeight: '18px', color: 'var(--dsw-alias-label-tertiary)' }}>该范围暂无用量</div>
+        ) : (
+          <div style={{ maxHeight: 320, overflowY: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead style={{ position: 'sticky', top: 0, background: 'var(--dsw-alias-bg-layer-2)', zIndex: 1 }}>
+                <tr>{['日期', '输入', '输出', '缓存', '合计', '命中率'].map(h => <th key={h} style={thStyle}>{h}</th>)}</tr>
+              </thead>
+              <tbody>
+                {filteredSorted.map(d => {
+                  const s = sumTokens([d])
+                  return (
+                    <tr key={d.date} style={{ cursor: 'pointer', borderBottom: '1px solid var(--dsw-alias-border-l1)' }}
+                      onClick={() => setSelectedDay(d.date)}>
+                      <td style={tdStyle}>{d.date}</td>
+                      <td style={tdMono}>{formatUnits(s.input)}</td>
+                      <td style={tdMono}>{formatUnits(s.output)}</td>
+                      <td style={tdMono}>{formatUnits(s.cache)}</td>
+                      <td style={tdMono}>{formatUnits(s.total)}</td>
+                      <td style={tdStyle}>{formatHitRate(d.cacheHitRate)}</td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   )
 }
@@ -154,17 +195,17 @@ function DayDetailTable({ day }: { day?: UsageDay }): JSX.Element | null {
   if (day === undefined) return null
   const rows = [...(day.models ?? [])].sort((a, b) => b.tokens - a.tokens)
   return (
-    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-      <thead><tr>{['模型', '输入', '输出', '缓存', '合计', '命中率'].map(h => <th key={h} style={{ textAlign: 'left', padding: '6px 8px', color: 'var(--dsw-alias-label-secondary)', borderBottom: '1px solid var(--dsw-alias-border-l1)' }}>{h}</th>)}</tr></thead>
+    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+      <thead><tr>{['模型', '输入', '输出', '缓存', '合计', '命中率'].map(h => <th key={h} style={thStyle}>{h}</th>)}</tr></thead>
       <tbody>
         {rows.map(r => (
-          <tr key={r.model} style={{ color: 'var(--dsw-alias-label-primary)' }}>
-            <td style={{ padding: '6px 8px' }}>{r.model}</td>
-            <td style={{ padding: '6px 8px', fontFamily: 'ui-monospace, monospace' }}>{formatUnits(r.inputTokens)}</td>
-            <td style={{ padding: '6px 8px', fontFamily: 'ui-monospace, monospace' }}>{formatUnits(r.outputTokens)}</td>
-            <td style={{ padding: '6px 8px', fontFamily: 'ui-monospace, monospace' }}>{formatUnits(r.cacheReadTokens)}</td>
-            <td style={{ padding: '6px 8px', fontFamily: 'ui-monospace, monospace' }}>{formatUnits(r.tokens)}</td>
-            <td style={{ padding: '6px 8px' }}>{formatHitRate(r.cacheHitRate)}</td>
+          <tr key={r.model} style={{ borderBottom: '1px solid var(--dsw-alias-border-l1)' }}>
+            <td style={tdStyle}>{r.model}</td>
+            <td style={tdMono}>{formatUnits(r.inputTokens)}</td>
+            <td style={tdMono}>{formatUnits(r.outputTokens)}</td>
+            <td style={tdMono}>{formatUnits(r.cacheReadTokens)}</td>
+            <td style={tdMono}>{formatUnits(r.tokens)}</td>
+            <td style={tdStyle}>{formatHitRate(r.cacheHitRate)}</td>
           </tr>
         ))}
       </tbody>

@@ -1,11 +1,11 @@
 /**
  * dsh-memory 侧边栏导航行入口（「自动化」菜单下方，sidebar-nav memory 槽位）：
  * 图标用「大脑/记忆」线性 SVG（无 emoji），rail 态只留图标；右上角 badge 显示
- * 当日未读变更数。面板卡片以按钮为锚点从右侧滑出（automation 同款 popover）。
+ * 当日未读变更数。面板卡片以按钮为锚点从右侧滑出（automation 同款 popover）；
+ * 有未读变更时打开直达「变更」Tab。
  */
 
 import { useMemo, useState } from 'react'
-import { Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import { createMemoryApi, type MemoryApi } from './api.js'
 import { MemoryPanel, BrainIcon, type MemoryTab } from './Panel.tsx'
 import { useUnreadChanges } from './Notify.tsx'
@@ -40,22 +40,20 @@ export function MemoryNavApp(): JSX.Element | null {
 
   return (
     <NavPortal name="memory">
-      <Tooltip label={t('entry')} side="right" delayMs={500} disabled={!rail}>
-        <NavButton
-          icon={<BrainIcon size={rail ? 18 : 16} />}
-          label={t('entry')}
-          rail={rail}
-          expanded={open}
-          badge={unread.count}
-          badgeTitle={t('unreadChanges', { n: unread.count })}
-          onClick={e => {
-            e.stopPropagation()
-            const rect = e.currentTarget.getBoundingClientRect()
-            setAnchor({ left: rect.right + 8, top: rect.top - 6 })
-            openPanel(unread.count > 0 ? 'changes' : 'all')
-          }}
-        />
-      </Tooltip>
+      <NavButton
+        icon={<BrainIcon size={rail ? 18 : 16} />}
+        label={t('entry')}
+        rail={rail}
+        expanded={open}
+        badge={unread.count}
+        badgeTitle={t('unreadChanges', { n: unread.count })}
+        onClick={e => {
+          e.stopPropagation()
+          const rect = e.currentTarget.getBoundingClientRect()
+          setAnchor({ left: rect.right + 8, top: rect.top - 6 })
+          openPanel(unread.count > 0 ? 'changes' : 'all')
+        }}
+      />
       <MemoryPanel
         open={open}
         closing={closing}

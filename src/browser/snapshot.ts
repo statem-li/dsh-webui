@@ -101,7 +101,8 @@ const COLLECT_JS = `(function () {
   return { url: location.href, title: document.title, refs: refs, bodyText: bodyText, truncated: truncated };
 })()`
 
-// 按 ref 定位元素并滚动到可视区中央，返回其视口中心坐标（用于真实鼠标点击/悬停）
+// 按 ref 定位元素并滚动到可视区中央，返回其视口中心坐标与判别信息
+// （tag/text + 视口宽高，供生成「点击左下角「设置」」这类人话描述）
 const GET_RECT_JS = `(function (ref) {
   var el = document.querySelector('[data-dsh-ref="' + ref + '"]');
   if (!el) return { ok: false, error: 'ref ' + ref + ' 不存在（页面可能已变化，请重新 snapshot）' };
@@ -111,7 +112,12 @@ const GET_RECT_JS = `(function (ref) {
   if (r.width === 0 || r.height === 0) return { ok: false, error: 'ref ' + ref + ' 元素不可见（宽高为 0）' };
   var cx = Math.round(r.left + r.width / 2);
   var cy = Math.round(r.top + r.height / 2);
-  return { ok: true, x: cx, y: cy, tag: el.tagName.toLowerCase(), text: (el.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 40) };
+  return {
+    ok: true, x: cx, y: cy,
+    tag: el.tagName.toLowerCase(),
+    text: (el.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 40),
+    vw: window.innerWidth, vh: window.innerHeight
+  };
 })`
 
 // 聚焦输入控件并选中已有内容（便于 insertText 整体替换）
@@ -237,18 +243,44 @@ export async function waitForSettle(
   }
 }
 
-export async function clickRef(session: CdpSession, ref: number): Promise<void> {
+/** 点击/悬停目标的判别信息（供生成人话操作描述）。 */
+export interface ClickTarget {
+  x: number
+  y: number
+  tag: string
+  text: string
+  vw: number
+  vh: number
+}
+
+export async function clickRef(session: CdpSession, ref: number): Promise<ClickTarget> {
   const rect = await evaluateJson(session, `${GET_RECT_JS}(${Number(ref)})`)
   if (!rect) throw new Error('定位元素失败')
   if (rect.ok === false) throw new Error(String(rect.error || '点击失败'))
   await dispatchMouseClick(session, rect.x, rect.y)
+  return {
+    x: Number(rect.x) || 0,
+    y: Number(rect.y) || 0,
+    tag: String(rect.tag || ''),
+    text: String(rect.text || ''),
+    vw: Number(rect.vw) || 0,
+    vh: Number(rect.vh) || 0,
+  }
 }
 
-export async function hoverRef(session: CdpSession, ref: number): Promise<void> {
+export async function hoverRef(session: CdpSession, ref: number): Promise<ClickTarget> {
   const rect = await evaluateJson(session, `${GET_RECT_JS}(${Number(ref)})`)
   if (!rect) throw new Error('定位元素失败')
   if (rect.ok === false) throw new Error(String(rect.error || '悬停失败'))
   await dispatchMouseMove(session, rect.x, rect.y)
+  return {
+    x: Number(rect.x) || 0,
+    y: Number(rect.y) || 0,
+    tag: String(rect.tag || ''),
+    text: String(rect.text || ''),
+    vw: Number(rect.vw) || 0,
+    vh: Number(rect.vh) || 0,
+  }
 }
 
 export async function typeRef(

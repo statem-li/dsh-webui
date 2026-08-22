@@ -1,30 +1,40 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { OverviewTab } from './OverviewTab'
+import { TrendTab } from './TrendTab'
 import { UsageTab } from './UsageTab'
 import { AccountsTab } from './AccountsTab'
+import { RangePicker } from './primitives/RangePicker'
+import { resolveRange, type DateRange, type RangePreset } from './range'
 import { modalStaggerClass } from '../../modal-animation'
-import { PopoverShell, type PopoverAnchor } from '../../popover-shell'
+import { PopoverShell, type PopoverAnchor, type PopoverSize } from '../../popover-shell'
 
-export type TabKey = 'overview' | 'usage' | 'accounts'
+export type TabKey = 'trend' | 'detail' | 'accounts'
 
 const NAV: Array<{ key: TabKey; label: string }> = [
-  { key: 'overview', label: '总览' },
-  { key: 'usage', label: '用量' },
+  { key: 'trend', label: '趋势' },
+  { key: 'detail', label: '明细' },
   { key: 'accounts', label: '余额/配额' },
 ]
 
+/** 每个 tab 的理想卡片尺寸：切换时 width/height 以 240ms 平滑过渡（automation 同款）。 */
+const TAB_SIZES: Record<TabKey, PopoverSize> = {
+  trend: { width: 1120, height: 780 },
+  detail: { width: 1000, height: 720 },
+  accounts: { width: 820, height: 600 },
+}
+
 const css = {
   topbar: { height: 48, display: 'flex', alignItems: 'center', gap: 12, padding: '0 16px', borderBottom: '1px solid var(--dsw-alias-border-l1)', flex: 'none' } as React.CSSProperties,
-  tabNav: { flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, padding: '0 12px', height: 44, borderBottom: '1px solid var(--dsw-alias-border-l1)', background: 'var(--dsw-alias-bg-base)' } as React.CSSProperties,
+  tabNav: { flex: 'none', display: 'flex', alignItems: 'center', gap: 12, padding: '8px 16px', borderBottom: '1px solid var(--dsw-alias-border-l1)', background: 'var(--dsw-alias-bg-base)', flexWrap: 'wrap' } as React.CSSProperties,
+  tabGroup: { display: 'flex', alignItems: 'center', gap: 4 } as React.CSSProperties,
+  // dense 胶囊（h28 r14 12px），对齐 ModelsSection 行内控件规格；选中走品牌色。
   tabItem: (active: boolean): React.CSSProperties => ({
-    height: 32, display: 'flex', alignItems: 'center', padding: '0 14px', borderRadius: 8, cursor: 'pointer',
-    border: 'none',
-    // 选中态用 ghost 按钮选中填充(浅色 bluish-100 / 深色 bluish-750),禁用不存在的 --dsw-alias-raised。
+    height: 28, display: 'flex', alignItems: 'center', padding: '0 12px', borderRadius: 14, cursor: 'pointer',
+    border: `1px solid ${active ? 'var(--dsw-alias-state-business-primary)' : 'var(--dsw-alias-border-l2)'}`,
     background: active ? 'var(--dsw-alias-button-ghost-active-fill)' : 'transparent',
-    color: active ? 'var(--dsw-alias-label-primary)' : 'var(--dsw-alias-label-secondary)',
-    fontSize: 13, fontWeight: active ? 600 : 400,
+    color: active ? 'var(--dsw-alias-state-business-primary)' : 'var(--dsw-alias-label-secondary)',
+    fontSize: 12, lineHeight: '18px', fontWeight: active ? 500 : 400,
   }),
-  content: { flex: 1, overflowY: 'auto', padding: '20px 24px 40px', maxWidth: 1200, margin: '0 auto', width: '100%', boxSizing: 'border-box' } as React.CSSProperties,
+  content: { flex: 1, overflowY: 'auto', padding: '14px 16px 32px', width: '100%', boxSizing: 'border-box' } as React.CSSProperties,
   title: { fontSize: 15, fontWeight: 600, color: 'var(--dsw-alias-label-primary)' } as React.CSSProperties,
   close: { marginLeft: 'auto', width: 28, height: 28, borderRadius: 6, border: 'none', background: 'transparent', color: 'var(--dsw-alias-label-secondary)', cursor: 'pointer', fontSize: 16 } as React.CSSProperties,
 }
@@ -35,12 +45,20 @@ export interface WorkbenchProps {
   closing?: boolean
   /** 入口锚点（按钮右缘+顶缘视口坐标）：卡片贴其右侧滑出；null 回退底部 sheet。 */
   anchor?: PopoverAnchor | null
+  /** 鼠标进入卡片（hover 模式：取消自动收回）。 */
+  onCardMouseEnter?: () => void
+  /** 鼠标离开卡片（hover 模式：启动自动收回计时）。 */
+  onCardMouseLeave?: () => void
   renderTab?: (tab: TabKey) => ReactNode
 }
 
-export function Workbench({ onClose, closing = false, anchor = null, renderTab }: WorkbenchProps): JSX.Element {
-  const [tab, setTab] = useState<TabKey>('overview')
+export function Workbench({ onClose, closing = false, anchor = null, onCardMouseEnter, onCardMouseLeave, renderTab }: WorkbenchProps): JSX.Element {
+  const [tab, setTab] = useState<TabKey>('trend')
+  const [preset, setPreset] = useState<RangePreset>('today')
+  const [custom, setCustom] = useState<DateRange | null>(null)
   const close = onClose ?? (() => {})
+
+  const { range, label: rangeLabel } = resolveRange(preset, custom)
 
   // prefers-reduced-motion：检测并注入 CSS 变量（已知限制：图表内联 transition 未逐处改造，见任务报告）
   useEffect(() => {
@@ -63,22 +81,34 @@ export function Workbench({ onClose, closing = false, anchor = null, renderTab }
   }, [])
 
   const tabContent: Record<TabKey, ReactNode> = {
-    overview: <OverviewTab onJumpAccounts={() => setTab('accounts')} />,
-    usage: <UsageTab />,
+    trend: <TrendTab range={range} rangeLabel={rangeLabel} onJumpAccounts={() => setTab('accounts')} />,
+    detail: <UsageTab range={range} rangeLabel={rangeLabel} />,
     accounts: <AccountsTab />,
   }
   return (
-    <PopoverShell closing={closing} onClose={close} anchor={anchor} width={1080} ariaLabel="用量工作台">
+    <PopoverShell closing={closing} onClose={close} anchor={anchor} size={TAB_SIZES[tab]} onCardMouseEnter={onCardMouseEnter} onCardMouseLeave={onCardMouseLeave} ariaLabel="用量工作台">
       <div style={css.topbar}>
         <span style={css.title}>用量工作台</span>
         <button type="button" style={css.close} aria-label="关闭" onClick={close}>✕</button>
       </div>
       <div style={css.tabNav}>
-        {NAV.map(item => (
-          <button key={item.key} type="button" style={css.tabItem(tab === item.key)} onClick={() => setTab(item.key)}>
-            {item.label}
-          </button>
-        ))}
+        <div style={css.tabGroup}>
+          {NAV.map(item => (
+            <button key={item.key} type="button" style={css.tabItem(tab === item.key)} onClick={() => setTab(item.key)}>
+              {item.label}
+            </button>
+          ))}
+        </div>
+        {tab !== 'accounts' && (
+          <div style={{ marginLeft: 'auto' }}>
+            <RangePicker
+              preset={preset}
+              custom={custom}
+              onChangePreset={setPreset}
+              onChangeCustom={setCustom}
+            />
+          </div>
+        )}
       </div>
       <main style={css.content} className={modalStaggerClass}>
         {renderTab ? renderTab(tab) : tabContent[tab]}

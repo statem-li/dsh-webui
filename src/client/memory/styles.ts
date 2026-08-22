@@ -1,6 +1,12 @@
 /**
  * dsh-memory — 样式（运行时注入 <style>，卸载时由 loader 清理）。
- * 类名前缀 dsh-memory-；颜色走 DSH 主题令牌（--dsw-alias-*）。
+ * 类名前缀 dsh-memory-；规格对齐官方 ui-settings-models 的 ModelsSection.module.css。
+ *
+ * 布局：主从式（master-detail）——
+ *  - 左列 listPane：紧凑条目行（标题 + 摘要 + 时间），选中态 ghost 填充 + 品牌色左条；
+ *  - 右侧 detailPane：完整 Markdown 详情（标题 17/600、meta 行、正文、标签行），
+ *    编辑/移动/新建以表单态占据同一区域；
+ *  - 变更 tab 为全宽列表（描边卡 + rowTag 式徽章 + 前后对比双列）。
  */
 
 export const css = {
@@ -19,25 +25,19 @@ export const css = {
   tagSelect: 'dsh-memory-tag-select',
   sectionTitle: 'dsh-memory-section-title',
   cardList: 'dsh-memory-card-list',
-  card: 'dsh-memory-card',
-  cardPinned: 'dsh-memory-card-pinned',
-  cardMain: 'dsh-memory-card-main',
-  cardHead: 'dsh-memory-card-head',
   cardContent: 'dsh-memory-card-content',
-  cardFoot: 'dsh-memory-card-foot',
   cardMeta: 'dsh-memory-card-meta',
-  chips: 'dsh-memory-chips',
   chip: 'dsh-memory-chip',
   chipActive: 'dsh-memory-chip-active',
   cardActions: 'dsh-memory-card-actions',
   iconAction: 'dsh-memory-icon-action',
+  iconActionDanger: 'dsh-memory-icon-action-danger',
   pinMark: 'dsh-memory-pin-mark',
   empty: 'dsh-memory-empty',
   changeRow: 'dsh-memory-change-row',
+  changeMain: 'dsh-memory-change-main',
   changeBadge: 'dsh-memory-change-badge',
   changeBadgeDelete: 'dsh-memory-change-badge-delete',
-  changeSummary: 'dsh-memory-change-summary',
-  changeActions: 'dsh-memory-change-actions',
   changeOld: 'dsh-memory-change-old',
   changeNew: 'dsh-memory-change-new',
   changeDiff: 'dsh-memory-change-diff',
@@ -47,89 +47,165 @@ export const css = {
   inlineInput: 'dsh-memory-inline-input',
   inlineTextarea: 'dsh-memory-inline-textarea',
   editButtons: 'dsh-memory-edit-buttons',
-  addRow: 'dsh-memory-add-row',
-  addButton: 'dsh-memory-add-button',
-  addForm: 'dsh-memory-add-form',
   addMeta: 'dsh-memory-add-meta',
   check: 'dsh-memory-check',
+  switch: 'dsh-memory-switch',
+  switchText: 'dsh-memory-switch-text',
+  switchLine: 'dsh-memory-switch-line',
+  batchCount: 'dsh-memory-batch-count',
   toggle: 'dsh-memory-toggle',
   toggleOn: 'dsh-memory-toggle-on',
   toggleOff: 'dsh-memory-toggle-off',
   error: 'dsh-memory-error',
   visuallyHidden: 'dsh-memory-visually-hidden',
+  // 主从布局
+  split: 'dsh-memory-split',
+  listPane: 'dsh-memory-list-pane',
+  listSection: 'dsh-memory-list-section',
+  item: 'dsh-memory-item',
+  itemSelected: 'dsh-memory-item-selected',
+  itemBody: 'dsh-memory-item-body',
+  itemCheck: 'dsh-memory-item-check',
+  itemTitle: 'dsh-memory-item-title',
+  itemTitleText: 'dsh-memory-item-title-text',
+  itemSnippet: 'dsh-memory-item-snippet',
+  itemTime: 'dsh-memory-item-time',
+  detailPane: 'dsh-memory-detail-pane',
+  detailHead: 'dsh-memory-detail-head',
+  detailTitle: 'dsh-memory-detail-title',
+  detailMeta: 'dsh-memory-detail-meta',
+  detailBody: 'dsh-memory-detail-body',
+  detailTags: 'dsh-memory-detail-tags',
+  detailForm: 'dsh-memory-detail-form',
 } as const
 
 const STYLE_ID = 'dsh-memory-styles'
 
 const SHEET = `
+/* ── 面板骨架 ── */
 .dsh-memory-modal-body{overflow:hidden;display:flex;flex-direction:column}
+.dsh-memory-panel{flex:1;min-height:0;display:flex;flex-direction:column;gap:12px;overflow:hidden;padding:2px 2px 2px;box-sizing:border-box}
+
+/* ── Tab：ghost 按钮组（与用量工作台 tabNav 同款）── */
+.dsh-memory-tabs{flex:none;display:flex;align-items:center;gap:4px}
+.dsh-memory-tab{appearance:none;border:none;background:transparent;border-radius:8px;height:32px;padding:0 14px;font-size:13px;line-height:22px;color:var(--dsw-alias-label-secondary,#999);cursor:pointer;font-family:inherit}
+.dsh-memory-tab:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.06));color:var(--dsw-alias-label-primary,#eee)}
+.dsh-memory-tab-active,.dsh-memory-tab-active:hover{background:var(--dsw-alias-button-ghost-active-fill,rgba(255,255,255,.08));color:var(--dsw-alias-label-primary,#eee);font-weight:600}
+
+/* ── 区块标题（caption：12/18/500）── */
+.dsh-memory-section-title{margin:2px 2px 0;font-size:12px;font-weight:500;line-height:18px;color:var(--dsw-alias-label-secondary,#bbb)}
+
+/* ── 项目筛选：密集胶囊（h28 r14，border-l2）── */
+.dsh-memory-top-row{flex:none;display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.dsh-memory-project-chips{display:flex;flex-wrap:wrap;gap:6px;min-width:0}
+.dsh-memory-project-chip{flex:none;display:inline-flex;align-items:center;gap:4px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;appearance:none;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.12));border-radius:14px;height:28px;padding:0 10px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-primary,#eee);background:transparent;cursor:pointer;font-family:inherit;box-sizing:border-box}
+.dsh-memory-project-chip:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.06))}
+.dsh-memory-project-chip-active,.dsh-memory-project-chip-active:hover{border-color:var(--dsw-alias-state-business-primary,#4a9eff);color:var(--dsw-alias-state-business-primary,#4a9eff);background:var(--dsw-alias-button-ghost-active-fill,rgba(255,255,255,.06))}
+
+/* ── 搜索行 ── */
+.dsh-memory-search-row{flex:none;display:flex;align-items:center;gap:6px}
+.dsh-memory-search-input{flex:1;min-width:0;height:32px;box-sizing:border-box;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.12));border-radius:8px;padding:0 10px;font-size:14px;line-height:22px;font-family:inherit;color:var(--dsw-alias-label-primary,#eee);background:var(--dsw-alias-bg-layer-1,#1c1f26)}
+.dsh-memory-search-input::placeholder{color:var(--dsw-alias-label-dimmed,#666)}
+.dsh-memory-tag-select{height:32px;box-sizing:border-box;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.12));border-radius:8px;padding:0 32px 0 10px;font-size:14px;line-height:22px;font-family:inherit;color:var(--dsw-alias-label-primary,#eee);background-color:var(--dsw-alias-bg-layer-1,#1c1f26);background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none'%3E%3Cpath d='M3 4.5L6 7.5L9 4.5' stroke='%2381858C' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;background-size:12px 12px;appearance:none;max-width:240px;cursor:pointer}
+
+/* ── 主从布局 ── */
+.dsh-memory-split{flex:1;min-height:0;display:flex;align-items:stretch;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.12));border-radius:12px;overflow:hidden}
+
+/* 左列：紧凑条目列表 */
+.dsh-memory-list-pane{flex:none;width:272px;box-sizing:border-box;margin:0;padding:6px;list-style:none;overflow-y:auto;border-right:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.08));display:flex;flex-direction:column;gap:2px}
+.dsh-memory-list-section{padding:10px 10px 4px;font-size:11px;font-weight:500;line-height:16px;color:var(--dsw-alias-label-tertiary,#888)}
+.dsh-memory-item{display:flex;align-items:flex-start;gap:8px;width:100%;box-sizing:border-box;padding:8px 10px;border:none;border-left:2px solid transparent;border-radius:8px;background:transparent;color:inherit;font-family:inherit;text-align:left;cursor:pointer}
+.dsh-memory-item:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.06))}
+.dsh-memory-item-selected,.dsh-memory-item-selected:hover{background:var(--dsw-alias-button-ghost-active-fill,rgba(255,255,255,.08));border-left-color:var(--dsw-alias-state-business-primary,#4a9eff)}
+/* 多选勾选框（自绘，选中=品牌蓝底白勾） */
+.dsh-memory-item-check{flex:none;display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;margin-top:1px;box-sizing:border-box;border:1px solid var(--dsw-alias-border-l3,rgba(255,255,255,.16));border-radius:4px;color:#fff}
+.dsh-memory-item-selected .dsh-memory-item-check{border-color:var(--dsw-alias-state-business-primary,#4a9eff);background:var(--dsw-alias-state-business-primary,#4a9eff)}
+.dsh-memory-item-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.dsh-memory-item-title{display:flex;align-items:center;gap:4px;min-width:0}
+.dsh-memory-item-title-text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:500;line-height:18px;color:var(--dsw-alias-label-primary,#eee)}
+.dsh-memory-item-snippet{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary,#888)}
+.dsh-memory-item-time{font-size:10px;line-height:14px;color:var(--dsw-alias-label-tertiary,#888);opacity:.75}
+
+/* 右侧：详情 */
+.dsh-memory-detail-pane{flex:1;min-width:0;overflow-y:auto;padding:18px 20px 20px;display:flex;flex-direction:column;gap:12px;box-sizing:border-box}
+.dsh-memory-detail-head{display:flex;align-items:flex-start;gap:8px}
+.dsh-memory-detail-title{flex:1;min-width:0;margin:0;font-size:17px;line-height:24px;font-weight:600;color:var(--dsw-alias-label-primary,#eee);word-break:break-word}
+.dsh-memory-detail-meta{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,#888);padding-bottom:10px;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.08))}
+.dsh-memory-detail-body{min-width:0;font-size:14px;line-height:22px;color:var(--dsw-alias-label-primary,#eee)}
+.dsh-memory-detail-body .dsh-better-markdown__markdown p{margin:0 0 8px}
+.dsh-memory-detail-body .dsh-better-markdown__markdown p:last-child{margin-bottom:0}
+.dsh-memory-detail-tags{display:flex;flex-wrap:wrap;gap:4px;padding-top:12px;border-top:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.08))}
+.dsh-memory-detail-form{display:flex;flex-direction:column;gap:10px}
+
+/* ── 标签 chip：rowTag 规格（1px 6px、border-l3、r4、11/16）── */
+.dsh-memory-chip{flex:none;display:inline-flex;align-items:center;padding:1px 6px;font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary,#bbb);border:1px solid var(--dsw-alias-border-l3,rgba(255,255,255,.16));border-radius:4px;background:transparent;cursor:pointer;font-family:inherit}
+.dsh-memory-chip:hover{color:var(--dsw-alias-label-primary,#eee);border-color:var(--dsw-alias-border-l2,rgba(255,255,255,.12))}
+.dsh-memory-chip-active,.dsh-memory-chip-active:hover{color:var(--dsw-alias-state-business-primary,#4a9eff);border-color:var(--dsw-alias-state-business-primary,#4a9eff)}
+
+/* ── 图标钮：常显 iconButton（28×28 r6）── */
+.dsh-memory-card-actions{flex:none;display:flex;align-items:center;gap:4px;margin-left:auto}
+.dsh-memory-icon-action{flex:none;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border:none;border-radius:6px;padding:0;background:transparent;cursor:pointer;color:var(--dsw-alias-label-tertiary,#888);box-sizing:border-box}
+.dsh-memory-icon-action:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.06));color:var(--dsw-alias-label-primary,#eee)}
+.dsh-memory-icon-action-danger:hover{background:var(--dsw-alias-interactive-bg-hover-danger,rgba(224,67,75,.12));color:var(--dsw-alias-state-error-primary,#e0434b)}
+.dsh-memory-pin-mark{flex:none;display:inline-flex;align-items:center;color:var(--dsw-alias-state-warn-primary,#e8a33d)}
+
+/* ── 空态：dashed 占位盒 ── */
+.dsh-memory-empty{margin:4px 2px;padding:14px 12px;display:flex;flex-direction:column;align-items:center;gap:8px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,#888);text-align:center;border:1px dashed var(--dsw-alias-border-l3,rgba(255,255,255,.16));border-radius:8px}
+
+/* ── 变更列表（全宽）：描边卡 + rowTag 式状态徽章 + 前后对比 ── */
+.dsh-memory-card-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px;overflow-y:auto}
+.dsh-memory-change-row{display:flex;align-items:flex-start;gap:10px;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.12));border-radius:12px;padding:12px 14px}
+.dsh-memory-change-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:8px}
+.dsh-memory-change-badge{flex:none;margin-top:2px;padding:1px 6px;border:1px solid var(--dsw-alias-state-warn-primary,#e8a33d);border-radius:4px;font-size:11px;line-height:16px;color:var(--dsw-alias-state-warn-primary,#e8a33d)}
+.dsh-memory-change-badge-delete{border-color:var(--dsw-alias-state-error-primary,#e0434b);color:var(--dsw-alias-state-error-primary,#e0434b)}
 .dsh-memory-change-old{color:var(--dsw-alias-label-tertiary,#888);text-decoration:line-through;opacity:.8}
 .dsh-memory-change-new{color:var(--dsw-alias-label-primary,#eee)}
-.dsh-memory-panel{flex:1;min-height:0;display:flex;flex-direction:column;gap:10px;overflow-y:auto;padding:2px 2px 6px;box-sizing:border-box}
-.dsh-memory-tabs{flex:none;display:flex;align-items:center;gap:2px;padding:2px;box-sizing:border-box;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.12));border-radius:10px;background:var(--dsw-alias-bg-layer-1,#1c1f26)}
-.dsh-memory-tab{flex:1;appearance:none;border:none;background:transparent;border-radius:8px;padding:5px 10px;font-size:14px;line-height:22px;color:var(--dsw-alias-label-secondary,#999);cursor:pointer}
-.dsh-memory-tab:hover{color:var(--dsw-alias-label-primary,#eee)}
-.dsh-memory-tab-active{background:var(--dsw-alias-button-ghost-active-fill,rgba(255,255,255,.08));color:var(--dsw-alias-label-primary,#eee);font-weight:600}
-.dsh-memory-top-row{flex:none;display:flex;flex-wrap:wrap;align-items:center;gap:6px}
-.dsh-memory-project-chips{display:flex;flex-wrap:wrap;gap:4px;min-width:0}
-.dsh-memory-project-chip{flex:none;display:inline-flex;align-items:center;gap:4px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;appearance:none;border:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.08));border-radius:999px;padding:3px 10px;font-size:13px;line-height:20px;color:var(--dsw-alias-label-secondary,#999);background:transparent;cursor:pointer}
-.dsh-memory-project-chip:hover{border-color:var(--dsw-alias-border-l2,rgba(255,255,255,.16));color:var(--dsw-alias-label-primary,#eee)}
-.dsh-memory-project-chip-active{border-color:var(--dsw-alias-state-business-primary,#4a9eff);color:var(--dsw-alias-label-primary,#eee);background:var(--dsw-alias-button-ghost-active-fill,rgba(255,255,255,.06))}
-.dsh-memory-search-row{flex:none;display:flex;align-items:center;gap:6px}
-.dsh-memory-search-input{flex:1;min-width:0;height:32px;box-sizing:border-box;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.12));border-radius:8px;padding:0 10px;font-size:14px;line-height:22px;color:var(--dsw-alias-label-primary,#eee);background:var(--dsw-alias-bg-layer-1,#1c1f26)}
-.dsh-memory-search-input::placeholder{color:var(--dsw-alias-label-tertiary,#888)}
-.dsh-memory-tag-select{height:32px;box-sizing:border-box;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.12));border-radius:8px;padding:0 32px 0 10px;font-size:14px;line-height:22px;color:var(--dsw-alias-label-primary,#eee);background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none'%3E%3Cpath d='M3 4.5L6 7.5L9 4.5' stroke='%2381858C' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;background-size:12px 12px;appearance:none;max-width:180px;cursor:pointer}
-.dsh-memory-section-title{margin:6px 2px 0;font-size:12px;font-weight:600;line-height:18px;color:var(--dsw-alias-label-secondary,#bbb)}
-.dsh-memory-card-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
-.dsh-memory-card{display:flex;flex-direction:column;gap:8px;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.12));border-radius:12px;padding:12px 14px;background:var(--dsw-alias-bg-layer-1,#1c1f26)}
-.dsh-memory-card:hover{border-color:var(--dsw-alias-border-l3,rgba(255,255,255,.16));background:var(--dsw-alias-bg-layer-1,#1c1f26)}
-.dsh-memory-card-pinned{border-color:var(--dsw-alias-state-warn-primary,rgba(232,163,61,.45))}
-.dsh-memory-card-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:8px}
-.dsh-memory-card-head{flex:1;min-width:0;display:flex;align-items:flex-start;gap:8px}
-.dsh-memory-card-content{flex:1;min-width:0;font-size:14px;line-height:22px;color:var(--dsw-alias-label-primary,#eee);white-space:pre-wrap;word-break:break-word}
-.dsh-memory-card-foot{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
-.dsh-memory-card-meta{display:flex;align-items:center;gap:6px;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary,#888);flex-wrap:wrap}
-.dsh-memory-chips{display:flex;flex-wrap:wrap;gap:4px}
-.dsh-memory-chip{flex:none;display:inline-flex;align-items:center;border-radius:999px;padding:1px 8px;font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary,#bbb);background:var(--dsw-alias-bg-layer-2,rgba(255,255,255,.05));border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.12));cursor:pointer}
-.dsh-memory-chip:hover{color:var(--dsw-alias-label-primary,#eee);border-color:var(--dsw-alias-border-l3,rgba(255,255,255,.16))}
-.dsh-memory-chip-active{color:var(--dsw-alias-state-business-primary,#4a9eff);border-color:var(--dsw-alias-state-business-primary,#4a9eff)}
-.dsh-memory-card-actions{flex:none;display:flex;align-items:center;gap:2px;opacity:0;transition:opacity 120ms}
-.dsh-memory-card:hover .dsh-memory-card-actions,.dsh-memory-card:focus-within .dsh-memory-card-actions{opacity:1}
-.dsh-memory-icon-action{flex:none;display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border:none;border-radius:50%;padding:0;background:transparent;cursor:pointer;color:var(--dsw-alias-label-tertiary,#888)}
-.dsh-memory-icon-action:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.06));color:var(--dsw-alias-label-primary,#eee)}
-.dsh-memory-pin-mark{flex:none;display:inline-flex;align-items:center;margin-right:4px;color:var(--dsw-alias-state-warn-primary,#e8a33d);vertical-align:-2px}
-.dsh-memory-empty{margin:4px 2px;padding:12px 4px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,#888);text-align:center}
-.dsh-memory-change-row{display:flex;align-items:flex-start;gap:8px;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.12));border-radius:12px;padding:10px 12px;background:var(--dsw-alias-bg-layer-1,#1c1f26)}
-.dsh-memory-change-badge{flex:none;margin-top:2px;font-size:10px;line-height:14px;padding:1px 6px;border-radius:999px;color:#0e1116;background:var(--dsw-alias-state-warn-primary,#e8a33d);font-weight:700}
-.dsh-memory-change-badge-delete{color:#fff;background:var(--dsw-alias-state-error-primary,#e0434b)}
 .dsh-memory-change-diff{flex:1;min-width:0;display:flex;align-items:stretch;gap:10px}
 .dsh-memory-change-diff-col{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
-.dsh-memory-change-diff-divider{flex:none;width:1px;background:var(--dsw-alias-border-l1,rgba(255,255,255,.08))}
-.dsh-memory-add-row{flex:none;display:flex;align-items:center;justify-content:flex-end}
-.dsh-memory-add-button{flex:none;display:inline-flex;align-items:center;gap:4px;appearance:none;border:none;border-radius:18px;height:36px;padding:0 14px;font-size:14px;line-height:22px;color:var(--dsw-alias-label-secondary,#999);background:transparent;cursor:pointer}
-.dsh-memory-add-button:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.06));color:var(--dsw-alias-label-primary,#eee)}
-.dsh-memory-add-form{flex:none;display:flex;flex-direction:column;gap:8px;padding:14px 16px;box-sizing:border-box;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.12));border-radius:12px;background:var(--dsw-alias-bg-layer-1,#1c1f26)}
+.dsh-memory-change-diff-divider{flex:none;width:1px;background:var(--dsw-alias-border-l2,rgba(255,255,255,.12))}
+.dsh-memory-card-content{min-width:0;font-size:13px;line-height:20px;color:var(--dsw-alias-label-primary,#eee);white-space:pre-wrap;word-break:break-word}
+.dsh-memory-card-meta{display:flex;align-items:center;gap:6px;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary,#888);flex-wrap:wrap}
+
+/* ── 表单件：编辑面 bg-module-platform、输入件官方规格 ── */
+.dsh-memory-inline-form,.dsh-memory-detail-form textarea,.dsh-memory-detail-form .dsh-memory-inline-input{box-sizing:border-box}
+.dsh-memory-inline-input{height:32px;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.12));border-radius:8px;padding:0 10px;font-size:14px;line-height:22px;font-family:inherit;color:var(--dsw-alias-label-primary,#eee);background:var(--dsw-alias-bg-layer-1,#1c1f26)}
+.dsh-memory-inline-textarea{min-height:64px;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.12));border-radius:8px;padding:8px 10px;font-size:14px;line-height:22px;color:var(--dsw-alias-label-primary,#eee);background:var(--dsw-alias-bg-layer-1,#1c1f26);resize:vertical;font-family:inherit;width:100%}
 .dsh-memory-add-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .dsh-memory-check{display:inline-flex;align-items:center;gap:6px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#bbb);cursor:pointer}
-.dsh-memory-change-summary{flex:1;min-width:0;font-size:14px;line-height:22px;color:var(--dsw-alias-label-primary,#eee);word-break:break-word}
-.dsh-memory-change-actions{flex:none;display:flex;align-items:center;gap:4px}
-.dsh-memory-inline-form{flex:none;display:flex;flex-direction:column;gap:8px;padding:14px 16px;box-sizing:border-box;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.12));border-radius:12px;background:var(--dsw-alias-bg-module-platform,#1c1f26)}
-.dsh-memory-inline-input{height:32px;box-sizing:border-box;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.12));border-radius:8px;padding:0 10px;font-size:14px;line-height:22px;color:var(--dsw-alias-label-primary,#eee);background:var(--dsw-alias-bg-layer-1,#1c1f26)}
-.dsh-memory-inline-textarea{min-height:64px;box-sizing:border-box;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.12));border-radius:8px;padding:8px 10px;font-size:14px;line-height:22px;color:var(--dsw-alias-label-primary,#eee);background:var(--dsw-alias-bg-layer-1,#1c1f26);resize:vertical;font-family:inherit}
-.dsh-memory-edit-buttons{display:flex;align-items:center;gap:6px}
-.dsh-memory-toggle{flex:none;display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border:none;border-radius:8px;padding:0;background:transparent;cursor:pointer;color:var(--dsw-alias-label-tertiary,#888)}
+/* ── 开关（DSH 规格：开=品牌蓝底白钮，关=border-l2 底灰钮）── */
+.dsh-memory-switch-line{display:inline-flex;align-items:center;gap:8px}
+.dsh-memory-switch{position:relative;flex:none;width:40px;height:22px;border:none;border-radius:11px;padding:0;background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.14));cursor:pointer;transition:background 240ms ease;box-sizing:border-box}
+.dsh-memory-switch::after{content:'';position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.35);transition:transform 240ms cubic-bezier(.2,.8,.2,1)}
+.dsh-memory-switch[aria-checked='true']{background:var(--dsw-alias-state-business-primary,#4a9eff)}
+.dsh-memory-switch[aria-checked='true']::after{transform:translateX(18px)}
+.dsh-memory-switch:disabled{opacity:.5;cursor:default}
+.dsh-memory-switch-text{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#bbb)}
+/* ── 多选操作栏 ── */
+.dsh-memory-batch-count{font-size:12px;line-height:18px;color:var(--dsw-alias-label-primary,#eee)}
+.dsh-memory-edit-buttons{display:flex;align-items:center;justify-content:flex-end;gap:8px}
+
+/* ── 注入开关（composer 工具行）：iconButton 规格 ── */
+.dsh-memory-toggle{flex:none;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border:none;border-radius:6px;padding:0;background:transparent;cursor:pointer;color:var(--dsw-alias-label-tertiary,#888);box-sizing:border-box}
 .dsh-memory-toggle:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.06))}
-.dsh-memory-toggle-on{color:var(--dsw-alias-state-business-primary,#4a9eff)}
-.dsh-memory-toggle-on:hover{color:var(--dsw-alias-state-business-primary,#4a9eff)}
+.dsh-memory-toggle-on,.dsh-memory-toggle-on:hover{color:var(--dsw-alias-state-business-primary,#4a9eff)}
 .dsh-memory-toggle-off{color:var(--dsw-alias-label-tertiary,#888);opacity:.55}
+
 .dsh-memory-error{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-state-error-primary,#e0434b)}
 .dsh-memory-visually-hidden{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
 
-/* ── 移动端：收紧筛选控件 ──────────────────────────────────────── */
+/* ── focus 规范 ── */
+.dsh-memory-search-input:focus,.dsh-memory-search-input:focus-visible,
+.dsh-memory-inline-input:focus,.dsh-memory-inline-input:focus-visible,
+.dsh-memory-inline-textarea:focus,.dsh-memory-inline-textarea:focus-visible,
+.dsh-memory-tag-select:focus,.dsh-memory-tag-select:focus-visible{outline:none;border-color:var(--dsw-alias-brand-primary)}
+.dsh-memory-tab:focus-visible,.dsh-memory-project-chip:focus-visible,.dsh-memory-chip:focus-visible,
+.dsh-memory-icon-action:focus-visible,.dsh-memory-toggle:focus-visible,.dsh-memory-item:focus-visible{outline:none;box-shadow:0 0 0 2px var(--dsw-alias-border-l3,rgba(255,255,255,.16))}
+
+/* ── 窄屏：主从改上下堆叠 ── */
 @media (max-width: 767.98px) {
-  .dsh-memory-panel{padding:2px}
+  .dsh-memory-split{flex-direction:column}
+  .dsh-memory-list-pane{width:100%;max-height:38%;border-right:none;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.08))}
   .dsh-memory-project-chip{max-width:150px}
-  .dsh-memory-tag-select{max-width:150px}
 }
 `
 

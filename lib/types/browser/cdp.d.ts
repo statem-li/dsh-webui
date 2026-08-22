@@ -30,8 +30,10 @@ export declare class CdpConnection {
     get connected(): boolean;
     private onMessage;
     private onClose;
-    /** 发送命令，返回 result（含 sessionId 时走 session 路由） */
-    send(method: string, params?: Record<string, unknown>, sessionId?: string): Promise<any>;
+    /** 发送命令，返回 result（含 sessionId 时走 session 路由）。
+     *  timeoutMs 兜底防止命令永久挂起（如 detached 视图上 captureScreenshot
+     *  等不到合成帧）：超时后 Promise reject，调用方可以降级重试。 */
+    send(method: string, params?: Record<string, unknown>, sessionId?: string, timeoutMs?: number): Promise<any>;
     /** 订阅事件（返回取消函数）。监听器收到的 params 在 flatten 模式下含 sessionId 字段。 */
     on(method: string, fn: (params: any) => void): () => void;
     close(): void;
@@ -63,10 +65,22 @@ export declare function navigateHistory(session: CdpSession, delta: number): Pro
     url: string;
     title: string;
 }>;
-/** 设置视口尺寸（无头 Chrome 默认视口过小，网页会以小屏响应式渲染；这里设成桌面尺寸）。 */
+/**
+ * 设置视口尺寸（Emulation 覆写）。仅供 screenshot.ts 等无头截图场景使用；
+ * AI 浏览器主流程为有头模式，视口跟随真实窗口，不做覆写（避免画面跳动）。
+ */
 export declare function setViewport(session: CdpSession, width: number, height: number, deviceScaleFactor?: number): Promise<void>;
-/** 页面截图（默认 jpeg；format 可传 png 无损，适合文字/卡片）。 */
-export declare function captureScreenshot(session: CdpSession, quality?: number, format?: 'jpeg' | 'png'): Promise<string>;
+/** 页面截图（默认 jpeg；format 可传 png 无损，适合文字/卡片）。
+ *  fromSurface=true 截合成器表面（视图可见时画质最佳）；detached/不可见视图
+ *  可能等不到合成帧（命令会超时），调用方应降级重试 fromSurface=false
+ *  （直接向 renderer 要一帧，不依赖 compositor）。 */
+export declare function captureScreenshot(session: CdpSession, quality?: number, format?: 'jpeg' | 'png', fromSurface?: boolean, timeoutMs?: number): Promise<string>;
+/**
+ * 截图（带降级）：surface 截图失败/超时 → 自动改用 renderer 截图。
+ * fromSurfaceTimeoutMs 只作用于第一次 surface 尝试——detached（不合成）视图
+ * 等不到合成帧，会卡满该超时；预览抽屉的画面兜底传更短的值以快速降级。
+ */
+export declare function captureScreenshotSafe(session: CdpSession, quality?: number, format?: 'jpeg' | 'png', fromSurfaceTimeoutMs?: number): Promise<string>;
 /** 启动 CDP screencast：Chrome 持续推送 JPEG 帧（仅变化时），供内嵌面板实时展示 + 交互。 */
 export declare function startScreencast(session: CdpSession, width: number, height: number, quality?: number): Promise<void>;
 /** 停止 screencast（幂等）。 */
@@ -84,6 +98,19 @@ export declare function getViewportSize(session: CdpSession): Promise<{
     width: number;
     height: number;
 }>;
+/** 元素选取结果（供 client 面板回填对话框）。 */
+export interface InspectedElement {
+    found: boolean;
+    selector: string;
+    tag: string;
+    id: string;
+    className: string;
+    role: string;
+    text: string;
+    label: string;
+}
+/** 在目标页按视口坐标采集元素定位信息（唯一选择器 + 摘要字段）。 */
+export declare function inspectElementAt(session: CdpSession, x: number, y: number): Promise<InspectedElement>;
 /**
  * 真实坐标鼠标点击（CDP Input 域）。
  * 触发完整事件链：mouseover → mousedown → mouseup → click，以及 pointer 事件，

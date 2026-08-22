@@ -13,7 +13,7 @@
  *    （与 AutomationApp 相同的 DOM 契约），rail 下导航行收缩为图标钮。
  */
 
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useState, type MouseEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 
 /** nav host id（本模块创建）。 */
@@ -40,7 +40,7 @@ function ensureHostPlaced(): boolean {
   if (anchor === null) return false
   const parent = anchor.parentElement
   if (parent === null) return false
-  let host = document.getElementById<HTMLDivElement>(HOST_ID)
+  let host = document.getElementById(HOST_ID) as HTMLDivElement | null
   if (host === null) {
     host = document.createElement('div')
     host.id = HOST_ID
@@ -132,6 +132,9 @@ const SHEET = `
 .dsh-nav-btn[data-open='true']{background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.06))}
 .dsh-nav-btn>svg{flex:none;color:var(--dsw-alias-label-secondary,#bbb)}
 .dsh-nav-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* 行尾附加内容（今日用量等）：等宽小字右贴 */
+/* 行尾附加内容（今日用量等）：等宽数字右贴 */
+.dsh-nav-trailing{flex:none;margin-left:auto;font-size:13px;line-height:18px;color:var(--dsw-alias-label-secondary,#bbb);font-family:ui-monospace,SFMono-Regular,monospace}
 /* 折叠 rail 态：只留图标（与原生 rail 图标钮 / auto-nav 同款几何） */
 .dsh-nav-btn[data-rail='true']{width:36px;height:36px;padding:0;margin:0 0 8px;justify-content:center;border-radius:8px}
 /* 未读 badge（记忆入口）：右上角小圆标 */
@@ -165,12 +168,20 @@ export interface NavButtonProps {
   badgeTitle?: string
   /** 无障碍名（缺省用 label）。 */
   ariaLabel?: string
-  onClick: () => void
+  /** 行尾附加内容（如今日用量数字；rail 态不渲染）。 */
+  trailing?: ReactNode
+  /** 悬停：滑出卡片（hover 模式）。 */
+  onMouseEnter?: (e: MouseEvent<HTMLButtonElement>) => void
+  /** 移出按钮：启动自动收回计时（hover 模式）。 */
+  onMouseLeave?: () => void
+  /** 点击（hover 模式 = 切换钉住）。 */
+  onClick: (e: MouseEvent<HTMLButtonElement>) => void
 }
 
 /** 渲染一条导航行按钮（与 auto-nav 同款观感）。 */
 export function NavButton({
-  icon, label, rail = false, expanded = false, badge = 0, badgeTitle, ariaLabel, onClick,
+  icon, label, rail = false, expanded = false, badge = 0, badgeTitle, ariaLabel, trailing,
+  onMouseEnter, onMouseLeave, onClick,
 }: NavButtonProps): JSX.Element {
   return (
     <button
@@ -181,10 +192,15 @@ export function NavButton({
       aria-label={ariaLabel ?? label}
       aria-expanded={expanded}
       title={rail ? (ariaLabel ?? label) : undefined}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
       onClick={onClick}
     >
       {icon}
       {!rail && <span className="dsh-nav-label">{label}</span>}
+      {!rail && trailing !== undefined && (
+        <span className="dsh-nav-trailing">{trailing}</span>
+      )}
       {badge > 0 && (
         <span className="dsh-nav-badge" title={badgeTitle}>{badge > 99 ? '99+' : String(badge)}</span>
       )}

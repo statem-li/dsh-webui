@@ -304,20 +304,14 @@ export function PromptOptimizeButton({ available, directory, input, inputActions
 
       {panelVisible && (
         <div
-          className={css.panel}
+          className={`${css.panel} dsh-glass-anim-in`}
           role="group"
           aria-label="提示词优化面板"
           onMouseEnter={showPanel}
           onMouseLeave={scheduleHide}
         >
           <div className={css.panelTitle}>优化提示词</div>
-          <div className={css.chain}>
-            <span className={css.chainNode}>草稿</span>
-            <span className={css.chainArrow}>→</span>
-            <span className={css.chainModel}>{modelName}</span>
-            <span className={css.chainArrow}>→</span>
-            <span className={css.chainNode}>回写</span>
-          </div>
+          <div className={css.caption}>用 {modelName} 优化当前草稿</div>
           <div className={css.options}>
             <div className={css.option}>
               <span className={css.optionLabel}>设定目标</span>

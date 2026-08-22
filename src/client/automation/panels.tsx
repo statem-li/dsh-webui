@@ -1,9 +1,9 @@
 /**
- * automation — TAB 面板：定时 / 执行任务 / 执行日志。
+ * automation — TAB 面板：执行任务 / 执行日志。
  *
- * 三个面板都是受控展示组件（数据与动作由 AutomationCard 容器下发）：
- *  - SchedulePanel：执行日期 + 每日定时开关（沿用 v1 配置项）；
- *  - TasksPanel：分类分组任务列表，行点击进入编辑、行尾删除、
+ * 两个面板都是受控展示组件（数据与动作由 AutomationCard 容器下发）：
+ *  - TasksPanel：分类分组任务列表——每行显示启用开关、任务名、执行计划预览
+ *    （如「每天 09:00」）与模型徽标；行点击进入编辑、行尾删除、
  *    分类标题旁「+ 新建任务」打开二级抽屉（预选该分类）；
  *  - LogsPanel：按日期倒序的执行记录，顶部按任务下拉筛选 +
  *    清空记录；状态点区分已执行/失败。
@@ -12,61 +12,12 @@
 import { useMemo, useState } from 'react'
 import { PlusIcon, TrashIcon } from './icons.tsx'
 import type { T } from './locales.ts'
+import { schedulePreview } from './schedule.ts'
 import { todayString } from './storage.ts'
 import type {
   AutomationCatalog,
   AutomationLogEntry,
-  ScheduleConfig,
 } from './types.ts'
-
-// ── 定时面板 ─────────────────────────────────────────────────────────────
-
-export interface SchedulePanelProps {
-  t: T
-  config: ScheduleConfig
-  onConfigChange: (patch: Partial<ScheduleConfig>) => void
-}
-
-/** 「定时」面板：执行日期设定 + 是否每天定时执行。 */
-export function SchedulePanel({ t, config, onConfigChange }: SchedulePanelProps): JSX.Element {
-  return (
-    <div className="auto-panel">
-      <section className="auto-row auto-stagger-item">
-        <div className="auto-row-label">{t('dateLabel')}</div>
-        <div className="auto-row-hint">{t('dateHint')}</div>
-        <div className="auto-date-line">
-          <input
-            type="date"
-            className="auto-date-input"
-            value={config.date}
-            aria-label={t('dateLabel')}
-            onChange={event => { onConfigChange({ date: event.currentTarget.value }) }}
-          />
-          {config.date !== '' && (
-            <button type="button" className="auto-date-clear" onClick={() => { onConfigChange({ date: '' }) }}>
-              {t('cancel')}
-            </button>
-          )}
-        </div>
-      </section>
-
-      <section className="auto-row auto-stagger-item">
-        <div className="auto-row-label">{t('dailyLabel')}</div>
-        <div className="auto-switch-line">
-          <span className="auto-switch-text">{t('dailyHint')}</span>
-          <button
-            type="button"
-            className="auto-switch"
-            role="switch"
-            aria-checked={config.daily}
-            aria-label={t('dailyLabel')}
-            onClick={() => { onConfigChange({ daily: !config.daily }) }}
-          />
-        </div>
-      </section>
-    </div>
-  )
-}
 
 // ── 执行任务面板 ──────────────────────────────────────────────────────────
 
@@ -77,12 +28,14 @@ export interface TasksPanelProps {
   onNewTask: (presetCategory: string) => void
   /** 编辑任务。 */
   onEditTask: (taskId: string) => void
+  /** 切换任务启用/停用。 */
+  onToggleTask: (taskId: string, enabled: boolean) => void
   /** 删除任务。 */
   onDeleteTask: (taskId: string) => void
 }
 
-/** 「执行任务」面板：按分类分组展示任务，支持新建/编辑/删除。 */
-export function TasksPanel({ t, catalog, onNewTask, onEditTask, onDeleteTask }: TasksPanelProps): JSX.Element {
+/** 「执行任务」面板：按分类分组展示任务（开关 / 名称 / 计划预览 / 模型），支持新建/编辑/删除。 */
+export function TasksPanel({ t, catalog, onNewTask, onEditTask, onToggleTask, onDeleteTask }: TasksPanelProps): JSX.Element {
   return (
     <div className="auto-panel">
       {catalog.tasks.length === 0 && (
@@ -104,38 +57,56 @@ export function TasksPanel({ t, catalog, onNewTask, onEditTask, onDeleteTask }: 
                 {t('newTask')}
               </button>
             </div>
-            {tasks.map(task => (
-              <div
-                key={task.id}
-                className="auto-task-row"
-                role="button"
-                tabIndex={0}
-                onClick={() => { onEditTask(task.id) }}
-                onKeyDown={event => {
-                  if (event.key === 'Enter') onEditTask(task.id)
-                }}
-                title={t('editTask')}
-              >
-                <span className="auto-task-name">{task.name}</span>
-                {task.model !== undefined && task.model !== '' && (
-                  <span className="auto-task-badge">{task.model}</span>
-                )}
-                {task.effort !== undefined && task.effort !== '' && (
-                  <span className="auto-task-badge">{task.effort}</span>
-                )}
-                <button
-                  type="button"
-                  className="auto-task-del"
-                  aria-label={t('delete')}
-                  onClick={event => {
-                    event.stopPropagation()
-                    onDeleteTask(task.id)
+            {tasks.map(task => {
+              const enabled = task.enabled !== false
+              return (
+                <div
+                  key={task.id}
+                  className="auto-task-row"
+                  role="button"
+                  tabIndex={0}
+                  data-disabled={!enabled || undefined}
+                  onClick={() => { onEditTask(task.id) }}
+                  onKeyDown={event => {
+                    if (event.key === 'Enter') onEditTask(task.id)
                   }}
+                  title={t('editTask')}
                 >
-                  <TrashIcon size={13} />
-                </button>
-              </div>
-            ))}
+                  <button
+                    type="button"
+                    className="auto-switch auto-switch-sm"
+                    role="switch"
+                    aria-checked={enabled}
+                    aria-label={`${t('enabledLabel')} · ${task.name}`}
+                    onClick={event => {
+                      event.stopPropagation()
+                      onToggleTask(task.id, !enabled)
+                    }}
+                  />
+                  <span className="auto-task-name">
+                    {task.name}
+                    <span className="auto-task-sched">{schedulePreview(task.schedule)}</span>
+                  </span>
+                  {task.model !== undefined && task.model !== '' && (
+                    <span className="auto-task-badge">{task.model}</span>
+                  )}
+                  {task.effort !== undefined && task.effort !== '' && (
+                    <span className="auto-task-badge">{task.effort}</span>
+                  )}
+                  <button
+                    type="button"
+                    className="auto-task-del"
+                    aria-label={t('delete')}
+                    onClick={event => {
+                      event.stopPropagation()
+                      onDeleteTask(task.id)
+                    }}
+                  >
+                    <TrashIcon size={13} />
+                  </button>
+                </div>
+              )
+            })}
           </section>
         )
       })}

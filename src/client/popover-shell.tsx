@@ -27,11 +27,14 @@ const SHEET = `
 .psh-mask[data-anim='in']{animation:dsh-modal-mask-in ${MODAL_ANIM_MS}ms ease both}
 .psh-mask[data-anim='out']{animation:dsh-modal-mask-out ${MODAL_ANIM_MS}ms ease both}
 /* ── 卡片：贴锚点右侧滑出 / 底部 sheet 回退 ── */
-.psh-card{position:fixed;z-index:1000;display:flex;flex-direction:column;box-sizing:border-box;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.14));border-radius:14px;background:var(--dsw-specific-menu,var(--dsw-alias-bg-layer-2,#16181d));box-shadow:var(--dsw-shadow-lv3,0 8px 40px rgba(0,0,0,.5));overflow:hidden}
-.psh-card[data-mode='popover'][data-anim='in']{animation:dsh-modal-side-in ${MODAL_ANIM_MS}ms cubic-bezier(.2,.8,.2,1) both}
+.psh-card{position:fixed;z-index:1000;display:flex;flex-direction:column;box-sizing:border-box;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.14));border-radius:14px;background:var(--dsw-specific-menu,var(--dsw-alias-bg-layer-2,#16181d));box-shadow:var(--dsw-shadow-lv3,0 8px 40px rgba(0,0,0,.5));overflow:hidden;transition:width ${MODAL_ANIM_MS}ms cubic-bezier(.2,.8,.2,1),height ${MODAL_ANIM_MS}ms cubic-bezier(.2,.8,.2,1)}
+/* in 动画不得带 fill-mode（both/forwards 会残留 to 帧 transform，使卡片成为
+   后代 position:fixed 元素（图表 tooltip）的包含块，浮层整体偏移）；out 需要
+   forwards 保持隐藏态直到卸载，此时无交互、无副作用。 */
+.psh-card[data-mode='popover'][data-anim='in']{animation:dsh-modal-side-in ${MODAL_ANIM_MS}ms cubic-bezier(.2,.8,.2,1)}
 .psh-card[data-mode='popover'][data-anim='out']{animation:dsh-modal-side-out ${MODAL_ANIM_MS}ms cubic-bezier(.4,0,.2,1) both}
 .psh-card[data-mode='sheet']{left:12px !important;right:12px;bottom:12px;top:auto !important}
-.psh-card[data-mode='sheet'][data-anim='in']{animation:dsh-modal-slide-in ${MODAL_ANIM_MS}ms cubic-bezier(.2,.8,.2,1) both}
+.psh-card[data-mode='sheet'][data-anim='in']{animation:dsh-modal-slide-in ${MODAL_ANIM_MS}ms cubic-bezier(.2,.8,.2,1)}
 .psh-card[data-mode='sheet'][data-anim='out']{animation:dsh-modal-slide-out ${MODAL_ANIM_MS}ms cubic-bezier(.4,0,.2,1) both}
 /* ── 通用卡片头部：标题 + 关闭（对齐 auto-card-head 规格）── */
 .psh-head{flex:none;display:flex;align-items:center;gap:8px;padding:12px 16px 10px;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.08))}
@@ -42,6 +45,7 @@ const SHEET = `
 .psh-body{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
 @media (prefers-reduced-motion:reduce){
   .psh-mask,.psh-card{animation:none!important}
+  .psh-card{transition:none!important}
 }
 `
 
@@ -62,6 +66,12 @@ export interface PopoverAnchor {
   top: number
 }
 
+/** 理想尺寸（px）：切换时 width/height 以 240ms 平滑过渡（automation 卡片同款）。 */
+export interface PopoverSize {
+  width: number
+  height?: number
+}
+
 /** PopoverShell 属性。 */
 export interface PopoverShellProps {
   /** 正在播放收回动画（此时仍挂载，播 out 动画）。 */
@@ -72,6 +82,12 @@ export interface PopoverShellProps {
   anchor: PopoverAnchor | null
   /** 理想宽度（px），实际夹紧为 min(width, 视口右缘余量)。 */
   width?: number
+  /** 动态尺寸（优先于 width）：随内容（如 tab 切换）变化时平滑过渡。 */
+  size?: PopoverSize
+  /** 鼠标进入卡片（hover 模式：取消自动收回）。 */
+  onCardMouseEnter?: () => void
+  /** 鼠标离开卡片（hover 模式：启动自动收回计时）。 */
+  onCardMouseLeave?: () => void
   /** 无障碍名（role=dialog 的 aria-label）。 */
   ariaLabel: string
   children: ReactNode
@@ -79,21 +95,25 @@ export interface PopoverShellProps {
 
 /** 渲染「右侧滑出」卡片（含遮罩）。内容自带头部时无需再用 PshHead。 */
 export function PopoverShell({
-  closing, onClose, anchor, width = 560, ariaLabel, children,
+  closing, onClose, anchor, width = 560, size, onCardMouseEnter, onCardMouseLeave, ariaLabel, children,
 }: PopoverShellProps): JSX.Element {
   const vw = window.innerWidth
   const vh = window.innerHeight
-  const asPopover = anchor !== null && (vw - anchor.left) >= Math.min(POPOVER_MIN_SPACE, width)
+  const idealW = size?.width ?? width
+  const asPopover = anchor !== null && (vw - anchor.left) >= Math.min(POPOVER_MIN_SPACE, idealW)
   let style: CSSProperties | undefined
   if (anchor !== null && asPopover) {
     // 定位：left=按钮右缘+8；top 与按钮对齐但夹在视口内；宽高不越界。
     const left = Math.round(anchor.left)
     const top = Math.max(8, Math.min(Math.round(anchor.top), vh - 200))
+    const availH = vh - top - 12
     style = {
       left,
       top,
-      maxHeight: `${vh - top - 12}px`,
-      width: `${Math.min(width, vw - left - 12)}px`,
+      width: `${Math.min(idealW, vw - left - 12)}px`,
+      ...(size?.height !== undefined
+        ? { height: `${Math.min(size.height, availH)}px`, maxHeight: `${availH}px` }
+        : { maxHeight: `${availH}px` }),
     }
   }
   const anim = closing ? 'out' : 'in'
@@ -119,6 +139,8 @@ export function PopoverShell({
         role="dialog"
         aria-modal="true"
         aria-label={ariaLabel}
+        onMouseEnter={onCardMouseEnter}
+        onMouseLeave={onCardMouseLeave}
       >
         {children}
       </div>

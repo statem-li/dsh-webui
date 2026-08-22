@@ -50,10 +50,13 @@ const SHEET = `
 .dsh-modal-slide-out { animation: dsh-modal-slide-out ${MODAL_ANIM_MS}ms cubic-bezier(0.4, 0, 0.2, 1) forwards; }
 .dsh-modal-side-in { animation: dsh-modal-side-in ${MODAL_ANIM_MS}ms cubic-bezier(0.2, 0.8, 0.2, 1); }
 .dsh-modal-side-out { animation: dsh-modal-side-out ${MODAL_ANIM_MS}ms cubic-bezier(0.4, 0, 0.2, 1) forwards; }
-/* 内容错落：卡片播放滑入（底部上滑 / 右侧滑入均可）时生效，关闭时随卡片整体收回 */
+/* 内容错落：卡片播放滑入（底部上滑 / 右侧滑入均可）时生效，关闭时随卡片整体收回。
+   fill-mode 必须用 backwards（延迟期应用 from 帧隐藏）而非 both——both 会在动画
+   结束后残留 to 帧 transform（即使 translateY(0)），使该容器成为后代 position:fixed
+   元素（图表 tooltip）的包含块，浮层整体偏移。 */
 .dsh-modal-slide-in .dsh-modal-stagger,
 .dsh-modal-side-in .dsh-modal-stagger {
-  animation: dsh-modal-rise-in ${MODAL_ANIM_MS}ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  animation: dsh-modal-rise-in ${MODAL_ANIM_MS}ms cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
   animation-delay: 60ms;
 }
 .dsh-modal-mask-in { animation: dsh-modal-mask-in ${MODAL_ANIM_MS}ms ease; }

@@ -14,6 +14,8 @@ import { CloseIcon } from './icons.tsx'
 import type { T } from './locales.ts'
 import { ensureStyles } from './styles.ts'
 import { newId } from './storage.ts'
+import { defaultScheduleDraft, draftFromStored, storedFromDraft, type ScheduleDraft } from './schedule.ts'
+import { ScheduleEditor } from './ScheduleEditor.tsx'
 import type {
   AutomationCatalog,
   AutomationTask,
@@ -69,6 +71,7 @@ export function TaskEditorDrawer({
   const [categoryId, setCategoryId] = useState('')
   const [modelKey, setModelKey] = useState('')   // `${provider}::${modelId}`，'' = 未选
   const [effort, setEffort] = useState('')       // '' = 模型默认
+  const [draft, setDraft] = useState<ScheduleDraft>(defaultScheduleDraft())
   const nameRef = useRef<HTMLInputElement | null>(null)
 
   // 打开瞬间按模式初始化表单（编辑回填 / 新建预置分类）。
@@ -81,11 +84,13 @@ export function TaskEditorDrawer({
         ? `${editing.provider}::${editing.model}`
         : '')
       setEffort(editing.effort ?? '')
+      setDraft(draftFromStored(editing.schedule))
     } else {
       setName('')
       setCategoryId(presetCategory ?? catalog.categories[0]?.id ?? '')
       setModelKey('')
       setEffort('')
+      setDraft(defaultScheduleDraft())
     }
     const timer = window.setTimeout(() => { nameRef.current?.focus() }, 50)
     return () => { window.clearTimeout(timer) }
@@ -107,6 +112,7 @@ export function TaskEditorDrawer({
     const targetCategory = categoryId !== '' ? categoryId : catalog.categories[0]?.id
     if (targetCategory === undefined) return
     const [provider, modelId] = modelKey === '' ? [undefined, undefined] : modelKey.split('::')
+    const schedule = storedFromDraft(draft)
     if (editing != null) {
       onCatalogChange({
         ...catalog,
@@ -115,6 +121,7 @@ export function TaskEditorDrawer({
             ...task,
             name: trimmed,
             categoryId: targetCategory,
+            schedule,
             model: modelId,
             provider,
             effort: effort !== '' ? effort : undefined,
@@ -126,6 +133,7 @@ export function TaskEditorDrawer({
         id: newId('task'),
         name: trimmed,
         categoryId: targetCategory,
+        schedule,
         model: modelId,
         provider,
         effort: effort !== '' ? effort : undefined,
@@ -221,6 +229,9 @@ export function TaskEditorDrawer({
                 ))}
               </select>
             </div>
+
+            {/* 执行计划：模式 + 动态字段 + 预览（openhanako 同款设计） */}
+            <ScheduleEditor draft={draft} onChange={setDraft} t={t} />
           </div>
 
           <div className={cls.foot}>

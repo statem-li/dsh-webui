@@ -27,8 +27,17 @@ export declare function waitForSettle(session: CdpSession, idleMs?: number, time
     settled: boolean;
     nav: boolean;
 }>;
-export declare function clickRef(session: CdpSession, ref: number): Promise<void>;
-export declare function hoverRef(session: CdpSession, ref: number): Promise<void>;
+/** 点击/悬停目标的判别信息（供生成人话操作描述）。 */
+export interface ClickTarget {
+    x: number;
+    y: number;
+    tag: string;
+    text: string;
+    vw: number;
+    vh: number;
+}
+export declare function clickRef(session: CdpSession, ref: number): Promise<ClickTarget>;
+export declare function hoverRef(session: CdpSession, ref: number): Promise<ClickTarget>;
 export declare function typeRef(session: CdpSession, ref: number, text: string, pressEnter: boolean): Promise<void>;
 export declare function selectRef(session: CdpSession, ref: number, value: string): Promise<void>;
 export declare function scrollPage(session: CdpSession, direction: 'up' | 'down' | 'left' | 'right', amount: number): Promise<void>;

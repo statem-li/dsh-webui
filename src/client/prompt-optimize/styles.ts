@@ -14,10 +14,7 @@ export const css = {
   busy: 'webui-po-busy',
   panel: 'webui-po-panel',
   panelTitle: 'webui-po-panel-title',
-  chain: 'webui-po-chain',
-  chainNode: 'webui-po-chain-node',
-  chainModel: 'webui-po-chain-model',
-  chainArrow: 'webui-po-chain-arrow',
+  caption: 'webui-po-caption',
   status: 'webui-po-status',
   statusOptimizing: 'webui-po-status-optimizing',
   statusDone: 'webui-po-status-done',
@@ -46,11 +43,8 @@ const SHEET = `
 /* 透明桥接：覆盖卡片与图标之间的间隙，鼠标移动时命中卡片不中断 hover。 */
 .webui-po-panel::before{content:'';position:absolute;left:0;right:0;bottom:-10px;height:10px}
 @keyframes webui-po-slide-in{from{opacity:0;transform:translateY(6px) scale(.98)}to{opacity:1;transform:none}}
-.webui-po-panel-title{font-size:14px;font-weight:600;line-height:20px;margin-bottom:10px}
-.webui-po-chain{display:flex;align-items:center;gap:8px;font-size:12px;line-height:20px;color:var(--dsw-alias-label-secondary)}
-.webui-po-chain-node{flex:0 0 auto}
-.webui-po-chain-model{flex:0 1 auto;min-width:0;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-primary);font-weight:600}
-.webui-po-chain-arrow{flex:0 0 auto;color:var(--dsw-alias-label-caption)}
+.webui-po-panel-title{font-size:14px;font-weight:600;line-height:20px;margin-bottom:4px}
+.webui-po-caption{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary);margin-bottom:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .webui-po-options{display:flex;flex-direction:column;gap:10px;margin-top:12px;padding-top:12px;border-top:1px solid var(--dsw-alias-border-l2)}
 .webui-po-option{display:flex;align-items:center;justify-content:space-between;gap:12px}
 .webui-po-option-label{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}

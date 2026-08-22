@@ -20,6 +20,7 @@ import type {} from '@deepseek-ai/dsh-web'
 import { applyZhThinking } from './zh-thinking.js'
 import { applyMessageWidth } from './message-width.js'
 import { applyTaskDoneSound } from './task-done-sound.js'
+import { applyDonePill } from './done-pill.js'
 import { applyUpdater } from './updater.js'
 import { applyProxy } from './proxy.js'
 import { applyBrowser } from './browser/index.js'
@@ -34,6 +35,7 @@ import { applyScreenshot } from './screenshot.js'
 import { apply as applySkillToggles } from './skill-toggles.js'
 import { applyPromptOptimize } from './prompt-optimize.js'
 import { applySidebarFloat } from './sidebar-float.js'
+import { applyAppearance } from './appearance.js'
 import {
   AnySearchSearchProvider,
   ANYSEARCH_DEFAULT_BASE_URL,
@@ -222,11 +224,14 @@ export async function apply(ctx: Context, config: WebuiConfig = {}): Promise<voi
   // 3) 中文思考开关（自 dsh-zh-thinking 合并）。
   applyZhThinking(ctx)
 
-  // 3.5) 我发送的对话宽度（本人消息气泡宽度）：settings 持久化 + /api/webui-message-width。
+  // 3.5) 发送对话宽度（本人消息气泡宽度）：settings 持久化 + /api/webui-message-width。
   applyMessageWidth(ctx)
 
   // 4) 任务完成提示音 + 对话完成桌面卡片（自 dsh-task-done-sound 合并）。
   applyTaskDoneSound(ctx)
+
+  // 4.5) 对话完成胶囊：全局监听 turn/end，/api/webui-done-pill 供顶部胶囊轮询。
+  applyDonePill(ctx)
 
   // 5) DSH 壳管理 + 一键更新（自 dsh-updater 合并；config.updater 可选覆盖）。
   applyUpdater(ctx, config.updater)
@@ -235,9 +240,10 @@ export async function apply(ctx: Context, config: WebuiConfig = {}): Promise<voi
   applyProxy(ctx)
 
   // 7) AI 浏览器操作（自 dsh-browser 合并；config.browser 可选覆盖）。
-  // 默认无头（headless=true）：后台运行不弹窗口，画面经 screencast 内嵌到对话面板（可交互操作）。
+  // 固定有头：本机真实窗口启动即最大化（≈电脑分辨率），画面经 screencast
+  // 同步到 Web GUI 右侧滑出的预览抽屉（只读观看）。
   applyBrowser(ctx, {
-    chromePath: '', port: 0, headless: true, screenshotDir: '',
+    chromePath: '', port: 0, screenshotDir: '',
     ...config.browser,
   })
 
@@ -274,4 +280,7 @@ export async function apply(ctx: Context, config: WebuiConfig = {}): Promise<voi
 
   // 17) 左侧悬浮侧边栏：设置项「启动服务时默认折叠」持久化 + /api/sidebar-float。
   applySidebarFloat(ctx)
+
+  // 18) 外观设置：玻璃质感（Glassmorphism）开关持久化 + /api/webui-appearance。
+  applyAppearance(ctx)
 }

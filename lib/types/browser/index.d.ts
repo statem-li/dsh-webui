@@ -8,20 +8,16 @@ export interface Config {
     chromePath: string;
     /** CDP 起始端口（0 = 自动从 9222 起找空闲端口；每会话独立端口） */
     port: number;
-    /** 无头模式（默认开启：后台运行不弹窗口，画面经 screencast 内嵌到对话面板且可交互；关闭则弹独立 Edge/Chrome 窗口） */
-    headless: boolean;
     /** 截图输出目录（空 = Chrome profile 目录下 screenshots/） */
     screenshotDir: string;
 }
 export declare const Config: z<Schemastery.ObjectS<{
     chromePath: z<string, string>;
     port: z<number, number>;
-    headless: z<boolean, boolean>;
     screenshotDir: z<string, string>;
 }>, Schemastery.ObjectT<{
     chromePath: z<string, string>;
     port: z<number, number>;
-    headless: z<boolean, boolean>;
     screenshotDir: z<string, string>;
 }>>;
 export declare function applyBrowser(ctx: PluginContext, config: Config): void;

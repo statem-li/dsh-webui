@@ -264,7 +264,7 @@ async function captureHtml(html: string): Promise<string> {
   const port = await findFreePort(9222)
   const tmpDir = join(screenshotHome(), '.tmp', `shot-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
   await mkdir(tmpDir, { recursive: true })
-  const runtime = launchChrome(chromePath, tmpDir, port, true)
+  const runtime = launchChrome(chromePath, tmpDir, port, ['--headless=new', '--disable-gpu'])
   let conn: CdpConnection | null = null
   try {
     const wsUrl = await fetchBrowserWsUrl(port, 15000)

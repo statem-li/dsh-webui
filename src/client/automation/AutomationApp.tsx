@@ -3,8 +3,8 @@
  *
  * 职责：
  *  - 持有卡片/抽屉的开合与 closing 动画状态机（复用 modal-animation，240ms）；
- *  - 持有 ScheduleConfig / AutomationCatalog / 执行日志 并即时持久化；
- *  - 启动定时调度检查器（每天有没有执行都有记录）；
+ *  - 持有 AutomationCatalog（任务自带执行计划）/ 执行日志 并即时持久化；
+ *  - 启动定时调度检查器（按每任务 schedule 触发，每天有没有执行都有记录）；
  *  - 接入模型目录（任务可绑定模型 + 推理强度）；
  *  - 「自动化」菜单项经 portal 渲进侧边栏（新会话正下方），rail 态只显示图标；
  *  - Esc 分层退出：先关抽屉，再关卡片。
@@ -21,7 +21,7 @@ import { AutomationIcon } from './icons.tsx'
 import { makeT } from './locales.ts'
 import { ensureStyles } from './styles.ts'
 import {
-  loadCatalog, loadLogs, loadSchedule, saveCatalog, saveLogs, saveSchedule,
+  loadCatalog, loadLogs, saveCatalog, saveLogs,
 } from './storage.ts'
 import { startScheduler } from './scheduler.ts'
 import type {
@@ -29,7 +29,6 @@ import type {
   AutomationLogEntry,
   AutomationTask,
   ModelOption,
-  ScheduleConfig,
 } from './types.ts'
 
 /** 侧边栏折叠观察：与 sidebar-float 相同的稳定 DOM 契约。 */
@@ -47,31 +46,22 @@ export function AutomationApp({ ctx }: { ctx: ClientContext }): JSX.Element {
   const t = useMemo(makeT, [])
 
   // ---- 数据：localStorage 初始化，commit 阶段即时落盘 ---------------------
-  const [schedule, setSchedule] = useState<ScheduleConfig>(loadSchedule)
   const [catalog, setCatalog] = useState<AutomationCatalog>(loadCatalog)
   const [logs, setLogs] = useState<AutomationLogEntry[]>(loadLogs)
 
   // refs：调度器闭包经它们读取最新值（避免每 tick 重挂 interval）。
-  const scheduleRef = useRef(schedule)
   const catalogRef = useRef(catalog)
-  useEffect(() => { scheduleRef.current = schedule }, [schedule])
   useEffect(() => { catalogRef.current = catalog }, [catalog])
-
-  const patchSchedule = useCallback((patch: Partial<ScheduleConfig>): void => {
-    setSchedule(prev => ({ ...prev, ...patch }))
-  }, [])
 
   const replaceCatalog = useCallback((next: AutomationCatalog): void => {
     setCatalog(next)
   }, [])
 
-  useEffect(() => { saveSchedule(schedule) }, [schedule])
   useEffect(() => { saveCatalog(catalog) }, [catalog])
   useEffect(() => { saveLogs(logs) }, [logs])
 
-  // ---- 定时调度检查器：挂载启动一次；条件满足时落当日记录 ------------------
+  // ---- 定时调度检查器：挂载启动一次；按每任务执行计划触发并落记录 ----------
   useEffect(() => startScheduler({
-    getSchedule: () => scheduleRef.current,
     getCatalog: () => catalogRef.current,
     onLogsChanged: setLogs,
   }), [])
@@ -188,8 +178,6 @@ export function AutomationApp({ ctx }: { ctx: ClientContext }): JSX.Element {
         closing={card.closing}
         onClose={card.requestClose}
         t={t}
-        schedule={schedule}
-        onScheduleChange={patchSchedule}
         catalog={catalog}
         onCatalogChange={replaceCatalog}
         logs={logs}

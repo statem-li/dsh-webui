@@ -91,14 +91,24 @@ export class CdpConnection {
     this.ws = null
   }
 
-  /** 发送命令，返回 result（含 sessionId 时走 session 路由） */
-  send(method: string, params: Record<string, unknown> = {}, sessionId?: string): Promise<any> {
+  /** 发送命令，返回 result（含 sessionId 时走 session 路由）。
+   *  timeoutMs 兜底防止命令永久挂起（如 detached 视图上 captureScreenshot
+   *  等不到合成帧）：超时后 Promise reject，调用方可以降级重试。 */
+  send(method: string, params: Record<string, unknown> = {}, sessionId?: string, timeoutMs = 45000): Promise<any> {
     if (!this.connected) throw new Error('CDP 未连接')
     const id = this.nextId++
     const payload: any = { id, method, params }
     if (sessionId) payload.sessionId = sessionId
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject, method })
+      const timer = setTimeout(() => {
+        this.pending.delete(id)
+        reject(new Error(`${method}: 超时（${timeoutMs}ms 内无响应）`))
+      }, timeoutMs)
+      this.pending.set(id, {
+        resolve: (v: any) => { clearTimeout(timer); resolve(v) },
+        reject: (e: Error) => { clearTimeout(timer); reject(e) },
+        method,
+      })
       this.ws!.send(JSON.stringify(payload))
     })
   }
@@ -237,7 +247,10 @@ export async function navigateHistory(session: CdpSession, delta: number): Promi
   return { url: current?.url || '', title: current?.title || '' }
 }
 
-/** 设置视口尺寸（无头 Chrome 默认视口过小，网页会以小屏响应式渲染；这里设成桌面尺寸）。 */
+/**
+ * 设置视口尺寸（Emulation 覆写）。仅供 screenshot.ts 等无头截图场景使用；
+ * AI 浏览器主流程为有头模式，视口跟随真实窗口，不做覆写（避免画面跳动）。
+ */
 export async function setViewport(
   session: CdpSession,
   width: number,
@@ -250,20 +263,39 @@ export async function setViewport(
   }, sessionId)
 }
 
-/** 页面截图（默认 jpeg；format 可传 png 无损，适合文字/卡片）。 */
+/** 页面截图（默认 jpeg；format 可传 png 无损，适合文字/卡片）。
+ *  fromSurface=true 截合成器表面（视图可见时画质最佳）；detached/不可见视图
+ *  可能等不到合成帧（命令会超时），调用方应降级重试 fromSurface=false
+ *  （直接向 renderer 要一帧，不依赖 compositor）。 */
 export async function captureScreenshot(
   session: CdpSession,
   quality = 90,
   format: 'jpeg' | 'png' = 'jpeg',
+  fromSurface = true,
+  timeoutMs = 8000,
 ): Promise<string> {
   const { conn, sessionId } = session
   const shot: any = await conn.send(
     'Page.captureScreenshot',
-    { format, ...(format === 'jpeg' ? { quality } : {}), fromSurface: true },
+    { format, ...(format === 'jpeg' ? { quality } : {}), fromSurface },
     sessionId,
+    timeoutMs,
   )
   if (!shot?.data) throw new Error('截图失败：CDP 未返回图像数据')
   return shot.data
+}
+
+/**
+ * 截图（带降级）：surface 截图失败/超时 → 自动改用 renderer 截图。
+ * fromSurfaceTimeoutMs 只作用于第一次 surface 尝试——detached（不合成）视图
+ * 等不到合成帧，会卡满该超时；预览抽屉的画面兜底传更短的值以快速降级。
+ */
+export async function captureScreenshotSafe(session: CdpSession, quality = 90, format: 'jpeg' | 'png' = 'jpeg', fromSurfaceTimeoutMs = 8000): Promise<string> {
+  try {
+    return await captureScreenshot(session, quality, format, true, fromSurfaceTimeoutMs)
+  } catch {
+    return await captureScreenshot(session, quality, format, false, fromSurfaceTimeoutMs)
+  }
 }
 
 /** 启动 CDP screencast：Chrome 持续推送 JPEG 帧（仅变化时），供内嵌面板实时展示 + 交互。 */
@@ -349,6 +381,121 @@ export async function getViewportSize(session: CdpSession): Promise<{ width: num
     false,
   )
   return { width: v?.w || 0, height: v?.h || 0 }
+}
+
+/**
+ * 元素选取注入脚本：在页面上下文按视口坐标 `document.elementFromPoint(x, y)`
+ * 定位元素，生成唯一且稳定的 CSS 选择器（id 优先 → 短 class 唯一定位 → 全
+ * nth-of-type 路径），并摘取 tag / id / class / role / 可见文本（≤120 字符）。
+ * 避开 `[class*="…"]` 宽泛子串匹配（会误伤多元素）；id 用 CSS.escape 转义，
+ * 兜底退回属性选择器。脚本为同步纯函数，evaluate 时 awaitPromise 传 false。
+ */
+const INSPECT_JS = `(function (x, y) {
+  function str(s, n) {
+    s = (s == null ? '' : String(s)).replace(/\\s+/g, ' ').trim();
+    return s.length > n ? s.slice(0, n) : s;
+  }
+  function escapeAttr(s) { return String(s).replace(/"/g, '\\\\"'); }
+  function cssEscape(s) {
+    try { return CSS.escape(s); } catch (e) { return s; }
+  }
+  function idSelector(el) {
+    if (!el.id) return null;
+    var sel;
+    try { sel = '#' + cssEscape(el.id); }
+    catch (e) { sel = '[id="' + escapeAttr(el.id) + '"]'; }
+    try { if (document.querySelectorAll(sel).length === 1) return sel; } catch (e) {}
+    return null;
+  }
+  function classSelector(el) {
+    var cn = (typeof el.className === 'string') ? el.className : '';
+    var cls = cn.trim().split(/\\s+/).filter(Boolean);
+    if (!cls.length) return null;
+    var sel = el.tagName.toLowerCase();
+    for (var i = 0; i < cls.length && i < 3; i++) {
+      try { sel += '.' + cssEscape(cls[i]); } catch (e) { return null; }
+    }
+    try { if (document.querySelectorAll(sel).length === 1) return sel; } catch (e) {}
+    return null;
+  }
+  function nthPath(el) {
+    var parts = [];
+    var cur = el;
+    while (cur && cur.nodeType === 1 && cur !== document.body) {
+      var tag = cur.tagName.toLowerCase();
+      var part = tag;
+      var parent = cur.parentElement;
+      if (parent) {
+        var idx = 1;
+        var sib = cur.previousElementSibling;
+        while (sib) {
+          if (sib.tagName === cur.tagName) idx++;
+          sib = sib.previousElementSibling;
+        }
+        if (idx > 1) part += ':nth-of-type(' + idx + ')';
+      }
+      parts.unshift(part);
+      cur = parent;
+    }
+    return parts.join(' > ');
+  }
+  var el = document.elementFromPoint(x, y);
+  if (!el || el === document.documentElement || el === document.body) {
+    return { found: false };
+  }
+  var tag = el.tagName.toLowerCase();
+  var id = el.id || '';
+  var cls = (typeof el.className === 'string' ? el.className : '') || '';
+  var role = el.getAttribute ? (el.getAttribute('role') || '') : '';
+  var text = str(el.innerText || el.textContent || '', 120);
+  var label = '';
+  var aria = el.getAttribute ? (el.getAttribute('aria-label') || '') : '';
+  if (!text && aria) label = aria;
+  if (!text && (tag === 'input' || tag === 'textarea') && el.value != null && el.value !== '') label = el.value;
+  if (tag === 'img') {
+    var alt = el.getAttribute ? (el.getAttribute('alt') || '') : '';
+    if (alt) { text = str(alt, 120); label = ''; }
+  }
+  var selector = idSelector(el) || classSelector(el) || nthPath(el);
+  return {
+    found: true,
+    selector: selector,
+    tag: tag,
+    id: id,
+    className: cls.slice(0, 200),
+    role: role,
+    text: text,
+    label: str(label, 120)
+  };
+})`
+
+/** 元素选取结果（供 client 面板回填对话框）。 */
+export interface InspectedElement {
+  found: boolean
+  selector: string
+  tag: string
+  id: string
+  className: string
+  role: string
+  text: string
+  label: string
+}
+
+/** 在目标页按视口坐标采集元素定位信息（唯一选择器 + 摘要字段）。 */
+export async function inspectElementAt(session: CdpSession, x: number, y: number): Promise<InspectedElement> {
+  const data = await evaluateJson(session, `${INSPECT_JS}(${Number(x)}, ${Number(y)})`, false)
+  const empty: InspectedElement = { found: false, selector: '', tag: '', id: '', className: '', role: '', text: '', label: '' }
+  if (!data || typeof data !== 'object') return empty
+  return {
+    found: data.found === true,
+    selector: String(data.selector ?? ''),
+    tag: String(data.tag ?? ''),
+    id: String(data.id ?? ''),
+    className: String(data.className ?? ''),
+    role: String(data.role ?? ''),
+    text: String(data.text ?? ''),
+    label: String(data.label ?? ''),
+  }
 }
 
 /**

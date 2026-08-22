@@ -13,8 +13,6 @@ export interface HeatCell {
   hitRate?: number
 }
 
-/** 单个格子的最大边长（px）；列用 1fr 摊满可用宽度，正方形格子受此上限约束。 */
-const CELL_MAX = 64
 const GAP = 6
 /** tooltip 距离格子顶部的间隔（px）。 */
 const TIP_GAP = 8
@@ -31,11 +29,12 @@ export function Heatmap({ cells, onSelect, rows = 5 }: { cells: HeatCell[]; onSe
     return 4
   }
   const colors = ['var(--dsw-alias-border-l2)', '#2a4a7a', '#3a6db5', '#4f8cff', '#7c6bff']
-  // 列数由「每行格子数（rows 行）向上取整」决定，列宽 1fr 自适应摊开；rows=1 时即一行横排。
+  // 列数由「每行格子数（rows 行）向上取整」决定，列宽 1fr 自适应摊满容器宽度；
+  // 不设 maxWidth 上限——上限会让 grid 窄于卡片内容区，右侧留大片空白。
   const cols = Math.max(1, Math.ceil(cells.length / rows))
   return (
     <div>
-      <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`, gap: GAP, width: '100%', maxWidth: cols * CELL_MAX + (cols - 1) * GAP }}>
+      <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`, gap: GAP, width: '100%' }}>
         {cells.map(c => {
           const idx = Math.min(4, levels(c.value))
           return (

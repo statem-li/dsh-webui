@@ -39,10 +39,29 @@ export function EffortSeat({ available, directory, load, select, locked }: Effor
     () => directory.getSnapshot(),
   )
   const [open, setOpen] = useState(false)
+  // 关闭动画态：先播下沉淡出（.13s），结束后再真正卸载面板
+  const [closing, setClosing] = useState(false)
+  const closeTimer = useRef<number | null>(null)
   const [dragIndex, setDragIndex] = useState<number | null>(null)
   const rootRef = useRef<HTMLDivElement | null>(null)
   const sliderRef = useRef<HTMLDivElement | null>(null)
   const particleRef = useRef<ParticleFieldHandle | null>(null)
+
+  /** 带滑出动画的关闭：closing 期间重复调用被守卫忽略。 */
+  const closePanel = (): void => {
+    if (closing) return
+    setClosing(true)
+    closeTimer.current = window.setTimeout(() => {
+      closeTimer.current = null
+      setClosing(false)
+      setOpen(false)
+    }, 130)
+  }
+
+  // 卸载清理关闭定时器。
+  useEffect(() => () => {
+    if (closeTimer.current !== null) window.clearTimeout(closeTimer.current)
+  }, [])
 
   // 当前模型（含其 reasoning 元数据）。目录外模型无法确定等级列表 → 隐藏入口。
   const currentModel = useMemo(() => {
@@ -91,12 +110,12 @@ export function EffortSeat({ available, directory, load, select, locked }: Effor
   }, [available, load])
 
   useEffect(() => {
-    if (!open) return
+    if (!open || closing) return
     const closeOutside = (event: MouseEvent): void => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false)
+      if (!rootRef.current?.contains(event.target as Node)) closePanel()
     }
     const onKey = (event: globalThis.KeyboardEvent): void => {
-      if (event.key === 'Escape') setOpen(false)
+      if (event.key === 'Escape') closePanel()
     }
     document.addEventListener('mousedown', closeOutside)
     document.addEventListener('keydown', onKey)
@@ -104,7 +123,7 @@ export function EffortSeat({ available, directory, load, select, locked }: Effor
       document.removeEventListener('mousedown', closeOutside)
       document.removeEventListener('keydown', onKey)
     }
-  }, [open])
+  }, [open, closing, closePanel])
 
   // 打开面板期间持续流动：光点沿轨道从左流向滑块，关闭时停止。
   useEffect(() => {
@@ -194,13 +213,13 @@ export function EffortSeat({ available, directory, load, select, locked }: Effor
         aria-expanded={open}
         title={`推理等级：${activeChoice?.label ?? '默认'}`}
         disabled={locked || state.status === 'selecting'}
-        onClick={() => { open ? setOpen(false) : setOpen(true) }}
+        onClick={() => { open ? closePanel() : setOpen(true) }}
       >
         <span className={css.effLabel}>{activeChoice?.label ?? '默认'}</span>
       </button>
 
       {open && (
-        <div className={css.effPanel} role="dialog" aria-label="修改推理等级">
+        <div className={`${css.effPanel} ${closing ? 'dsh-glass-anim-out' : 'dsh-glass-anim-in'}`} role="dialog" aria-label="修改推理等级">
           <div className={css.effPanelHead}>
             <span className={css.effPanelTitle}>推理等级</span>
             <span className={css.effPanelValue}>{activeChoice?.label ?? '默认'}</span>

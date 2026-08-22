@@ -1,7 +1,7 @@
 /**
  * BrowserAllowSetting — 「设置 → 基础设置」页的浏览器设置条目：
- *   1. 允许 AI 使用浏览器（allow）。
- *   2. 无头模式（headless）：开启 = 后台运行、画面内嵌对话面板（可交互，默认）；关闭 = 弹独立 Edge/Chrome 窗口。
+ *   允许 AI 使用浏览器（allow）。浏览器固定有头运行（本机真实窗口，启动即
+ *   最大化 ≈ 电脑分辨率），画面同步到对话面板右侧滑出的预览抽屉。
  *
  * 槽位：settings.general.item。形态对齐 zh-thinking 的「中文思考」标准开关行：
  * 左侧标题+描述，右侧圆钮 switch（button[role=switch]）。
@@ -79,15 +79,11 @@ function SwitchRow({ title, desc, checked, disabled, onToggle }: {
 
 export function BrowserAllowSetting(_props: unknown): React.ReactElement {
   const [allow, setAllow] = useState<boolean | null>(null) // null = 加载中
-  const [headless, setHeadless] = useState<boolean | null>(null)
 
   useEffect(() => {
     let alive = true
     fetchJson('/api/dsh-browser/allow').then((r: any) => {
       if (alive && r && typeof r.allow === 'boolean') setAllow(r.allow)
-    }).catch(() => {})
-    fetchJson('/api/dsh-browser/headless').then((r: any) => {
-      if (alive && r && typeof r.headless === 'boolean') setHeadless(r.headless)
     }).catch(() => {})
     return () => { alive = false }
   }, [])
@@ -98,27 +94,14 @@ export function BrowserAllowSetting(_props: unknown): React.ReactElement {
     postJson('/api/dsh-browser/allow', { allow: next }).catch(() => {})
   }
 
-  const toggleHeadless = (): void => {
-    const next = !(headless === true)
-    setHeadless(next)
-    postJson('/api/dsh-browser/headless', { headless: next }).catch(() => {})
-  }
-
   return (
     <>
       <SwitchRow
         title="允许 AI 使用浏览器"
-        desc="关闭后 AI 将无法调用浏览器工具（browser_*），默认开启。"
+        desc="关闭后 AI 将无法调用浏览器工具（browser_*），默认开启。浏览器以有头窗口运行并最大化，画面在对话面板右侧抽屉实时预览。"
         checked={allow === true}
         disabled={allow === null}
         onToggle={toggleAllow}
-      />
-      <SwitchRow
-        title="无头模式"
-        desc="开启后浏览器后台运行、画面内嵌到对话面板（可直接操作，不弹窗口）；关闭则弹出独立的 Edge/Chrome 窗口。"
-        checked={headless === true}
-        disabled={headless === null}
-        onToggle={toggleHeadless}
       />
     </>
   )

@@ -89,13 +89,28 @@ const SHEET = `
 .auto-cat-add:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.06))}
 .auto-task-row{display:flex;align-items:center;gap:8px;min-height:38px;padding:4px 8px;border-radius:8px;cursor:pointer}
 .auto-task-row:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.06))}
-.auto-task-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;color:var(--dsw-alias-label-primary,#eee)}
+.auto-task-row[data-disabled='true'] .auto-task-name{color:var(--dsw-alias-label-tertiary,#888)}
+/* 任务行内的小号启用开关 */
+.auto-switch-sm{width:32px;height:18px;border-radius:9px}
+.auto-switch-sm::after{width:12px;height:12px;top:3px;left:3px}
+.auto-switch-sm[aria-checked='true']::after{transform:translateX(14px)}
+/* 任务名 + 执行计划预览（两行） */
+.auto-task-name{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px;overflow:hidden;font-size:13px;color:var(--dsw-alias-label-primary,#eee)}
+.auto-task-name>span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.auto-task-sched{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;line-height:15px;color:var(--dsw-alias-label-tertiary,#888)}
 .auto-task-badge{flex:none;display:inline-flex;align-items:center;height:20px;padding:0 7px;border-radius:5px;background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.08));color:var(--dsw-alias-label-secondary,#bbb);font-size:11px;line-height:20px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .auto-task-del{flex:none;display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border:none;border-radius:6px;padding:0;background:transparent;cursor:pointer;color:var(--dsw-alias-label-tertiary,#888);opacity:0;transition:opacity 120ms ease,color 120ms ease}
 .auto-task-row:hover .auto-task-del,.auto-task-del:focus-visible{opacity:1}
 .auto-task-del:hover{color:var(--dsw-alias-state-error-primary,#e0434b);background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.06))}
 .auto-empty{padding:24px 8px;text-align:center;font-size:13px;line-height:20px;color:var(--dsw-alias-label-tertiary,#888)}
 .auto-empty-hint{margin-top:6px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,#888);opacity:.75}
+
+/* 执行计划编辑器（任务抽屉内）：模式 + 动态字段 + 预览 */
+.auto-sched{display:flex;flex-direction:column;gap:10px;margin-top:14px;padding-top:12px;border-top:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.08))}
+.auto-sched .auto-field{margin-top:0}
+.auto-sched-row{display:flex;gap:8px}
+.auto-sched-grow{flex:1;min-width:0}
+.auto-sched-preview{font-size:12px;line-height:18px;color:var(--dsw-alias-state-business-primary,#4176e6)}
 
 /* 二级抽屉（新建/编辑任务表单）：屏幕右侧滑入滑出 */
 .auto-drawer-mask{position:fixed;inset:0;z-index:1600;background:var(--dsw-alias-bg-mask-1,rgba(0,0,0,.45))}

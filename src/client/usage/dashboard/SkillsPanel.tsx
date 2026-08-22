@@ -555,7 +555,7 @@ type ViewerState = { skill: SkillInfo; file: string; loading: boolean; error?: s
 
 const SKILL_NAME_PATTERN = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/
 
-export function SkillsPanel({ onClose, closing = false, anchor = null }: { onClose: () => void; closing?: boolean; anchor?: PopoverAnchor | null }): JSX.Element {
+export function SkillsPanel({ onClose, closing = false, anchor = null, onCardMouseEnter, onCardMouseLeave }: { onClose: () => void; closing?: boolean; anchor?: PopoverAnchor | null; onCardMouseEnter?: () => void; onCardMouseLeave?: () => void }): JSX.Element {
   ensureStyles()
   const [state, setState] = useState<PanelState>({ status: 'loading' })
   const [reload, setReload] = useState(0)
@@ -863,6 +863,8 @@ export function SkillsPanel({ onClose, closing = false, anchor = null }: { onClo
         onClose()
       }}
       anchor={anchor}
+      onCardMouseEnter={onCardMouseEnter}
+      onCardMouseLeave={onCardMouseLeave}
       width={620}
       ariaLabel={t('panelTitle')}
     >

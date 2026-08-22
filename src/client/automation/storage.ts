@@ -1,10 +1,9 @@
 /**
- * automation — 本地持久化（localStorage，v2）。
+ * automation — 本地持久化（localStorage，v3）。
  *
- * 三张表：「定时」配置 / 任务目录（分类 + 任务平表）/ 执行日志。
- * 首次读取 v2 缺失时从 v1（config/catalog）迁移：日期与每日开关照搬，
- * 旧「执行内容条目」升级为任务（模型/强度留空）；v1 的 contentIds 勾选
- * 语义已废弃，不再迁移。
+ * 两张表：任务目录（分类 + 任务平表，任务自带执行计划）/ 执行日志。
+ * v3 起调度归属到每个任务（schedule 字段）；旧 v2 的全局「定时」配置
+ * （date + daily）废弃不再迁移——v2 任务缺 schedule 时由缺省计划（每天 09:00）兜底。
  */
 
 import type {
@@ -13,17 +12,13 @@ import type {
   AutomationLogEntry,
   AutomationLogStatus,
   AutomationTask,
-  ScheduleConfig,
 } from './types.ts'
+import { DEFAULT_SCHEDULE, type StoredSchedule, type StoredScheduleType } from './schedule.ts'
 
-const SCHEDULE_KEY = 'dsh-webui.automation.schedule.v2'
-const CATALOG_KEY = 'dsh-webui.automation.tasks.v2'
+const CATALOG_KEY = 'dsh-webui.automation.tasks.v3'
 const LOGS_KEY = 'dsh-webui.automation.logs.v2'
-/** v1 遗留键：仅用于一次性迁移读取。 */
-const V1_CONFIG_KEY = 'dsh-webui.automation.config.v1'
-const V1_CATALOG_KEY = 'dsh-webui.automation.catalog.v1'
-
-export const DEFAULT_SCHEDULE: ScheduleConfig = { date: '', daily: false }
+/** v2 遗留键：目录一次性迁移（v3 键缺失时读取）。 */
+const V2_CATALOG_KEY = 'dsh-webui.automation.tasks.v2'
 
 function defaultCategories(): AutomationCategory[] {
   return [
@@ -37,9 +32,9 @@ function defaultCatalog(): AutomationCatalog {
   return {
     categories: defaultCategories(),
     tasks: [
-      { id: 'task-summarize', name: '总结昨日会话要点', categoryId: 'cat-session' },
-      { id: 'task-usage-daily', name: '生成用量日报', categoryId: 'cat-skill' },
-      { id: 'task-weekly', name: '撰写本周周报草稿', categoryId: 'cat-prompt' },
+      { id: 'task-summarize', name: '总结昨日会话要点', categoryId: 'cat-session', schedule: { type: 'cron', schedule: '0 9 * * *' } },
+      { id: 'task-usage-daily', name: '生成用量日报', categoryId: 'cat-skill', schedule: { type: 'cron', schedule: '0 18 * * *' } },
+      { id: 'task-weekly', name: '撰写本周周报草稿', categoryId: 'cat-prompt', schedule: { type: 'cron', schedule: '0 9 * * 1' } },
     ],
   }
 }
@@ -62,95 +57,51 @@ export function todayString(now = new Date()): string {
   return `${y}-${m}-${d}`
 }
 
-// ---- 定时配置 ------------------------------------------------------------
-
-export function loadSchedule(): ScheduleConfig {
-  try {
-    const raw = localStorage.getItem(SCHEDULE_KEY)
-    if (raw !== null) {
-      const parsed = JSON.parse(raw) as Partial<ScheduleConfig>
-      return {
-        date: typeof parsed.date === 'string' ? parsed.date : '',
-        daily: parsed.daily === true,
-      }
-    }
-    // v2 缺失 → 尝试 v1 迁移（date/daily）。
-    const v1 = localStorage.getItem(V1_CONFIG_KEY)
-    if (v1 !== null) {
-      const legacy = JSON.parse(v1) as { date?: unknown; daily?: unknown }
-      const migrated: ScheduleConfig = {
-        date: typeof legacy.date === 'string' ? legacy.date : '',
-        daily: legacy.daily === true,
-      }
-      saveSchedule(migrated)
-      return migrated
-    }
-  } catch { /* 落默认 */ }
-  return { ...DEFAULT_SCHEDULE }
-}
-
-export function saveSchedule(schedule: ScheduleConfig): void {
-  try { localStorage.setItem(SCHEDULE_KEY, JSON.stringify(schedule)) } catch { /* 忽略 */ }
-}
-
 // ---- 任务目录 ------------------------------------------------------------
 
 export function loadCatalog(): AutomationCatalog {
   try {
     const raw = localStorage.getItem(CATALOG_KEY)
-    if (raw === null) {
-      const migrated = migrateV1Catalog()
-      if (migrated !== null) {
+    if (raw !== null) {
+      const parsed = JSON.parse(raw) as Partial<AutomationCatalog>
+      if (Array.isArray(parsed.categories) && Array.isArray(parsed.tasks)) {
+        return sanitizeCatalog(parsed as AutomationCatalog)
+      }
+    }
+    // v3 缺失 → v2 目录迁移（任务补缺省执行计划与启用态）。
+    const v2 = localStorage.getItem(V2_CATALOG_KEY)
+    if (v2 !== null) {
+      const parsed = JSON.parse(v2) as Partial<AutomationCatalog>
+      if (Array.isArray(parsed.categories) && Array.isArray(parsed.tasks)) {
+        const migrated = sanitizeCatalog(parsed as AutomationCatalog)
         saveCatalog(migrated)
         return migrated
       }
-      const fresh = defaultCatalog()
-      saveCatalog(fresh)
-      return fresh
-    }
-    const parsed = JSON.parse(raw) as Partial<AutomationCatalog>
-    if (Array.isArray(parsed.categories) && Array.isArray(parsed.tasks)) {
-      return sanitizeCatalog(parsed as AutomationCatalog)
     }
   } catch { /* 落默认 */ }
-  return defaultCatalog()
+  const fresh = defaultCatalog()
+  saveCatalog(fresh)
+  return fresh
 }
 
-/** 宽松校验：丢弃形状不完整的分类/任务。 */
+/** 宽松校验：丢弃形状不完整的分类/任务；schedule/enabled 归一化。 */
 function sanitizeCatalog(catalog: AutomationCatalog): AutomationCatalog {
+  const SCHEDULE_TYPES: readonly StoredScheduleType[] = ['every', 'cron', 'at']
   return {
     categories: catalog.categories.filter(cat => cat !== null && typeof cat === 'object'
       && typeof cat.id === 'string' && typeof cat.label === 'string'),
     tasks: catalog.tasks.filter(task => task !== null && typeof task === 'object'
       && typeof task.id === 'string' && typeof task.name === 'string'
-      && typeof task.categoryId === 'string'),
-  }
-}
-
-/** 从 v1 目录迁移：旧条目 → 任务；旧分类保留，缺分类补默认。 */
-function migrateV1Catalog(): AutomationCatalog | null {
-  try {
-    const raw = localStorage.getItem(V1_CATALOG_KEY)
-    if (raw === null) return null
-    const legacy = JSON.parse(raw) as Array<{ id?: unknown; label?: unknown; items?: Array<{ id?: unknown; name?: unknown }> }>
-    if (!Array.isArray(legacy)) return null
-    const categories: AutomationCategory[] = legacy
-      .filter(cat => typeof cat?.id === 'string')
-      .map((cat, i) => ({ id: String(cat.id), label: typeof cat.label === 'string' ? cat.label : `分类 ${i + 1}` }))
-    for (const def of defaultCategories()) {
-      if (!categories.some(cat => cat.id === def.id)) categories.push(def)
-    }
-    const tasks: AutomationTask[] = []
-    for (const cat of legacy) {
-      if (typeof cat?.id !== 'string' || !Array.isArray(cat.items)) continue
-      for (const item of cat.items) {
-        if (typeof item?.id !== 'string' || typeof item?.name !== 'string') continue
-        tasks.push({ id: item.id, name: item.name, categoryId: cat.id })
-      }
-    }
-    return { categories, tasks }
-  } catch {
-    return null
+      && typeof task.categoryId === 'string')
+      .map(task => ({
+        ...task,
+        schedule: task.schedule !== undefined && task.schedule !== null
+          && typeof task.schedule === 'object'
+          && SCHEDULE_TYPES.includes((task.schedule as StoredSchedule).type as StoredScheduleType)
+          ? (task.schedule as StoredSchedule)
+          : { ...DEFAULT_SCHEDULE },
+        enabled: task.enabled !== false,
+      })),
   }
 }
 

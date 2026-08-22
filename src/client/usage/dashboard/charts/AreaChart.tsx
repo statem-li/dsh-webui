@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { formatExact, formatUnits } from '../format'
 import { ChartTooltip } from './ChartTooltip'
 
@@ -210,8 +211,10 @@ export function AreaChart({ data, height = 240, colors = DEFAULT_COLORS }: AreaC
         />
       </svg>
 
-      {/* tooltip：跟随鼠标；近视口顶部时翻转到下方；每行「缩写 + 完整数字」 */}
-      {hover !== null && hoverPoint !== undefined && (
+      {/* tooltip：跟随鼠标；近视口顶部时翻转到下方；每行「缩写 + 完整数字」。
+          必须 portal 到 body：入场动画期间容器带 transform，会成为后代 fixed
+          元素的包含块，tooltip 会整体偏移（portal 后定位基准恒为视口）。 */}
+      {hover !== null && hoverPoint !== undefined && typeof document !== 'undefined' && createPortal(
         <ChartTooltip x={hover.x} y={hover.y} placement={hover.y < 180 ? 'bottom' : 'top'}>
           <div style={{ fontWeight: 600, color: 'var(--dsw-alias-label-primary)', marginBottom: 4 }}>{hoverPoint.label}</div>
           {(['input', 'output', 'cache'] as const).map(k => (
@@ -229,7 +232,8 @@ export function AreaChart({ data, height = 240, colors = DEFAULT_COLORS }: AreaC
               {formatUnits(hoverTotal)} <span style={{ color: 'var(--dsw-alias-label-tertiary)', fontSize: 11 }}>({formatExact(hoverTotal)})</span>
             </span>
           </div>
-        </ChartTooltip>
+        </ChartTooltip>,
+        document.body,
       )}
     </div>
   )

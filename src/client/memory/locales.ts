@@ -60,6 +60,12 @@ export const zh = {
   clearProjectConfirm: '确定清空项目「{name}」的 {count} 条记忆？此操作不可恢复。置顶记忆会保留，不会被删除。',
   addSaved: '已添加记忆',
   autoMemory: '自动记忆',
+  expand: '展开',
+  collapse: '收起',
+  multiSelect: '多选',
+  selectAll: '全选',
+  selectedCount: '已选 {n} 项',
+  deleteSelectedConfirm: '确定删除选中的 {n} 条记忆？此操作不可恢复。',
 } satisfies Record<string, string>
 
 /** dsh-memory locale key union. */
@@ -128,6 +134,12 @@ export const en = {
   clearProjectConfirm: 'Clear {count} memories in project "{name}"? This cannot be undone. Pinned memories are kept.',
   addSaved: 'Memory added',
   autoMemory: 'Auto-memory',
+  expand: 'Expand',
+  collapse: 'Collapse',
+  multiSelect: 'Select',
+  selectAll: 'All',
+  selectedCount: '{n} selected',
+  deleteSelectedConfirm: 'Delete {n} selected memories? This cannot be undone.',
 } satisfies Record<MemoryLocaleKey, string>
 
 /** 轻量翻译函数类型（面板/入口组件共用）。 */

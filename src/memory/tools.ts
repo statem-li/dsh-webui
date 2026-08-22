@@ -130,6 +130,10 @@ export function registerMemoryTools(
       if (scope === 'project' && hash === null) {
         throw new Error('无法判定当前工作区项目（无 cwd），请用 scope: "global" 或稍后重试')
       }
+      // 项目层写入受「自动记忆」开关约束：该项目关闭自动记忆时拒绝写入（global 层不受影响）。
+      if (scope === 'project' && (hash === null || !(await store.isAutoMemoryEnabled(hash)))) {
+        throw new Error('当前项目的自动记忆已关闭，已跳过记录；如需记录请先在记忆面板开启该项目开关')
+      }
       const importance = typeof args.importance === 'number' ? Math.max(1, Math.min(10, args.importance)) : 8
       const tags = Array.isArray(args.tags)
         ? args.tags.filter((tag): tag is string => typeof tag === 'string' && tag.trim() !== '').map(tag => tag.trim()).slice(0, 8)

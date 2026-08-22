@@ -13,14 +13,14 @@ export interface ChromeRuntime {
     profileDir: string;
 }
 /**
- * 启动 Chrome。幂等由调用方保证（port/profile 检查）。
+ * 启动 Chrome（有头渲染；默认定位屏幕外，由调用方决定何时贴到界面锚点）。
+ * 幂等由调用方保证（port/profile 检查）。
  * @param chromePath Chrome 可执行文件路径
  * @param profileDir 独立用户数据目录（cookies/登录态持久化）
  * @param port CDP 端口（调用方先 findFreePort）
- * @param headless 无头模式
- * @param args 附加参数
+ * @param args 附加参数（如 ['--app=about:blank']：无地址栏应用窗口，供内嵌贴合）
  */
-export declare function launchChrome(chromePath: string, profileDir: string, port: number, headless?: boolean, args?: string[]): ChromeRuntime;
+export declare function launchChrome(chromePath: string, profileDir: string, port: number, args?: string[]): ChromeRuntime;
 export declare function killChrome(runtime: ChromeRuntime | null, force?: boolean): void;
 /** 根据 session 标识生成 profile 目录名 */
 export declare function profileDirFor(rootDir: string, key: string): string;

@@ -1,8 +1,12 @@
 /**
- * dsh-memory 主面板（Modal，与技能面板同款框架）：
- * Tab（全部 / 变更 / 置顶）、项目切换 chips、搜索 + 标签筛选、
- * 置顶区 + 时间线分组（今天/本周/更早/长期）、条目卡片操作（置顶/编辑/删除/移项目）、
- * 变更裁决（保留/删除/改标签/移项目）。
+ * dsh-memory 主面板 —— 主从布局（master-detail）：
+ *  ┌──────────┬────────────────────────────┐
+ *  │ 条目列表  │  详情：标题 / meta / 完整 MD │
+ *  │ (紧凑行)  │  （查看 · 编辑 · 移动 · 新建）│
+ *  └──────────┴────────────────────────────┘
+ * 左列只放「标题 + 摘要 + 时间」，空间留给右侧详情做完整 Markdown 渲染；
+ * 置顶条目排列表最前（📌 标识），时间分组作为列表内小节标题。
+ * Tab（全部 / 变更）：变更 tab 为全宽列表（badge + 摘要 + 前后对比）。
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -14,6 +18,7 @@ import {
   IconTrashOutline16,
   Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { MarkstreamMarkdown } from '../markdown/renderer.js'
 import type { ChangeView, MemoryApi, MemoryEntryView, MemoryListResponse, ProjectView } from './api.js'
 import { css, ensureStyles } from './styles.js'
 import { changeActionLabel } from './Notify.tsx'
@@ -61,6 +66,10 @@ export type MemoryPanelProps = {
   initialTab?: MemoryTab
   /** 入口锚点（按钮右缘+顶缘视口坐标）：卡片贴其右侧滑出；null 回退底部 sheet。 */
   anchor?: PopoverAnchor | null
+  /** 鼠标进入卡片（hover 模式：取消自动收回）。 */
+  onCardMouseEnter?: () => void
+  /** 鼠标离开卡片（hover 模式：启动自动收回计时）。 */
+  onCardMouseLeave?: () => void
   /** 轻量翻译函数（入口经 makeT 提供）。 */
   t?: MemoryT
 } & MemoryApi
@@ -68,6 +77,31 @@ export type MemoryPanelProps = {
 /** 分割标签输入（逗号/空格/中文逗号）。 */
 function splitTags(raw: string): string[] {
   return raw.split(/[,，\s]+/).map(tag => tag.trim()).filter(Boolean).slice(0, 8)
+}
+
+/** 提取条目标题：`【主题】…` 取主题；否则取首个短首行；都没有回退正文前 40 字。 */
+function entryTitle(content: string): string {
+  const trimmed = content.trim()
+  const bracket = trimmed.match(/^【([^】]{1,30})】/)
+  if (bracket !== null) return bracket[1].trim()
+  const firstLine = (trimmed.split('\n', 1)[0] ?? '').replace(/^#{1,6}\s*/, '').replace(/^[-*+]\s*/, '').trim()
+  if (firstLine !== '' && firstLine.length <= 60) return firstLine
+  return trimmed.slice(0, 40)
+}
+
+/** 提取列表摘要：去掉标题部分后的纯文本前 ~64 字符。 */
+function entrySnippet(content: string): string {
+  const trimmed = content.trim()
+  const bracket = trimmed.match(/^【([^】]{1,30})】\s*/)
+  let rest = trimmed
+  if (bracket !== null) rest = trimmed.slice(bracket[0].length).trim()
+  else {
+    const nl = trimmed.indexOf('\n')
+    const firstLine = (trimmed.split('\n', 1)[0] ?? '').trim()
+    if (nl !== -1 && firstLine.length <= 60) rest = trimmed.slice(nl + 1).trim()
+  }
+  const flat = rest.replace(/[#*`>[\]()!-]/g, ' ').replace(/\s+/g, ' ').trim()
+  return flat === '' ? trimmed.replace(/\s+/g, ' ').slice(0, 64) : flat.slice(0, 64)
 }
 
 /** 相对时间（今天 HH:mm / 昨天 / N 天前）。 */
@@ -162,7 +196,7 @@ export function PinIcon({ size = 16, filled = false }: { size?: number; filled?:
 }
 
 /** 主面板。 */
-export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor = null, t = makeT(), ...api }: MemoryPanelProps): JSX.Element {
+export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor = null, onCardMouseEnter, onCardMouseLeave, t = makeT(), ...api }: MemoryPanelProps): JSX.Element | null {
   ensureStyles()
   // slots 的 inject 函数每次渲染返回新 api 对象；用 ref 固定引用，
   // 否则 load 的 useCallback 依赖 api 每次变化 → useEffect 无限重触发请求风暴。
@@ -186,6 +220,11 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
   const [addPinned, setAddPinned] = useState(false)
   const [addScope, setAddScope] = useState<'global' | 'project'>('global')
   const [addProject, setAddProject] = useState('')
+  // 主从布局：当前选中的条目。
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  // 多选删除模式。
+  const [selecting, setSelecting] = useState(false)
+  const [checkedIds, setCheckedIds] = useState<ReadonlySet<string>>(new Set())
 
   const load = useCallback(async () => {
     const current = apiRef.current
@@ -240,6 +279,28 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
   const handleDelete = (entry: MemoryEntryView): void => {
     if (!window.confirm(t('deleteConfirm'))) return
     void run(() => api.deleteEntry(entry.id))
+  }
+
+  // ── 多选删除 ─────────────────────────────────────────────────────────
+
+  const enterSelecting = (): void => {
+    closeForms()
+    setSelecting(true)
+    setCheckedIds(new Set())
+  }
+
+  const exitSelecting = (): void => {
+    setSelecting(false)
+    setCheckedIds(new Set())
+  }
+
+  const toggleChecked = (id: string): void => {
+    setCheckedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
   }
 
   /** 提交手动添加记忆。 */
@@ -365,197 +426,129 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
     longterm: t('groupLongterm'),
   }
 
-  const renderCard = (entry: MemoryEntryView): JSX.Element => (    <li key={entry.id} className={entry.pinned ? `${css.card} ${css.cardPinned}` : css.card}>
-      {entry.pinned && <span className={css.pinMark}><PinIcon size={14} filled /></span>}
-      <div className={css.cardMain}>
-        {editing?.entryId === entry.id ? (
-          <div className={css.inlineForm}>
-            <textarea
-              className={css.inlineTextarea}
-              value={editing.content}
-              aria-label={t('edit')}
-              onChange={(event) => { setEditing({ ...editing, content: event.currentTarget.value }) }}
-            />
-            <input
-              className={css.inlineInput}
-              value={editing.tags}
-              placeholder={t('tagEditPlaceholder')}
-              aria-label={t('tagEditPlaceholder')}
-              onChange={(event) => { setEditing({ ...editing, tags: event.currentTarget.value }) }}
-            />
-            <div className={css.addMeta}>
-              <label className={css.check}>
-                <input
-                  type="radio"
-                  name={`dsh-memory-edit-scope-${entry.id}`}
-                  checked={editing.scope === 'global'}
-                  onChange={() => { setEditing({ ...editing, scope: 'global', projectHash: null }) }}
-                />
-                {t('moveToGlobal')}
-              </label>
-              <label className={css.check}>
-                <input
-                  type="radio"
-                  name={`dsh-memory-edit-scope-${entry.id}`}
-                  checked={editing.scope === 'project'}
-                  onChange={() => {
-                    setEditing({
-                      ...editing,
-                      scope: 'project',
-                      projectHash: editing.projectHash ?? projects.find(p => p.entryCount > 0)?.hash ?? projects[0]?.hash ?? null,
-                    })
-                  }}
-                />
-                {t('moveToProject')}
-              </label>
-              {editing.scope === 'project' && (
-                <select
-                  className={css.tagSelect}
-                  value={editing.projectHash ?? ''}
-                  aria-label={t('projectPlaceholder')}
-                  onChange={(event) => { setEditing({ ...editing, projectHash: event.currentTarget.value || null }) }}
-                >
-                  {projects.map(project => (
-                    <option key={project.hash} value={project.hash}>
-                      {project.alias ?? project.path.split(/[\\/]/).filter(Boolean).at(-1) ?? project.hash}
-                    </option>
-                  ))}
-                </select>
-              )}
-            </div>
-            <div className={css.editButtons}>
-              <Button variant="primary" size="sm" disabled={busy} onClick={saveEdit}>{t('save')}</Button>
-              <Button variant="outline" size="sm" disabled={busy} onClick={() => { setEditing(null) }}>{t('cancel')}</Button>
-            </div>
-          </div>
-        ) : moving?.entryId === entry.id ? (
-          <div className={css.inlineForm}>
-            <div className={css.editButtons}>
-              <Button
-                variant={moving.target === 'global' ? 'primary' : 'outline'}
-                size="sm"
-                disabled={busy}
-                onClick={() => { setMoving({ ...moving, target: 'global' }) }}
-              >
-                {t('moveToGlobal')}
-              </Button>
-              <Button
-                variant={moving.target === 'project' ? 'primary' : 'outline'}
-                size="sm"
-                disabled={busy}
-                onClick={() => { setMoving({ ...moving, target: 'project' }) }}
-              >
-                {t('moveToProject')}
-              </Button>
-            </div>
-            {moving.target === 'project' && (
-              <input
-                className={css.inlineInput}
-                value={moving.project}
-                placeholder={t('projectPlaceholder')}
-                aria-label={t('projectPlaceholder')}
-                onChange={(event) => { setMoving({ ...moving, project: event.currentTarget.value }) }}
-              />
-            )}
-            <div className={css.editButtons}>
-              <Button variant="primary" size="sm" disabled={busy} onClick={saveMove}>{t('save')}</Button>
-              <Button variant="outline" size="sm" disabled={busy} onClick={() => { setMoving(null) }}>{t('cancel')}</Button>
-            </div>
-          </div>
-        ) : (
-          <>
-            <div className={css.cardHead}>
-              <div className={css.cardContent}>
-                {entry.pinned && <span className={css.pinMark}><PinIcon size={12} filled /></span>}
-                {entry.content}
-              </div>
-              <div className={css.cardActions}>
-                <Tooltip label={entry.pinned ? t('unpin') : t('pin')} side="top" delayMs={500}>
-                  <button type="button" className={css.iconAction} aria-label={entry.pinned ? t('unpin') : t('pin')} disabled={busy} onClick={() => { handlePin(entry) }}>
-                    <PinIcon size={14} filled={entry.pinned} />
-                  </button>
-                </Tooltip>
-                <Tooltip label={t('edit')} side="top" delayMs={500}>
-                  <button type="button" className={css.iconAction} aria-label={t('edit')} disabled={busy} onClick={() => { startEdit(entry) }}>
-                    <IconEditOutline16 size={14} />
-                  </button>
-                </Tooltip>
-                <Tooltip label={t('move')} side="top" delayMs={500}>
-                  <button type="button" className={css.iconAction} aria-label={t('move')} disabled={busy} onClick={() => { startMove(entry) }}>
-                    <IconFolderOpenOutline16 size={14} />
-                  </button>
-                </Tooltip>
-                <Tooltip label={t('delete')} side="top" delayMs={500}>
-                  <button type="button" className={css.iconAction} aria-label={t('delete')} disabled={busy} onClick={() => { handleDelete(entry) }}>
-                    <IconTrashOutline16 size={14} />
-                  </button>
-                </Tooltip>
-              </div>
-            </div>
-            <div className={css.cardFoot}>
-              {entry.tags.length > 0 && (
-                <div className={css.chips}>
-                  {entry.tags.map(tagName => (
-                    <button
-                      key={tagName}
-                      type="button"
-                      className={tag === tagName ? `${css.chip} ${css.chipActive}` : css.chip}
-                      onClick={() => { setTag(tag === tagName ? '' : tagName) }}
-                    >
-                      {tagName}
-                    </button>
-                  ))}
-                </div>
-              )}
-              <div className={css.cardMeta}>
-                <span>{entry.scope === 'global' ? t('scopeGlobal') : projectName(entry.projectHash, projects)}</span>
-                <span>{entry.importance}</span>
-                <span>{entry.source === 'manual' ? t('sourceManual') : t('sourceExtract')}</span>
-                <span>{relativeTime(entry.updatedAt)}</span>
-                {entry.layer === 'long' && <span>{t('groupLongterm')}</span>}
-              </div>
-            </div>
-          </>
-        )}
-      </div>
-    </li>
+  // 选中条目：过滤结果变化时若失联则自动落到第一条。
+  const detail = useMemo(
+    () => filtered.find(entry => entry.id === selectedId) ?? null,
+    [filtered, selectedId],
   )
+  useEffect(() => {
+    if (detail === null && filtered.length > 0) setSelectedId(filtered[0]?.id ?? null)
+  }, [detail, filtered])
+  const closeForms = (): void => { setEditing(null); setMoving(null); setAdding(false) }
+  const selectEntry = (entry: MemoryEntryView): void => { closeForms(); setSelectedId(entry.id) }
 
-  /** 渲染一条变更（含前后内容对比，无删除按钮）。 */
-  const renderChange = (change: ChangeView): JSX.Element => {
-    const hasDiff = change.before !== undefined && change.after !== undefined && change.before !== change.after
+  // 多选派生与批量删除（依赖 filtered，须在其后定义）。
+  const allChecked = filtered.length > 0 && filtered.every(entry => checkedIds.has(entry.id))
+  const toggleAllChecked = (): void => {
+    setCheckedIds(allChecked ? new Set() : new Set(filtered.map(entry => entry.id)))
+  }
+  const deleteChecked = (): void => {
+    const ids = [...checkedIds]
+    if (ids.length === 0) return
+    if (!window.confirm(t('deleteSelectedConfirm', { n: ids.length }))) return
+    void run(async () => {
+      await Promise.all(ids.map(id => api.deleteEntry(id)))
+      exitSelecting()
+    })
+  }
+
+  /** 左列一行条目。 */
+  const renderItemRow = (entry: MemoryEntryView): JSX.Element => {
+    const selected = !selecting && entry.id === selectedId
+    const checked = checkedIds.has(entry.id)
     return (
-      <li key={change.id} className={css.changeRow}>
-        <span className={change.action === 'delete' ? `${css.changeBadge} ${css.changeBadgeDelete}` : css.changeBadge}>
-          {changeActionLabel(change.action)}
-        </span>
-        <div className={css.cardMain}>
-          <div className={css.cardMeta}>
-            <span>{change.scope === 'global' ? t('scopeGlobal') : change.projectHash ?? ''}</span>
-            <span>{relativeTime(change.at)}</span>
-          </div>
-          {change.action === 'delete' ? (
-            <div className={css.cardContent}>{change.summary}</div>
-          ) : hasDiff ? (
-            /* 左右并排对比：旧 | 新 */
-            <div className={css.changeDiff}>
-              <div className={css.changeDiffCol}>
-                <div className={css.cardMeta}><span>{t('diffOld')}</span></div>
-                <div className={`${css.cardContent} ${css.changeOld}`}>{change.before}</div>
-              </div>
-              <div className={css.changeDiffDivider} />
-              <div className={css.changeDiffCol}>
-                <div className={css.cardMeta}><span>{t('diffNew')}</span></div>
-                <div className={`${css.cardContent} ${css.changeNew}`}>{change.after}</div>
-              </div>
-            </div>
-          ) : (
-            <div className={css.cardContent}>{change.after ?? change.summary}</div>
+      <li key={entry.id}>
+        <button
+          type="button"
+          className={selecting
+            ? (checked ? `${css.item} ${css.itemSelected}` : css.item)
+            : (selected ? `${css.item} ${css.itemSelected}` : css.item)}
+          data-selected={(selecting ? checked : selected) || undefined}
+          onClick={() => { if (selecting) toggleChecked(entry.id); else selectEntry(entry) }}
+        >
+          {selecting && (
+            <span className={css.itemCheck} aria-hidden="true">
+              {checked && (
+                <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M3 8.5 6.5 12 13 4.5" />
+                </svg>
+              )}
+            </span>
           )}
-        </div>
+          <span className={css.itemBody}>
+            <span className={css.itemTitle}>
+              {entry.pinned && <span className={css.pinMark}><PinIcon size={11} filled /></span>}
+              <span className={css.itemTitleText}>{entryTitle(entry.content)}</span>
+            </span>
+            <span className={css.itemSnippet}>{entrySnippet(entry.content)}</span>
+            <span className={css.itemTime}>{relativeTime(entry.updatedAt)}</span>
+          </span>
+        </button>
       </li>
     )
   }
+
+  /** 详情区头部操作钮组。 */
+  const detailActions = (entry: MemoryEntryView): JSX.Element => (
+    <div className={css.cardActions}>
+      <Tooltip label={entry.pinned ? t('unpin') : t('pin')} side="bottom" delayMs={500}>
+        <button type="button" className={css.iconAction} aria-label={entry.pinned ? t('unpin') : t('pin')} disabled={busy} onClick={() => { handlePin(entry) }}>
+          <PinIcon size={14} filled={entry.pinned} />
+        </button>
+      </Tooltip>
+      <Tooltip label={t('edit')} side="bottom" delayMs={500}>
+        <button type="button" className={css.iconAction} aria-label={t('edit')} disabled={busy} onClick={() => { startEdit(entry) }}>
+          <IconEditOutline16 size={14} />
+        </button>
+      </Tooltip>
+      <Tooltip label={t('move')} side="bottom" delayMs={500}>
+        <button type="button" className={css.iconAction} aria-label={t('move')} disabled={busy} onClick={() => { startMove(entry) }}>
+          <IconFolderOpenOutline16 size={14} />
+        </button>
+      </Tooltip>
+      <Tooltip label={t('delete')} side="bottom" delayMs={500}>
+        <button type="button" className={`${css.iconAction} ${css.iconActionDanger}`} aria-label={t('delete')} disabled={busy} onClick={() => { handleDelete(entry) }}>
+          <IconTrashOutline16 size={14} />
+        </button>
+      </Tooltip>
+    </div>
+  )
+
+  /** 归属范围选择（编辑/新建共用）。 */
+  const scopeFields = (
+    name: string,
+    scopeValue: 'global' | 'project',
+    onScope: (scope: 'global' | 'project') => void,
+    projectValue: string,
+    onProject: (hash: string) => void,
+  ): JSX.Element => (
+    <>
+      <label className={css.check}>
+        <input type="radio" name={name} checked={scopeValue === 'global'} onChange={() => { onScope('global') }} />
+        {t('moveToGlobal')}
+      </label>
+      <label className={css.check}>
+        <input type="radio" name={name} checked={scopeValue === 'project'} onChange={() => {
+          onScope('project')
+          if (projectValue === '') {
+            const first = projects.find(project => project.entryCount > 0) ?? projects[0]
+            if (first !== undefined) onProject(first.hash)
+          }
+        }} />
+        {t('moveToProject')}
+      </label>
+      {scopeValue === 'project' && (
+        <select className={css.tagSelect} value={projectValue} aria-label={t('projectPlaceholder')} onChange={(event) => { onProject(event.currentTarget.value) }}>
+          {projects.length === 0 && <option value="">{t('noProjects')}</option>}
+          {projects.map(project => (
+            <option key={project.hash} value={project.hash}>
+              {project.alias ?? project.path.split(/[\\/]/).filter(Boolean).at(-1) ?? project.hash}
+            </option>
+          ))}
+        </select>
+      )}
+    </>
+  )
 
   const renderEmpty = (text: string): JSX.Element => <div className={css.empty}>{text}</div>
 
@@ -566,7 +559,9 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
       closing={closing}
       onClose={onClose}
       anchor={anchor}
-      width={680}
+      onCardMouseEnter={onCardMouseEnter}
+      onCardMouseLeave={onCardMouseLeave}
+      width={980}
       ariaLabel={t('panelTitle')}
     >
       <PshHead title={t('panelTitle')} closeLabel={t('close')} onClose={onClose} />
@@ -581,112 +576,14 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
               role="tab"
               aria-selected={tab === key}
               className={tab === key ? `${css.tab} ${css.tabActive}` : css.tab}
-              onClick={() => { setTab(key) }}
+              onClick={() => { setTab(key); closeForms() }}
             >
               {key === 'all' ? t('tabAll') : `${t('tabChanges')}${changes.length > 0 ? ` (${changes.length})` : ''}`}
             </button>
           ))}
         </div>
 
-        {/* 置顶区（常驻固定在全部/变更之上，所有 Tab 可见） */}
-        {state.status === 'ready' && pinned.length > 0 && (
-          <>
-            <div className={css.sectionTitle}>{t('tabPinned')}</div>
-            <ul className={css.cardList}>{pinned.map(renderCard)}</ul>
-          </>
-        )}
-
-        {/* 手动添加记忆 */}
-        <div className={css.addRow}>
-          <Button
-            variant="ghost"
-            size="sm"
-            aria-expanded={adding}
-            onClick={() => { setAdding(value => !value) }}
-          >
-            {t('add')}
-          </Button>
-        </div>
-        {adding && (
-          <div className={css.addForm}>
-            <textarea
-              className={css.inlineTextarea}
-              value={addContent}
-              placeholder={t('addContentPlaceholder')}
-              aria-label={t('addContentPlaceholder')}
-              autoFocus
-              onChange={(event) => { setAddContent(event.currentTarget.value) }}
-            />
-            <div className={css.addMeta}>
-              <input
-                className={css.inlineInput}
-                style={{ flex: 1, minWidth: 120 }}
-                value={addTags}
-                placeholder={t('addTagsPlaceholder')}
-                aria-label={t('addTagsPlaceholder')}
-                onChange={(event) => { setAddTags(event.currentTarget.value) }}
-              />
-              <label className={css.check}>
-                <input
-                  type="checkbox"
-                  checked={addPinned}
-                  onChange={(event) => { setAddPinned(event.currentTarget.checked) }}
-                />
-                {t('addPinned')}
-              </label>
-              <label className={css.check}>
-                <input
-                  type="radio"
-                  name="dsh-memory-add-scope"
-                  checked={addScope === 'global'}
-                  onChange={() => { setAddScope('global') }}
-                />
-                {t('addScopeGlobal')}
-              </label>
-              <label className={css.check}>
-                <input
-                  type="radio"
-                  name="dsh-memory-add-scope"
-                  checked={addScope === 'project'}
-                  onChange={() => {
-                    setAddScope('project')
-                    // 默认选中第一个项目（若无选择）。
-                    if (addProject === '') {
-                      const first = projects.find(project => project.entryCount > 0) ?? projects[0]
-                      if (first !== undefined) setAddProject(first.hash)
-                    }
-                  }}
-                />
-                {t('addScopeProject')}
-              </label>
-              {addScope === 'project' && (
-                <select
-                  className={css.tagSelect}
-                  value={addProject}
-                  aria-label={t('projectPlaceholder')}
-                  onChange={(event) => { setAddProject(event.currentTarget.value) }}
-                >
-                  {projects.length === 0 && <option value="">{t('noProjects')}</option>}
-                  {projects.map(project => (
-                    <option key={project.hash} value={project.hash}>
-                      {project.alias ?? project.path.split(/[\\/]/).filter(Boolean).at(-1) ?? project.hash}
-                    </option>
-                  ))}
-                </select>
-              )}
-            </div>
-            <div className={css.editButtons}>
-              <Button variant="primary" size="sm" disabled={busy || addContent.trim() === ''} onClick={saveAdd}>
-                {t('save')}
-              </Button>
-              <Button variant="outline" size="sm" disabled={busy} onClick={() => { setAdding(false) }}>
-                {t('cancel')}
-              </Button>
-            </div>
-          </div>
-        )}
-
-        {/* 项目切换（全部/全局/项目 —— 所有 Tab 通用，置顶区同样按此筛选） */}
+        {/* 项目切换 + 自动记忆开关 + 清空项目 */}
         <div className={css.topRow}>
           <div className={css.projectChips} role="group" aria-label={t('scopeGlobal')}>
             <button
@@ -719,21 +616,23 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
           {scope.startsWith('project:') && (() => {
             const hash = scope.slice('project:'.length)
             const project = projects.find(candidate => candidate.hash === hash)
+            const autoOn = project?.autoMemory ?? true
             return (
               <>
-                <label className={css.check} title={t('autoMemory')}>
-                  <input
-                    type="checkbox"
-                    checked={project?.autoMemory ?? true}
+                <span className={css.switchLine}>
+                  <button
+                    type="button"
+                    className={css.switch}
+                    role="switch"
+                    aria-checked={autoOn}
+                    aria-label={t('autoMemory')}
                     disabled={busy}
-                    onChange={(event) => {
-                      void run(() => api.meta(hash, { autoMemory: event.currentTarget.checked }))
-                    }}
+                    onClick={() => { void run(() => api.meta(hash, { autoMemory: !autoOn })) }}
                   />
-                  {t('autoMemory')}
-                </label>
+                  <span className={css.switchText}>{t('autoMemory')}</span>
+                </span>
                 <Tooltip label={t('clearProject')} side="top" delayMs={500}>
-                  <button type="button" className={css.iconAction} aria-label={t('clearProject')} disabled={busy} onClick={handleClearProject}>
+                  <button type="button" className={`${css.iconAction} ${css.iconActionDanger}`} aria-label={t('clearProject')} disabled={busy} onClick={handleClearProject}>
                     <IconTrashOutline16 size={14} />
                   </button>
                 </Tooltip>
@@ -742,8 +641,19 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
           })()}
         </div>
 
-        {/* 搜索 + 标签筛选（全部 Tab） */}
-        {tab === 'all' && (
+        {/* 搜索 + 标签筛选 + 新建/多选（全部 Tab） */}
+        {tab === 'all' && (selecting ? (
+          <div className={css.searchRow}>
+            <span className={css.batchCount}>{t('selectedCount', { n: checkedIds.size })}</span>
+            <button type="button" className={css.chip} onClick={toggleAllChecked}>{allChecked ? t('collapse') : t('selectAll')}</button>
+            <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <Button variant="outline" size="sm" disabled={busy} onClick={exitSelecting}>{t('cancel')}</Button>
+              <Button variant="primary" size="sm" disabled={busy || checkedIds.size === 0} onClick={deleteChecked}>
+                {t('delete')} ({checkedIds.size})
+              </Button>
+            </div>
+          </div>
+        ) : (
           <div className={css.searchRow}>
             <input
               className={css.searchInput}
@@ -768,8 +678,19 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
                 <IconRefreshOutline14 />
               </button>
             </Tooltip>
+            <Button
+              variant="ghost"
+              size="sm"
+              aria-expanded={adding}
+              onClick={() => { setAdding(value => !value); setEditing(null); setMoving(null) }}
+            >
+              {t('add')}
+            </Button>
+            <Button variant="ghost" size="sm" onClick={enterSelecting}>
+              {t('multiSelect')}
+            </Button>
           </div>
-        )}
+        ))}
 
         {error !== '' && <p className={css.error}>{error}</p>}
 
@@ -781,32 +702,198 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
           </div>
         )}
 
-        {/* 全部：时间线（置顶区已在 Tab 上方固定展示） */}
+        {/* 全部：主从布局（左列表 / 右详情） */}
         {state.status === 'ready' && tab === 'all' && (
-          <>
-            {(Object.keys(grouped) as GroupKey[]).map(groupKey => (
-              grouped[groupKey].length > 0 && (
-                <div key={groupKey}>
-                  <div className={css.sectionTitle}>{groupTitles[groupKey]}</div>
-                  <ul className={css.cardList}>{grouped[groupKey].map(renderCard)}</ul>
-                </div>
-              )
-            ))}
-            {filtered.length === 0 && renderEmpty(t('empty'))}
-          </>
+          filtered.length === 0 ? renderEmpty(t('empty')) : (
+            <div className={css.split}>
+              {/* 左列：紧凑条目列表（置顶在前 + 时间分组小节） */}
+              <ul className={css.listPane}>
+                {pinned.length > 0 && <li className={css.listSection}>{t('tabPinned')}</li>}
+                {pinned.map(renderItemRow)}
+                {(Object.keys(grouped) as GroupKey[]).map(groupKey => (
+                  grouped[groupKey].length > 0 ? (
+                    [
+                      <li key={`${groupKey}-section`} className={css.listSection}>{groupTitles[groupKey]}</li>,
+                      ...grouped[groupKey].map(renderItemRow),
+                    ]
+                  ) : null
+                ))}
+              </ul>
+              {/* 右侧：详情（查看 / 编辑 / 移动 / 新建） */}
+              <div className={css.detailPane}>
+                {adding ? (
+                  <div className={css.detailForm}>
+                    <textarea
+                      className={css.inlineTextarea}
+                      style={{ minHeight: 220 }}
+                      value={addContent}
+                      placeholder={t('addContentPlaceholder')}
+                      aria-label={t('addContentPlaceholder')}
+                      autoFocus
+                      onChange={(event) => { setAddContent(event.currentTarget.value) }}
+                    />
+                    <div className={css.addMeta}>
+                      <input
+                        className={css.inlineInput}
+                        style={{ flex: 1, minWidth: 120 }}
+                        value={addTags}
+                        placeholder={t('addTagsPlaceholder')}
+                        aria-label={t('addTagsPlaceholder')}
+                        onChange={(event) => { setAddTags(event.currentTarget.value) }}
+                      />
+                      <label className={css.check}>
+                        <input type="checkbox" checked={addPinned} onChange={(event) => { setAddPinned(event.currentTarget.checked) }} />
+                        {t('addPinned')}
+                      </label>
+                      {scopeFields('dsh-memory-add-scope', addScope, setAddScope, addProject, setAddProject)}
+                    </div>
+                    <div className={css.editButtons}>
+                      <Button variant="primary" disabled={busy || addContent.trim() === ''} onClick={saveAdd}>{t('save')}</Button>
+                      <Button variant="outline" disabled={busy} onClick={() => { setAdding(false) }}>{t('cancel')}</Button>
+                    </div>
+                  </div>
+                ) : editing !== null && detail !== null && detail.id === editing.entryId ? (
+                  <div className={css.detailForm}>
+                    <textarea
+                      className={css.inlineTextarea}
+                      style={{ minHeight: 220 }}
+                      value={editing.content}
+                      aria-label={t('edit')}
+                      onChange={(event) => { setEditing({ ...editing, content: event.currentTarget.value }) }}
+                    />
+                    <div className={css.addMeta}>
+                      <input
+                        className={css.inlineInput}
+                        style={{ flex: 1, minWidth: 120 }}
+                        value={editing.tags}
+                        placeholder={t('tagEditPlaceholder')}
+                        aria-label={t('tagEditPlaceholder')}
+                        onChange={(event) => { setEditing({ ...editing, tags: event.currentTarget.value }) }}
+                      />
+                      {scopeFields(`dsh-memory-edit-scope-${editing.entryId}`, editing.scope, (next) => {
+                        setEditing({ ...editing, scope: next, projectHash: next === 'global' ? null : editing.projectHash })
+                      }, editing.projectHash ?? '', (hash) => { setEditing({ ...editing, scope: 'project', projectHash: hash }) })}
+                    </div>
+                    <div className={css.editButtons}>
+                      <Button variant="primary" disabled={busy} onClick={saveEdit}>{t('save')}</Button>
+                      <Button variant="outline" disabled={busy} onClick={() => { setEditing(null) }}>{t('cancel')}</Button>
+                    </div>
+                  </div>
+                ) : moving !== null && detail !== null && detail.id === moving.entryId ? (
+                  <div className={css.detailForm}>
+                    <div className={css.editButtons} style={{ justifyContent: 'flex-start' }}>
+                      <Button
+                        variant={moving.target === 'global' ? 'primary' : 'outline'}
+                        disabled={busy}
+                        onClick={() => { setMoving({ ...moving, target: 'global' }) }}
+                      >
+                        {t('moveToGlobal')}
+                      </Button>
+                      <Button
+                        variant={moving.target === 'project' ? 'primary' : 'outline'}
+                        disabled={busy}
+                        onClick={() => { setMoving({ ...moving, target: 'project' }) }}
+                      >
+                        {t('moveToProject')}
+                      </Button>
+                    </div>
+                    {moving.target === 'project' && (
+                      <input
+                        className={css.inlineInput}
+                        value={moving.project}
+                        placeholder={t('projectPlaceholder')}
+                        aria-label={t('projectPlaceholder')}
+                        onChange={(event) => { setMoving({ ...moving, project: event.currentTarget.value }) }}
+                      />
+                    )}
+                    <div className={css.editButtons}>
+                      <Button variant="primary" disabled={busy} onClick={saveMove}>{t('save')}</Button>
+                      <Button variant="outline" disabled={busy} onClick={() => { setMoving(null) }}>{t('cancel')}</Button>
+                    </div>
+                  </div>
+                ) : detail !== null ? (
+                  <>
+                    <div className={css.detailHead}>
+                      <h3 className={css.detailTitle}>{entryTitle(detail.content)}</h3>
+                      {detailActions(detail)}
+                    </div>
+                    <div className={css.detailMeta}>
+                      <span>{detail.scope === 'global' ? t('scopeGlobal') : projectName(detail.projectHash, projects)}</span>
+                      <span>{t('importanceLabel', { n: detail.importance })}</span>
+                      <span>{detail.source === 'manual' ? t('sourceManual') : t('sourceExtract')}</span>
+                      <span>{relativeTime(detail.updatedAt)}</span>
+                      {detail.layer === 'long' && <span>{t('groupLongterm')}</span>}
+                    </div>
+                    <div className={css.detailBody}>
+                      <MarkstreamMarkdown text={detail.content} streaming={false} />
+                    </div>
+                    {detail.tags.length > 0 && (
+                      <div className={css.detailTags}>
+                        {detail.tags.map(tagName => (
+                          <button
+                            key={tagName}
+                            type="button"
+                            className={tag === tagName ? `${css.chip} ${css.chipActive}` : css.chip}
+                            onClick={() => { setTag(tag === tagName ? '' : tagName) }}
+                          >
+                            {tagName}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  renderEmpty(t('empty'))
+                )}
+              </div>
+            </div>
+          )
         )}
 
-        {/* 变更（按当前 全部/全局/项目 筛选） */}
+        {/* 变更（按当前 全部/全局/项目 筛选；全宽列表） */}
         {state.status === 'ready' && tab === 'changes' && (
-          <>
-            <div className={css.sectionTitle}>{t('todayChanges')}</div>
-            {visibleChanges.length === 0
-              ? renderEmpty(t('changesEmpty'))
-              : <ul className={css.cardList}>{visibleChanges.map(renderChange)}</ul>}
-          </>
+          visibleChanges.length === 0
+            ? renderEmpty(t('changesEmpty'))
+            : <ul className={css.cardList}>{visibleChanges.map(renderChange)}</ul>
         )}
       </div>
       </PshBody>
     </PopoverShell>
   )
+
+  /** 渲染一条变更（含前后内容对比，无删除按钮）。 */
+  function renderChange(change: ChangeView): JSX.Element {
+    const hasDiff = change.before !== undefined && change.after !== undefined && change.before !== change.after
+    return (
+      <li key={change.id} className={css.changeRow}>
+        <span className={change.action === 'delete' ? `${css.changeBadge} ${css.changeBadgeDelete}` : css.changeBadge}>
+          {changeActionLabel(change.action)}
+        </span>
+        <div className={css.changeMain}>
+          <div className={css.cardMeta}>
+            <span>{change.scope === 'global' ? t('scopeGlobal') : change.projectHash ?? ''}</span>
+            <span>{relativeTime(change.at)}</span>
+          </div>
+          {change.action === 'delete' ? (
+            <div className={css.cardContent}>{change.summary}</div>
+          ) : hasDiff ? (
+            /* 左右并排对比：旧 | 新 */
+            <div className={css.changeDiff}>
+              <div className={css.changeDiffCol}>
+                <div className={css.cardMeta}><span>{t('diffOld')}</span></div>
+                <div className={`${css.cardContent} ${css.changeOld}`}>{change.before}</div>
+              </div>
+              <div className={css.changeDiffDivider} />
+              <div className={css.changeDiffCol}>
+                <div className={css.cardMeta}><span>{t('diffNew')}</span></div>
+                <div className={`${css.cardContent} ${css.changeNew}`}>{change.after}</div>
+              </div>
+            </div>
+          ) : (
+            <div className={css.cardContent}>{change.after ?? change.summary}</div>
+          )}
+        </div>
+      </li>
+    )
+  }
 }

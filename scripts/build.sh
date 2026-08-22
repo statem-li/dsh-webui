@@ -62,6 +62,7 @@ link_pkg @deepseek-ai/dsh-client-schema-form packages/client/schema-form
 link_pkg @deepseek-ai/dsh-client-ui-attachment packages/client/ui-attachment
 link_pkg @deepseek-ai/dsh-client-ui-model-selection packages/client/ui-model-selection
 link_pkg @deepseek-ai/dsh-client-ui-settings packages/client/ui-settings
+link_pkg @deepseek-ai/dsh-client-ui-theme packages/client/ui-theme
 link_pkg @deepseek-ai/dsh-client-ui-sidebar packages/client/ui-sidebar
 link_pkg @deepseek-ai/dsh-client-ui-tool packages/client/ui-tool
 link_pkg @deepseek-ai/dsh-client-ui-input-trigger packages/client/ui-input-trigger
