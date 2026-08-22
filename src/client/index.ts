@@ -4,6 +4,12 @@
  *  1. 会话头部右上角视图图块 + 消息入口 + 供应商标签（原生 webui 能力）。
  *  2. 工具调用聚合（tool-call shadow + 活动抽屉）。
  *  3. 助手 Markdown 渲染（markstream-react）+ 思考 chip（实时时长 / 实时文字滚动）。
+ *
+ * 功能模块开关：启动时同步读 localStorage `dsh-webui.modules`（缺省全启用，
+ * 只有显式 false 关闭），按它裁剪下方注册点；同时后台 fetch
+ * `/api/webui-modules` 校正缓存（host settings.yaml 为准），下次刷新生效。
+ * 核心导航与渲染（视图图块 / markstream 基础组件 / 供应商标签 / 响应式样式）
+ * 不提供开关，始终启用。
  */
 import type { ClientContext, SessionId } from '@deepseek-ai/dsh-client-runtime/client'
 // Type-only: 拉入 modelDirectories 服务的 Context 声明（ui-model-selection 提供）。
@@ -19,6 +25,8 @@ import 'markstream-react/index.css'
 import './markdown/styles.css'
 import { Webui } from './Webui'
 import { ProviderBadge, type ProviderBadgeInjected } from './ProviderBadge'
+// 功能模块开关：localStorage 同步读 + /api/webui-modules 后台校正。
+import { readStoredModules, syncServerModules, isModuleEnabled, type WebuiModuleKey } from './modules'
 // 模型选择增强：接管模型座位（纯模型弹出）+ 推理等级滑动式弹出。
 import { applyModelSeats } from './model-selection'
 // AnySearchCard：外接网页搜索设置卡（settings.plugin.item）。
@@ -82,6 +90,11 @@ const CUSTOM_COMPONENT_SCOPE = 'dsh-better-markdown'
 export const inject = ['slots', 'settingsScope', 'connection', 'conversationEvents', 'locale', 'remote', 'sessions', 'workspaces', 'inputTriggers', 'layout', 'theme']
 
 export function apply(ctx: ClientContext): void {
+  // ---- 功能模块开关：同步读缓存立即裁剪；后台校正缓存，下次刷新对齐服务端 ----
+  const moduleOverrides = readStoredModules()
+  const on = (key: WebuiModuleKey): boolean => isModuleEnabled(moduleOverrides, key)
+  syncServerModules()
+
   // ---- 移动端响应式：全局覆盖样式（DSH 设置面板单列化等），随插件生命周期清理 ----
   ctx.effect(() => injectResponsiveStyles(), 'webui: responsive styles')
 
@@ -89,7 +102,7 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(() => injectShellTitlebarStyles(), 'webui: shell titlebar styles')
 
   // ---- 我发送的对话宽度：启动即注入覆盖样式并恢复上次宽度（刷新后生效）----
-  applyMessageWidthClient(ctx)
+  if (on('messageWidth')) applyMessageWidthClient(ctx)
 
   // ---- 原生 webui：右上角「对话/轨迹」图块 + 消息入口 --------------------
   ctx.slots.inject('conversation.session.header.utilities', () =>
@@ -114,29 +127,33 @@ export function apply(ctx: ClientContext): void {
   })
 
   // ---- 模型选择增强：接管模型座位（纯模型弹出）+ 推理等级滑动弹出 ----------
-  applyModelSeats(ctx)
+  if (on('modelSeats')) applyModelSeats(ctx)
 
   // ---- dsh-tool-summary：工具调用聚合 + 活动抽屉 -------------------------
-  injectToolSummaryStyles()
-  mountActivityDrawer()
-  ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({
-    name: 'conversation.chat.node',
-    key: 'tool-call',
-    priority: -100,
-    locale: 'conversation',
-  }, ToolGroupNodeView))
+  if (on('toolSummary')) {
+    injectToolSummaryStyles()
+    mountActivityDrawer()
+    ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({
+      name: 'conversation.chat.node',
+      key: 'tool-call',
+      priority: -100,
+      locale: 'conversation',
+    }, ToolGroupNodeView))
+  }
 
   // ---- 对话统计条 shadow：缓存命中率精确到小数点后两位 -------------------
   // 原生 ui-conversation 的 StatsLine 注册于 conversation.composer.dock / id=stats
   // （priority 默认 0）；同 id + 更低 priority 覆盖原生条目，仅改动命中率显示。
-  injectStatsStyles()
-  ctx.slots.inject('conversation.composer.dock', () => ctx.slots.register({
-    name: 'conversation.composer.dock',
-    id: 'stats',
-    order: 0,
-    priority: -100,
-    locale: 'conversation',
-  }, StatsLineShadow))
+  if (on('chatStats')) {
+    injectStatsStyles()
+    ctx.slots.inject('conversation.composer.dock', () => ctx.slots.register({
+      name: 'conversation.composer.dock',
+      id: 'stats',
+      order: 0,
+      priority: -100,
+      locale: 'conversation',
+    }, StatsLineShadow))
+  }
 
   // ---- dsh-better-markdown：markstream 渲染 + 思考 chip -------------------
   ctx.effect(() => {
@@ -145,8 +162,9 @@ export function apply(ctx: ClientContext): void {
       image: DshImageNode,
       inline_code: DshInlineCodeNode,
       link: DshLinkNode,
-      mermaid: MermaidDiagram,
-      echarts: EChartsDiagram,
+      // 图表围栏可关（webui-modules.markdownCharts）：关闭后 mermaid/echarts
+      // 围栏按普通代码块渲染。
+      ...(on('markdownCharts') ? { mermaid: MermaidDiagram, echarts: EChartsDiagram } : {}),
     })
     return () => { removeCustomComponents(CUSTOM_COMPONENT_SCOPE) }
   }, 'webui: markstream component policy')
@@ -159,87 +177,91 @@ export function apply(ctx: ClientContext): void {
   }, BetterAssistantNodeView))
 
   // ---- dsh-web-search-anysearch：AnySearch 网页搜索设置卡片 ---------------
-  registerAnySearchCard(ctx)
+  if (on('webSearch')) registerAnySearchCard(ctx)
 
   // ---- dsh-mail：邮箱验证码设置卡片（紧随「外接网页搜索」之下）--------------
-  registerMailCard(ctx)
+  if (on('mail')) registerMailCard(ctx)
 
   // ---- dsh-zh-thinking：设置页「中文思考」开关 ----------------------------
-  registerZhThinking(ctx)
+  if (on('zhThinking')) registerZhThinking(ctx)
 
   // ---- dsh-task-done-sound：提示音开关 + 回合结束上报 ---------------------
-  registerTaskDoneSound(ctx)
+  if (on('doneSound')) registerTaskDoneSound(ctx)
 
   // ---- 对话完成胶囊：顶部居中胶囊 + 完成记录面板（含对话全文）--------------
-  applyDonePill(ctx)
+  if (on('donePill')) applyDonePill(ctx)
 
   // ---- dsh-image-gallery：生图画廊（generate_image 结果渲染）----------------
-  applyImageGallery(ctx)
+  if (on('vision')) applyImageGallery(ctx)
 
   // ---- dsh-updater：基础设置页签（宽度/自启/版本/更新）--------------------
-  registerUpdater(ctx)
+  if (on('updater')) registerUpdater(ctx)
 
   // ---- dsh-proxy：网络代理设置行 -----------------------------------------
-  registerProxy(ctx)
+  if (on('proxy')) registerProxy(ctx)
 
   // ---- dsh-browser：设置页「允许 AI 使用浏览器」开关 ---------------------
-  applyBrowserClient(ctx)
+  if (on('browser')) applyBrowserClient(ctx)
 
   // ---- dsh-memory：侧边栏导航行记忆面板 + 注入开关 ------------------------
-  applyMemoryClient(ctx)
+  if (on('memory')) applyMemoryClient(ctx)
 
   // ---- dsh-provider-hub：供应商设置页（对话 + 视觉 + 生图）---------------
-  applyProviderHub(ctx)
+  if (on('providerHub')) applyProviderHub(ctx)
 
   // ---- dsh-file-explorer：右上角文件浏览器（抽屉 + 树 + 编辑器）-----------
-  applyFileExplorerClient(ctx)
+  if (on('fileExplorer')) applyFileExplorerClient(ctx)
 
   // ---- 工作区目录选择器：自写弹窗（添加工作区选文件夹，shadow 官方 native）---
-  applyWorkspaceDirPickerClient(ctx)
+  if (on('dirPicker')) applyWorkspaceDirPickerClient(ctx)
 
   // ---- 用量工作台 + 技能面板（自 dsh-usage-skill 融合）：侧边栏导航行入口 ----
-  applyUsageEntries(ctx)
+  if (on('usage')) applyUsageEntries(ctx)
 
   // ---- DeepSeek 峰谷时刻卡片（footer 首行）---------------------------------
-  applyPeakValley(ctx)
+  if (on('peakValley')) applyPeakValley(ctx)
 
   // ---- 审批提醒：有工具调用等待审批时顶部弹 toast ---------------------------
-  applyApprovalNotifier(ctx)
+  if (on('approvalNotify')) applyApprovalNotifier(ctx)
 
   // ---- 对话「退回」：user 消息退回按钮（文件回退 + fork 上下文）--------------
-  applyRewindClient(ctx)
+  if (on('rewind')) applyRewindClient(ctx)
 
   // ---- 对话输入框 Ctrl+Enter 换行 -------------------------------------------
-  applyCtrlEnterNewline()
+  if (on('ctrlEnter')) applyCtrlEnterNewline()
 
   // ---- 单条消息截图（樱花主题）：assistant 消息 actions 行截图按钮 -----------
-  applyMessageScreenshot(ctx)
+  if (on('screenshot')) applyMessageScreenshot(ctx)
 
   // ---- 技能 slash 源（替代内核 ui-skill）：输入 / 先选集合再选技能 ----------
-  applySkillSource(ctx)
+  if (on('skills')) applySkillSource(ctx)
 
   // ---- 提示词优化：供应商左侧图标，点击后用选中模型优化草稿 ---------------
-  applyPromptOptimize(ctx)
+  if (on('promptOptimize')) applyPromptOptimize(ctx)
 
   // ---- 左侧悬浮侧边栏：热区悬停展开/移出折叠 + 默认态设置 ----------------
-  applySidebarFloatSetting(ctx)
-  ctx.effect(() => applySidebarFloat(ctx), 'webui: sidebar float')
+  if (on('sidebarFloat')) {
+    applySidebarFloatSetting(ctx)
+    ctx.effect(() => applySidebarFloat(ctx), 'webui: sidebar float')
+  }
 
   // ---- 外观主题：玻璃质感（Glassmorphism）--------------------------------
   // 启动即按持久化状态恢复（localStorage 同步 + 服务端校正）；插件卸载时
   // 仅撤销视觉效果，不触碰持久化值。设置行注册进「通用」分区外观区域。
-  registerGlassSetting(ctx)
-  ctx.effect(() => {
-    bootGlass(ctx.theme)
-    return () => { retractGlass(ctx.theme) }
-  }, 'webui: glass appearance')
+  if (on('appearance')) {
+    registerGlassSetting(ctx)
+    ctx.effect(() => {
+      bootGlass(ctx.theme)
+      return () => { retractGlass(ctx.theme) }
+    }, 'webui: glass appearance')
+  }
 
   // ---- 自动化：菜单项（新会话下方）+ 一级设置卡片 + 二级内容选择抽屉 -------
-  applyAutomation(ctx)
+  if (on('automation')) applyAutomation(ctx)
 
   // ---- 会话切换柔和过渡：内容区淡入浮入 + 侧边栏行底色平滑 ----------------
-  ctx.effect(() => applySessionSwitchMotion(), 'webui: session switch motion')
+  if (on('sessionMotion')) ctx.effect(() => applySessionSwitchMotion(), 'webui: session switch motion')
 
   // ---- 会话置顶：置顶排序 + 行内归档按钮 + 右键菜单 -------------------------
-  applySessionPin(ctx)
+  if (on('sessionPin')) applySessionPin(ctx)
 }

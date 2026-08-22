@@ -26,6 +26,76 @@ dsh plugin --profile web add github:statem-li/dsh-webui
   disabled: true
 ```
 
+## 按需启停功能模块
+
+dsh-webui 是全家桶，但每个功能模块都可以单独关闭——不需要的功能不装配（host 不注册对应工具 / provider / HTTP API，client 不注册对应 UI 槽位），界面更干净、加载更轻。
+
+**配置方法**（二选一，改完重启 DSH 生效）：
+
+1. 编辑 `~/.dsh/profiles/web/settings.yaml`，加 `webui-modules` 命名空间，把想关的模块显式写为 `false`（没写的模块全部保持启用，升级新增模块时老配置自动兼容）：
+
+```yaml
+webui-modules:
+  browser: false      # 不需要 AI 浏览器
+  automation: false   # 不需要自动化
+  planweave: false    # 不需要 PlanWeave 计划项目
+  peakValley: false   # 不需要峰谷时刻卡片
+```
+
+2. 调 HTTP API（适合脚本批量开关，部分覆盖合并写入）：
+
+```bash
+curl -X POST http://127.0.0.1:3080/api/webui-modules \
+  -H "content-type: application/json" \
+  -d '{"modules": {"browser": false, "automation": false}}'
+```
+
+**生效机制**：host 半身在插件加载时一次性装配，改动后需重启 DSH；client 半身启动时同步读本地缓存立即裁剪，并后台拉取 `/api/webui-modules` 校正缓存——重启后刷新页面，两端即按同一份配置生效。
+
+**模块 key 一览**（`false` = 关闭；缺省全部启用）：
+
+| 分组 | key | 控制的功能 |
+|---|---|---|
+| 对话体验 | `messageWidth` | 消息气泡宽度设置 |
+| | `doneSound` | 回合结束提示音 + 完成卡片 |
+| | `donePill` | 对话完成胶囊 + 记录面板 |
+| | `approvalNotify` | 审批等待 toast 提醒 |
+| | `ctrlEnter` | 输入框 Ctrl+Enter 换行 |
+| | `sessionMotion` | 会话切换柔和过渡 |
+| | `sessionPin` | 会话置顶 / 归档 / 右键菜单 |
+| | `rewind` | 对话退回 |
+| | `screenshot` | 单条消息截图 / 会话长图 |
+| | `promptOptimize` | 提示词优化图标 |
+| | `zhThinking` | 中文思考开关 |
+| | `peakValley` | DeepSeek 峰谷时刻卡片 |
+| | `chatStats` | 会话统计条 |
+| | `toolSummary` | 工具调用聚合 + 活动抽屉 |
+| 模型与供应商 | `reasoningSync` | `webui_sync_reasoning` 推理等级补全工具 |
+| | `modelSeats` | 模型座位接管 + 推理等级弹出 |
+| | `providerHub` | 供应商管理设置页 |
+| | `vision` | 辅助视觉 + 生图 + 生视频 + 生图画廊 |
+| | `webSearch` | AnySearch 网页搜索 |
+| | `mail` | 邮箱验证码 |
+| 技能 | `skills` | 技能 slash 两级导航源 + 技能开关路由 |
+| Markdown | `markdownCharts` | Mermaid / ECharts 图表围栏（关闭后按普通代码块渲染） |
+| AI 浏览器 | `browser` | 浏览器工具 + dock UI + 设置开关 |
+| 自动化与计划 | `automation` | 自动化任务 + 真实执行引擎 |
+| | `planweave` | PlanWeave 计划项目 |
+| 记忆 | `memory` | 记忆引擎 + Memory Dream |
+| 用量与统计 | `usage` | 用量工作台 |
+| 文件与工作区 | `fileExplorer` | 文件浏览器 |
+| | `dirPicker` | 工作区目录选择器 |
+| 外观与系统 | `appearance` | 玻璃质感主题 |
+| | `sidebarFloat` | 悬浮侧边栏 |
+| | `updater` | 壳管理更新 |
+| | `proxy` | 网络代理 |
+
+**注意事项**：
+
+- 关闭 `skills` 后会失去内置 slash 两级导航源，此时应删除 cordis.patch.yml 里对内核 ui-skill 的 `disabled: true` 以恢复官方 `/` 菜单。
+- 关闭 `providerHub` 将失去供应商/视觉/生图/生视频模型的配置入口（已保存的配置仍生效）。
+- 核心能力不提供开关、始终启用：视图图块与消息导航、markstream 基础 Markdown 渲染、供应商标签、移动端响应式。
+
 ## 功能总览
 
 ### 对话体验
@@ -215,7 +285,9 @@ Linux/macOS：`DSH_CHECKOUT=<checkout> bash scripts/build.sh`
 
 ```
 src/
-├── index.ts                  — host 半身入口：各能力模块装配
+├── index.ts                  — host 半身入口：各能力模块装配（按模块开关裁剪）
+├── modules.ts                — 功能模块 key 清单与开关解析（host / client 共用）
+├── modules-host.ts           — 模块开关 host（settings 命名空间 webui-modules + GET/POST /api/webui-modules）
 ├── planweave/                — PlanWeave 计划项目（engine / executor / host / workspace）
 ├── automation-host.ts        — 自动化执行引擎 host（/api/webui-automation）
 ├── markdown-html.ts          — 截图用 Markdown 渲染管线（markdown-it + shiki，四主题）
@@ -232,7 +304,8 @@ src/
 ├── workspace-dir-picker.ts   — 工作区目录选择器
 ├── browser/                  — AI 浏览器 host（壳内多标签对接 + CDP 原语）
 └── client/
-    ├── index.ts              — client 入口：注册各 UI 槽位
+    ├── index.ts              — client 入口：注册各 UI 槽位（按模块开关裁剪）
+    ├── modules.ts            — 模块开关 client（localStorage 同步读 + /api/webui-modules 校正）
     ├── skill-source/         — 技能 slash 两级导航源 + 技能工具行
     ├── session-pin/          — 会话置顶 / 归档 / 右键菜单 / 重命名
     ├── provider-hub/         — 供应商设置页（chat / vision / image / video）

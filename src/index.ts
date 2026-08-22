@@ -8,6 +8,9 @@
  *     的 known-models 词典做法）。
  *  3. AnySearch 网页搜索 provider（原 dsh-web-search-anysearch 插件）：注册
  *     到 `ctx.web`，替换内置 DeepSeek 搜索为 https://api.anysearch.com。
+ *
+ * 功能模块开关：settings 命名空间 `webui-modules`（见 modules-host.ts），
+ * applyModulesHost 返回本次启动的全量布尔表，为 false 的模块完全不装配。
  */
 import type { Context } from 'cordis'
 import z from '@deepseek-ai/schemastery'
@@ -38,6 +41,7 @@ import { applySidebarFloat } from './sidebar-float.js'
 import { applyAppearance } from './appearance.js'
 import { applyAutomationHost } from './automation-host.js'
 import { applyPlanweaveHost } from './planweave/host.js'
+import { applyModulesHost } from './modules-host.js'
 import {
   AnySearchSearchProvider,
   ANYSEARCH_DEFAULT_BASE_URL,
@@ -154,141 +158,151 @@ export interface WebuiConfig extends AnySearchConfig {
  * @param config - 组合配置（默认空对象，各能力自带默认值）。
  */
 export async function apply(ctx: Context, config: WebuiConfig = {}): Promise<void> {
+  // 0) 功能模块开关：settings 命名空间 webui-modules + GET/POST /api/webui-modules。
+  //    为 false 的模块下方完全不装配（client 半身经同一份 key 表对齐裁剪）。
+  const modules = applyModulesHost(ctx as any)
+
   // 1) 推理等级自动补全工具。
-  ctx.tools.register(defineTool({
-    name: 'webui_sync_reasoning',
-    description: '为 settings 里 llm-pi-ai 各供应商中缺失 reasoningEfforts（推理等级）的模型，按内置供应商级模板自动补全，免去手工编辑 settings.yaml。已有配置或未收录供应商不受影响。',
-    parameters: {},
-    output: {
-      schema: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          patched: { type: 'array', required: true, items: { type: 'string' } },
-          skipped: { type: 'array', required: true, items: { type: 'string' } },
+  if (modules.reasoningSync) {
+    ctx.tools.register(defineTool({
+      name: 'webui_sync_reasoning',
+      description: '为 settings 里 llm-pi-ai 各供应商中缺失 reasoningEfforts（推理等级）的模型，按内置供应商级模板自动补全，免去手工编辑 settings.yaml。已有配置或未收录供应商不受影响。',
+      parameters: {},
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            patched: { type: 'array', required: true, items: { type: 'string' } },
+            skipped: { type: 'array', required: true, items: { type: 'string' } },
+          },
         },
+        render: (_args, value) => [{
+          type: 'text',
+          text: `已补全 ${value.patched.length} 个模型的推理等级：${value.patched.join(', ') || '(无)'}。` +
+            `跳过 ${value.skipped.length} 个：${value.skipped.join(', ') || '(无)'}。`,
+        }],
       },
-      render: (_args, value) => [{
-        type: 'text',
-        text: `已补全 ${value.patched.length} 个模型的推理等级：${value.patched.join(', ') || '(无)'}。` +
-          `跳过 ${value.skipped.length} 个：${value.skipped.join(', ') || '(无)'}。`,
-      }],
-    },
-    async execute() {
-      const ns = settingsNamespace('llm-pi-ai')
-      const raw = ctx.settings.get(ns) as LlmPiAiConfig | undefined
-      const providers = raw?.providers
-      const patched: string[] = []
-      const skipped: string[] = []
-      if (providers === undefined) return { patched, skipped }
+      async execute() {
+        const ns = settingsNamespace('llm-pi-ai')
+        const raw = ctx.settings.get(ns) as LlmPiAiConfig | undefined
+        const providers = raw?.providers
+        const patched: string[] = []
+        const skipped: string[] = []
+        if (providers === undefined) return { patched, skipped }
 
-      let changed = false
-      const nextProviders: Record<string, ProviderDraft> = {}
-      for (const [providerId, provider] of Object.entries(providers)) {
-        const template = PROVIDER_REASONING_TEMPLATES[providerId]
-        const models = Array.isArray(provider?.models) ? provider.models : []
-        if (template === undefined || models.length === 0) {
-          nextProviders[providerId] = provider
-          continue
-        }
-        const nextModels = models.map((model) => {
-          const id = typeof model.id === 'string' ? model.id : ''
-          if (model.reasoningEfforts !== undefined) return model
-          if (id === '') {
-            skipped.push(`${providerId}/<无 id>`)
-            return model
+        let changed = false
+        const nextProviders: Record<string, ProviderDraft> = {}
+        for (const [providerId, provider] of Object.entries(providers)) {
+          const template = PROVIDER_REASONING_TEMPLATES[providerId]
+          const models = Array.isArray(provider?.models) ? provider.models : []
+          if (template === undefined || models.length === 0) {
+            nextProviders[providerId] = provider
+            continue
           }
-          patched.push(`${providerId}/${id}`)
-          changed = true
-          return { ...model, reasoningEfforts: { ...template } }
-        })
-        nextProviders[providerId] = { ...provider, models: nextModels }
-      }
+          const nextModels = models.map((model) => {
+            const id = typeof model.id === 'string' ? model.id : ''
+            if (model.reasoningEfforts !== undefined) return model
+            if (id === '') {
+              skipped.push(`${providerId}/<无 id>`)
+              return model
+            }
+            patched.push(`${providerId}/${id}`)
+            changed = true
+            return { ...model, reasoningEfforts: { ...template } }
+          })
+          nextProviders[providerId] = { ...provider, models: nextModels }
+        }
 
-      if (changed) {
-        await ctx.settings.update(ns, { providers: nextProviders })
-      }
-      return { patched, skipped }
-    },
-    presentCall: () => ({ card: 'generic', title: '同步模型推理等级', kind: 'other', rawInput: null }),
-  }))
+        if (changed) {
+          await ctx.settings.update(ns, { providers: nextProviders })
+        }
+        return { patched, skipped }
+      },
+      presentCall: () => ({ card: 'generic', title: '同步模型推理等级', kind: 'other', rawInput: null }),
+    }))
+  }
 
   // 2) AnySearch 搜索 provider。
-  let current: () => AnySearchConfig = () => config
-  installSettingsSection(ctx, WEB_SEARCH_ANYSEARCH_SETTINGS_NAMESPACE, AnySearchConfigSchema, config, {
-    setSource: (source) => {
-      current = source
-    },
-    onChange: () => {},
-  })
-  ctx.web.registerSearchProvider(new AnySearchSearchProvider(() => resolveAnySearchOptions(ctx, current())))
+  if (modules.webSearch) {
+    let current: () => AnySearchConfig = () => config
+    installSettingsSection(ctx, WEB_SEARCH_ANYSEARCH_SETTINGS_NAMESPACE, AnySearchConfigSchema, config, {
+      setSource: (source) => {
+        current = source
+      },
+      onChange: () => {},
+    })
+    ctx.web.registerSearchProvider(new AnySearchSearchProvider(() => resolveAnySearchOptions(ctx, current())))
+  }
 
   // 3) 中文思考开关（自 dsh-zh-thinking 合并）。
-  applyZhThinking(ctx)
+  if (modules.zhThinking) applyZhThinking(ctx)
 
   // 3.5) 发送对话宽度（本人消息气泡宽度）：settings 持久化 + /api/webui-message-width。
-  applyMessageWidth(ctx)
+  if (modules.messageWidth) applyMessageWidth(ctx)
 
   // 4) 任务完成提示音 + 对话完成桌面卡片（自 dsh-task-done-sound 合并）。
-  applyTaskDoneSound(ctx)
+  if (modules.doneSound) applyTaskDoneSound(ctx)
 
   // 4.5) 对话完成胶囊：全局监听 turn/end，/api/webui-done-pill 供顶部胶囊轮询。
-  applyDonePill(ctx)
+  if (modules.donePill) applyDonePill(ctx)
 
   // 5) DSH 壳管理 + 一键更新（自 dsh-updater 合并；config.updater 可选覆盖）。
-  applyUpdater(ctx, config.updater)
+  if (modules.updater) applyUpdater(ctx, config.updater)
 
   // 6) 网络代理（自 dsh-proxy 合并）。
-  applyProxy(ctx)
+  if (modules.proxy) applyProxy(ctx)
 
   // 7) AI 浏览器操作（自 dsh-browser 合并；config.browser 可选覆盖）。
   // 固定有头：本机真实窗口启动即最大化（≈电脑分辨率），画面经 screencast
   // 同步到 Web GUI 右侧滑出的预览抽屉（只读观看）。
-  applyBrowser(ctx, {
-    chromePath: '', port: 0, screenshotDir: '',
-    ...config.browser,
-  })
+  if (modules.browser) {
+    applyBrowser(ctx, {
+      chromePath: '', port: 0, screenshotDir: '',
+      ...config.browser,
+    })
+  }
 
   // 8) 本地记忆引擎（自 dsh-memory 合并；config.memory 可选覆盖）。
-  applyMemory(ctx, config.memory)
+  if (modules.memory) applyMemory(ctx, config.memory)
 
   // 9) 工作区文件浏览器（自 dsh-file-explorer 合并）。
-  applyFileExplorer(ctx)
+  if (modules.fileExplorer) applyFileExplorer(ctx)
 
   // 9.5) 工作区目录选择器：应用内弹窗浏览目录（/api/webui-dir-picker），
   // 供「添加工作区」选择文件夹（shadow 官方 native surface）。
-  applyWorkspaceDirPicker(ctx)
+  if (modules.dirPicker) applyWorkspaceDirPicker(ctx)
 
   // 10) 用量统计 + 技能管理（自 dsh-usage-skill 融合；host 复用其 lib 产物）。
-  await applyUsageHost(ctx, config.usage)
+  if (modules.usage) await applyUsageHost(ctx, config.usage)
 
   // 11) 辅助视觉 + 生图（自 dsh-vision-helper 合并）：vision_describe / generate_image / 图片降级 / HTTP 接口。
-  applyVisionHelper(ctx, config.visionHelper ?? {})
+  if (modules.vision) applyVisionHelper(ctx, config.visionHelper ?? {})
 
   // 12) 邮箱验证码（自 dsh-mail 合并）：mail_get_code 工具 + /api/webui-mail 路由。
-  applyMail(ctx, config.mail ?? {})
+  if (modules.mail) applyMail(ctx, config.mail ?? {})
 
   // 13) 对话「退回」（自 dsh-rewind）：user 消息文件快照 + /api/webui-rewind 回退路由。
-  applyRewind(ctx)
+  if (modules.rewind) applyRewind(ctx)
 
   // 14) 对话「截图渲染」：渲染会话长图（/api/webui-screenshot）。
-  applyScreenshot(ctx)
+  if (modules.screenshot) applyScreenshot(ctx)
 
   // 15) 技能开关（/api/skill-toggles）：每个技能禁用/开启 + 技能包一键开关。
-  await applySkillToggles(ctx)
+  if (modules.skills) await applySkillToggles(ctx)
 
   // 16) 提示词优化（/api/webui-prompt-optimize）：对话框内用选中模型优化提示词。
-  applyPromptOptimize(ctx)
+  if (modules.promptOptimize) applyPromptOptimize(ctx)
 
   // 17) 左侧悬浮侧边栏：设置项「启动服务时默认折叠」持久化 + /api/sidebar-float。
-  applySidebarFloat(ctx)
+  if (modules.sidebarFloat) applySidebarFloat(ctx)
 
   // 18) 外观设置：玻璃质感（Glassmorphism）开关持久化 + /api/webui-appearance。
-  applyAppearance(ctx)
+  if (modules.appearance) applyAppearance(ctx)
 
   // 19) 自动化执行引擎（/api/webui-automation）：真实执行任务步骤 + 文件下载/打开所在文件夹。
-  applyAutomationHost(ctx)
+  if (modules.automation) applyAutomationHost(ctx)
 
   // 20) PlanWeave：本地计划任务图 + 认领/执行/评审/反馈循环（@planweave-ai/runtime 内核 + ctx.llm 执行器）。
-  applyPlanweaveHost(ctx)
+  if (modules.planweave) applyPlanweaveHost(ctx)
 }
