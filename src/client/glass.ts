@@ -251,12 +251,15 @@ html[${GLASS_ATTRIBUTE}] [class*="dsh-peak-card"] {
   backdrop-filter: var(--dsh-glass-blur);
   -webkit-backdrop-filter: var(--dsh-glass-blur);
 }
-/* 对话输入框卡片：淡版毛玻璃（模糊与表面纱都比浮层面板轻一档，
- * 保留官方细边框与投影的卡片形态） */
+/* 对话输入框卡片：淡版玻璃（表面纱比浮层面板轻一档，保留官方细边框与
+ * 投影的卡片形态）。
+ * ⚠ 绝不能加 backdrop-filter：卡片是布局容器且内含 ContextMeter 等控件的
+ *   fixed Tooltip 气泡（官方 Tooltip 无 portal，直接渲染在组件树内），
+ *   backdrop-filter 会使卡片成为这些 position:fixed 后代的 containing
+ *   block，气泡的视口坐标被叠加到卡片坐标系上，渲染到视口外并把 composer
+ *   区域撑出滚动区——悬停上下文圆圈时输入区/页面上下跳动（实测踩坑）。 */
 html[${GLASS_ATTRIBUTE}] [class*="_composerSeat"] [class*="_card"] {
   background-color: rgba(255,255,255,.40);
-  backdrop-filter: saturate(130%) blur(9px);
-  -webkit-backdrop-filter: saturate(130%) blur(9px);
 }
 html[${GLASS_ATTRIBUTE}] body[data-ds-dark-theme] [class*="_composerSeat"] [class*="_card"] {
   background-color: rgba(30,31,36,.38);

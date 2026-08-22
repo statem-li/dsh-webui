@@ -422,41 +422,56 @@ const DETECT_TEST_IMAGE =
 
 interface ProbeOutcome { ok: boolean; note: string }
 
-/** 识图探测:chat/completions 带小图,能返回描述即支持。 */
+/** 识图探测:chat/completions 带小图。判定口径:
+ *  - 任一格式(标准 content 数组 / message 级平铺 image_url)返回描述 → 支持;
+ *  - 推理模型的思考链可能吃满小 max_tokens 导致 200 空正文 → 自动加码重试;
+ *  - 只要出现过 HTTP 200(网关接受了多模态请求)即判「支持」——不支持识图的
+ *    模型会被网关直接 400 拒绝;全部 4xx 才判「不支持」。 */
 async function probeVision(baseURL: string, apiKey: string, model: string): Promise<ProbeOutcome> {
-  const ctrl = new AbortController()
-  const timer = setTimeout(() => ctrl.abort(), 20_000)
-  try {
-    const r = await fetch(`${baseURL}/chat/completions`, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
-      body: JSON.stringify({
-        model,
-        messages: [{
-          role: 'user',
-          content: [
-            { type: 'text', text: '这张图是什么颜色？一句话回答。' },
-            { type: 'image_url', image_url: { url: DETECT_TEST_IMAGE } },
-          ],
-        }],
-        max_tokens: 32,
-        temperature: 0,
-        stream: false,
-      }),
-      signal: ctrl.signal,
-    })
-    const text = await r.text().catch(() => '')
-    if (!r.ok) return { ok: false, note: `HTTP ${r.status}: ${text.slice(0, 120)}` }
-    let content = ''
-    try { content = String(JSON.parse(text)?.choices?.[0]?.message?.content ?? '') } catch { /* ignore */ }
-    return content.trim().length > 0
-      ? { ok: true, note: content.trim().slice(0, 60) }
-      : { ok: false, note: '未返回描述' }
-  } catch (error: any) {
-    return { ok: false, note: String(error?.message ?? error).slice(0, 120) }
-  } finally {
-    clearTimeout(timer)
+  const ask = '这张图是什么颜色？一句话回答。'
+  let sawHttp200 = false
+  let lastRejectNote = ''
+  const attempt = async (flat: boolean, maxTokens: number): Promise<{ httpOk: boolean; content: string; failNote: string }> => {
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), 25_000)
+    try {
+      const userMessage: Record<string, unknown> = flat
+        ? { role: 'user', content: ask, image_url: DETECT_TEST_IMAGE }
+        : { role: 'user', content: [{ type: 'text', text: ask }, { type: 'image_url', image_url: { url: DETECT_TEST_IMAGE } }] }
+      const r = await fetch(`${baseURL}/chat/completions`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ model, messages: [userMessage], max_tokens: maxTokens, temperature: 0, stream: false }),
+        signal: ctrl.signal,
+      })
+      const text = await r.text().catch(() => '')
+      if (!r.ok) return { httpOk: false, content: '', failNote: `HTTP ${r.status}: ${text.slice(0, 100)}` }
+      sawHttp200 = true
+      let content = ''
+      let reasoning = ''
+      try {
+        const msg = JSON.parse(text)?.choices?.[0]?.message
+        content = String(msg?.content ?? '')
+        reasoning = typeof msg?.reasoning_content === 'string' ? msg.reasoning_content : ''
+      } catch { /* ignore */ }
+      return { httpOk: true, content: (content.trim() || reasoning.trim()), failNote: 'HTTP 200 但未返回描述' }
+    } catch (error: any) {
+      return { httpOk: false, content: '', failNote: String(error?.message ?? error).slice(0, 120) }
+    } finally {
+      clearTimeout(timer)
+    }
   }
+  // 双格式 × 双档 max_tokens:推理模型思考吃满小配额时自动加大重试。
+  for (const flat of [false, true] as const) {
+    for (const maxTokens of [256, 1536]) {
+      const r = await attempt(flat, maxTokens)
+      if (r.httpOk && r.content !== '') return { ok: true, note: `${r.content.slice(0, 60)}${flat ? '（平铺格式）' : ''}` }
+      lastRejectNote = r.failNote
+      if (!r.httpOk) break
+    }
+  }
+  if (sawHttp200) return { ok: true, note: 'HTTP 200 已接受图片请求（未回文本，通常为思考占满输出）' }
+  return { ok: false, note: lastRejectNote !== '' ? lastRejectNote : '所有请求均被提供方拒绝' }
 }
 
 /** 生图探测:/images/generations 生成一张小红点。 */
@@ -644,6 +659,7 @@ async function runDetectAsync(ctx: PluginContext, provider: string, model: strin
       li.status = 'done'
     }
 
+
     // 3) 自动落盘:capabilities + settings(input / reasoningEfforts)。
     const visionOk = itemOf('vision').ok === true
     const imageOk = itemOf('image').ok === true
@@ -789,3 +805,4 @@ export function applyPerfBench(ctx: PluginContext): void {
     })
   })
 }
+

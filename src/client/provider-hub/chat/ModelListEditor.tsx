@@ -344,7 +344,7 @@ function DetectProgress({ state }: { state?: any }): ReactNode {
   if (!state) return null
   const items: Array<any> = Array.isArray(state.items) ? state.items : []
   const doneCount = items.filter(i => i.status === 'done').length
-  const capRows = items.filter(i => !i.key.startsWith('level:'))
+  const capRows = items.filter(i => i.key === 'vision' || i.key === 'image' || i.key === 'video')
   const levelRows = items.filter(i => i.key.startsWith('level:'))
   const rowOf = (it: any): ReactNode => {
     const mark = it.status === 'pending' ? '—'
@@ -355,7 +355,7 @@ function DetectProgress({ state }: { state?: any }): ReactNode {
       : it.ok === true ? 'var(--dsw-alias-label-primary, #1f2329)' : 'var(--dsw-alias-label-tertiary, #8f959e)'
     return (
       <div key={it.key} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '2px 0', minWidth: 0 }}>
-        <span style={{ flex: 'none', width: 88, fontSize: 12.5, color: 'var(--dsw-alias-label-primary, #1f2329)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <span style={{ flex: 'none', width: 96, fontSize: 12.5, color: 'var(--dsw-alias-label-primary, #1f2329)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {it.key.startsWith('level:') ? it.key.slice(6) : it.label}
         </span>
         <span style={{ flex: 'none', width: 76, fontSize: 12.5, color: markColor }}>{mark}{it.status === 'running' ? ' 检测中' : ''}</span>
