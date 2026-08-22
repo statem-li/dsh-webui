@@ -7,7 +7,10 @@
  *     点击直接调 workspaces.archiveSession，行随归档集回显消失）。三个点被
  *      CSS 隐藏，完整操作入口（置顶/重命名/分叉/归档）迁到右键菜单。
  *  2. 置顶：置顶会话在所在工作区分组内排到最前，标题前加图钉标记；置顶
- *     列表持久化在 store（localStorage）。
+ *     列表持久化在 store（localStorage）。折叠分组内被折叠隐藏的置顶会话
+ *     （官方折叠时不渲染折叠区外的会话行）以插件自绘的「置顶补行」显示在
+ *     折叠窗口顶部（图钉 + 标题，可点击打开 / 右键菜单）——置顶始终可见，
+ *     同时不干预官方折叠行为（用户可自由折叠）。
  *  3. 右键菜单：contextmenu 命中会话行时弹出自绘菜单（置顶/取消置顶、
  *     重命名、分叉、归档）。
  *
@@ -18,11 +21,15 @@
  */
 
 import type { ClientContext, ISessions, IWorkspaces, SessionId } from '@deepseek-ai/dsh-client-runtime/client'
-import { getPinned, isBlankRow, isPinned, resolveSessionId, rowTitle, subscribePinned } from './store'
+import { getPinned, isBlankRow, isPinned, resolveFiberProp, resolveSessionId, rowTitle, subscribePinned } from './store'
 import { openSessionPinMenu, setSessionPinServices } from './context-menu'
 
 /** 会话行选择器（CSS Modules 后缀稳定）。 */
 const SESSION_ROW_SEL = '[class*="sessionRow"]'
+/** 分组 header 行选择器（ProjectRowItem，点击整行展开/折叠整组）。 */
+const GROUP_HEADER_SEL = '[class*="projectRow"]'
+/** 会话行溢出按钮（组内 >5 个会话时的「展开 N 个 / 收起」按钮）。 */
+const OVERFLOW_BTN_SEL = '[class*="sessionOverflowButton"]'
 /** 归档按钮类名（样式表 + 幂等注入标记）。 */
 const ARCHIVE_BTN_CLASS = 'dsp-archive-btn'
 /** 置顶标记类名。 */
@@ -190,7 +197,7 @@ function orderContainer(container: Element, entries: readonly SessionEntry[], an
   })
 }
 
-/** 全量对齐：归档按钮 + 置顶标记 + 置顶排序。 */
+/** 全量对齐：归档按钮 + 置顶标记 + 置顶排序 + 置顶补行。 */
 function applyAll(sessions: ISessions | undefined, workspaces: IWorkspaces | undefined, animate = false): void {
   ensureArchiveButtons(sessions, workspaces)
 
@@ -204,6 +211,177 @@ function applyAll(sessions: ISessions | undefined, workspaces: IWorkspaces | und
     const entries = collectEntries(container, sessions, consumed)
     syncPinBadges(entries)
     orderContainer(container, entries, animate)
+  }
+
+  // 置顶补行：折叠分组内被隐藏的置顶会话以自绘行显示（不干预官方折叠）。
+  if (groups.length > 0) syncPinnedSurrogates(groups, sessions, workspaces)
+}
+
+// ── 置顶补行（折叠窗口外的置顶会话以自绘行显示） ───────────────────────────
+
+/** 自绘置顶行容器类名（幂等注入标记）。 */
+const SURROGATE_LIST_CLASS = 'dsp-pin-surrogates'
+/** 自绘置顶行类名。 */
+const SURROGATE_CLASS = 'dsp-pin-surrogate'
+
+/**
+ * 从分组 header 行沿 React fiber 链解析 GroupNode.key（真实工作区 =
+ * workspaceId；未分组桶 = 空字符串）。fiber 不可用时返回 null。
+ */
+function groupKeyOf(header: HTMLElement): string | null {
+  return resolveFiberProp(header, (props) => {
+    const group = props.group
+    if (group === null || typeof group !== 'object') return null
+    const key = (group as { key?: unknown }).key
+    // 空字符串是官方 UNGROUPED_KEY（未分组桶），同样合法。
+    return typeof key === 'string' ? key : null
+  })
+}
+
+/**
+ * 分组内全部可见会话 id（archived 与缺失 summary 已过滤，顺序 = account
+ * 顺序）：真实工作区取 workspace.sessionIds；未分组桶取不在任何 workspace
+ * account 内的散会话。
+ */
+function groupSessionIds(
+  key: string,
+  sessions: ISessions | undefined,
+  workspaces: IWorkspaces | undefined,
+): SessionId[] {
+  const wsState = workspaces?.list.getSnapshot()
+  const items = wsState?.items ?? []
+  const archived = new Set(wsState?.archivedSessionIds ?? [])
+  const byId = sessions?.list.getSnapshot().byId ?? {}
+  if (key !== '') {
+    const ws = items.find(item => item.workspaceId === key)
+    if (ws === undefined) return []
+    return ws.sessionIds.filter(id => byId[id] !== undefined && !archived.has(id))
+  }
+  const accounted = new Set(items.flatMap(item => item.sessionIds))
+  return (sessions?.list.getSnapshot().ids ?? [])
+    .filter(id => byId[id] !== undefined && !accounted.has(id) && !archived.has(id))
+}
+
+/**
+ * 收集组内「被折叠隐藏」的置顶会话（完整列表有、已渲染行无），按置顶顺序
+ * 返回；需要展示标题，会话已不存在 / 无标题的跳过。
+ */
+function hiddenPinnedEntries(
+  group: Element,
+  key: string,
+  sessions: ISessions | undefined,
+  workspaces: IWorkspaces | undefined,
+): { id: SessionId; title: string }[] {
+  const pinned = getPinned()
+  if (pinned.length === 0) return []
+  const pinnedSet = new Set(pinned)
+  // 组内已渲染（DOM 实际存在）的会话行 id。
+  const visible = new Set<string>()
+  const consumed = new Set<string>()
+  for (const row of group.querySelectorAll<HTMLElement>(SESSION_ROW_SEL)) {
+    const id = resolveSessionId(row, sessions, consumed)
+    if (id !== null) visible.add(id)
+  }
+  const hidden = groupSessionIds(key, sessions, workspaces)
+    .filter(id => pinnedSet.has(id) && !visible.has(id))
+  if (hidden.length === 0) return []
+  const byId = sessions?.list.getSnapshot().byId ?? {}
+  return pinned
+    .filter(id => hidden.includes(id))
+    .map(id => ({ id, title: byId[id]?.displayTitle ?? '' }))
+    .filter(entry => entry.title !== '')
+}
+
+/**
+ * 同步「置顶补行」：折叠分组内被隐藏的置顶会话以自绘行显示在折叠窗口
+ * 顶部（header 之后），置顶始终可见；不干预官方折叠行为，用户可自由
+ * 折叠/展开。行内容：图钉 + 标题，点击打开会话，右键弹出置顶菜单。
+ *
+ * 幂等：id 序列与位置正确时不重建 DOM（避免与 MutationObserver 互相
+ * 触发死循环），仅标题 / 当前会话高亮变化时原地更新。React 重渲染可能
+ * 打乱注入位置，检测到位置偏移时重新插到 header 后。
+ */
+function syncPinnedSurrogates(
+  groups: Element[],
+  sessions: ISessions | undefined,
+  workspaces: IWorkspaces | undefined,
+): void {
+  const current = sessions?.list.getSnapshot().current
+  for (const group of groups) {
+    const header = group.querySelector<HTMLElement>(GROUP_HEADER_SEL)
+    if (header === null) continue
+    const key = groupKeyOf(header)
+    if (key === null) continue
+    const hidden = hiddenPinnedEntries(group, key, sessions, workspaces)
+    const container = group.querySelector<HTMLElement>(`.${SURROGATE_LIST_CLASS}`)
+    if (hidden.length === 0) {
+      container?.remove()
+      continue
+    }
+
+    // 幂等分支：id 序列一致且位置正确 → 仅更新标题 / 高亮。
+    if (container !== null) {
+      const ids = Array.from(container.querySelectorAll<HTMLElement>(`.${SURROGATE_CLASS}`))
+        .map(el => el.dataset.sessionId)
+      const idsMatch = ids.length === hidden.length && hidden.every((h, i) => ids[i] === h.id)
+      if (idsMatch && container.previousElementSibling === header) {
+        hidden.forEach((h, i) => {
+          const row = container.children[i] as HTMLElement | undefined
+          const titleEl = row?.querySelector<HTMLElement>('[data-role="title"]')
+          if (titleEl !== undefined && titleEl !== null && titleEl.textContent !== h.title) {
+            titleEl.textContent = h.title
+          }
+          row?.classList.toggle(`${SURROGATE_CLASS}-selected`, h.id === current)
+        })
+        return
+      }
+      container.remove()
+    }
+
+    // 新建容器（header 之后 = 折叠窗口顶部）。
+    const list = document.createElement('div')
+    list.className = SURROGATE_LIST_CLASS
+    for (const { id, title } of hidden) {
+      const row = document.createElement('div')
+      row.className = SURROGATE_CLASS
+      row.classList.toggle(`${SURROGATE_CLASS}-selected`, id === current)
+      row.dataset.sessionId = id
+      const icon = document.createElement('span')
+      icon.className = `${SURROGATE_CLASS}-icon`
+      icon.innerHTML = PIN_SVG
+      const titleEl = document.createElement('span')
+      titleEl.dataset.role = 'title'
+      titleEl.textContent = title
+      titleEl.title = title
+      row.append(icon, titleEl)
+      list.appendChild(row)
+    }
+    // 事件委托（容器级；重建时旧容器整体移除，监听随之释放）。
+    list.addEventListener('click', (event) => {
+      const target = event.target
+      if (!(target instanceof Element)) return
+      const row = target.closest<HTMLElement>(`.${SURROGATE_CLASS}`)
+      if (row === null) return
+      const id = row.dataset.sessionId as SessionId | undefined
+      if (id !== undefined) sessions?.open(id)
+    })
+    list.addEventListener('contextmenu', (event) => {
+      event.preventDefault()
+      const target = event.target
+      if (!(target instanceof Element)) return
+      const row = target.closest<HTMLElement>(`.${SURROGATE_CLASS}`)
+      if (row === null) return
+      const id = row.dataset.sessionId as SessionId | undefined
+      if (id === undefined) return
+      openSessionPinMenu({
+        sessionId: id,
+        x: event.clientX,
+        y: event.clientY,
+        pinned: true,
+        title: row.querySelector('[data-role="title"]')?.textContent ?? '',
+      })
+    })
+    header.after(list)
   }
 }
 
@@ -268,7 +446,8 @@ export function startSessionPin(ctx: ClientContext): () => void {
   })
   observer.observe(document.body, { childList: true, subtree: true })
 
-  // 会话列表变化 → 去抖后无动画重排；置顶列表变化 → 立即带动画重排。
+  // 会话列表变化 → 去抖后无动画重排；置顶列表变化 → 立即带动画重排
+  // （置顶补行同步刷新，让刚置顶的会话立即可见）。
   const unsubscribeSessions = sessions?.list.subscribe(schedule)
   const unsubscribePinned = subscribePinned(() => {
     if (!disposed) applyAll(sessions, workspaces, true)
@@ -291,7 +470,9 @@ export function startSessionPin(ctx: ClientContext): () => void {
     unsubscribeSessions?.()
     unsubscribePinned()
     document.removeEventListener('contextmenu', onCtx, true)
-    // 清理注入的归档按钮与置顶标记。
-    for (const el of document.querySelectorAll(`.${ARCHIVE_BTN_CLASS}, .${PIN_BADGE_CLASS}`)) el.remove()
+    // 清理注入的归档按钮、置顶标记与置顶补行。
+    for (const el of document.querySelectorAll(
+      `.${ARCHIVE_BTN_CLASS}, .${PIN_BADGE_CLASS}, .${SURROGATE_LIST_CLASS}`,
+    )) el.remove()
   }
 }

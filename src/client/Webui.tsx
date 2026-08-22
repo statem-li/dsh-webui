@@ -441,24 +441,6 @@ export function Webui(props: WebuiProps): ReactNode {
     if (button instanceof HTMLButtonElement && !button.disabled) button.click()
   }, [scrollportOf])
 
-  // 自动加载更早消息：只要会话还有未加载历史（hasMore）就自动连续加载，
-  // 直到全部加载完——无需手动点「加载更早」。
-  // 防死循环：正在加载时（loadingOlder）等待；连续多次加载但没有任何新
-  // 消息进入（bars 数不变，疑似加载失败/无进展）则停止自动加载。
-  const autoLoadRef = useRef({ attempts: 0, lastCount: -1 })
-  useEffect(() => {
-    if (snapshot?.openState !== 'open') return
-    if (snapshot?.hasMore !== true || snapshot?.loadingOlder === true) return
-    const state = autoLoadRef.current
-    if (state.attempts >= 8 && bars.length === state.lastCount) return
-    const timer = window.setTimeout(() => {
-      state.lastCount = bars.length
-      state.attempts += 1
-      loadOlder()
-    }, 400)
-    return () => { window.clearTimeout(timer) }
-  }, [snapshot?.openState, snapshot?.hasMore, snapshot?.loadingOlder, bars.length, loadOlder])
-
   return (
     <div ref={hostRef} className={css.host}>
       {tabs.map((tab, index) => (

@@ -321,6 +321,77 @@ async function callVisionChat(
   }
 }
 
+/** 测试专用短超时（ms）：能力测试/推理探测如果 API 不可达，15s 内返回错误，避免前端永远「检测中」。 */
+const TEST_TIMEOUT_MS = 15000
+
+/**
+ * 探测单个 reasoning_effort 档位：发一个极简 chat 请求（max_tokens=8），
+ * 带 reasoning_effort 参数。返回 ok=true 表示该档位被网关接受；400/422
+ * 等参数错误会被 PowerShell catch，返回 ok=false + detail。
+ */
+async function probeReasoningEffort(
+  ctx: PluginContext,
+  baseURL: string,
+  apiKey: string,
+  model: string,
+  level: string,
+  timeoutMs: number,
+  signal: AbortSignal | undefined,
+): Promise<{ ok: boolean; error?: string; detail?: string }> {
+  const body: Record<string, unknown> = {
+    model,
+    messages: [{ role: 'user', content: 'ping' }],
+    max_tokens: 8,
+    reasoning_effort: level,
+  }
+  const bodyFile = path.join(os.tmpdir(), `dsh-reason-probe-${process.pid}-${crypto.randomBytes(6).toString('hex')}.json`)
+  fs.writeFileSync(bodyFile, JSON.stringify(body), 'utf8')
+  const base = String(baseURL).replace(/[\\/]+$/, '')
+  const escaped = {
+    key: psEscape(apiKey),
+    file: psEscape(bodyFile),
+    url: psEscape(`${base}/chat/completions`),
+  }
+  const command = [
+    "$ErrorActionPreference = 'Stop'",
+    "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12",
+    'try {',
+    `  Invoke-RestMethod -UseBasicParsing -Uri '${escaped.url}' -Method Post -Headers @{ Authorization = 'Bearer ${escaped.key}'; 'Content-Type' = 'application/json' } -Body ([IO.File]::ReadAllBytes('${escaped.file}')) -TimeoutSec ${Math.floor(timeoutMs / 1000)} | Out-Null`,
+    '  @{ ok = $true } | ConvertTo-Json -Compress',
+    '} catch {',
+    "  $detail = ''",
+    "  if ($_.ErrorDetails.Message) { $detail = $_.ErrorDetails.Message }",
+    "  @{ ok = $false; error = $_.Exception.Message; detail = $detail } | ConvertTo-Json -Depth 4 -Compress",
+    '}',
+  ].join('; ')
+  try {
+    const policy = ctx.sandboxPolicy.resolve({ mode: 'danger-full-access' })
+    const spec = ctx.shell.resolve({ command, timeoutMs, signal, sandboxPolicy: policy })
+    const result = await ctx.shell.run(spec)
+    const stdout = result.stdout && result.stdout.text ? result.stdout.text : ''
+    const stderr = result.stderr && result.stderr.text ? result.stderr.text : ''
+    if (result.exitCode !== 0) {
+      return { ok: false, error: `shell 退出码 ${result.exitCode}`, detail: (stderr || stdout || '').slice(0, 400) }
+    }
+    try {
+      const parsed = JSON.parse(stdout)
+      return parsed || { ok: false, error: '空响应' }
+    } catch {
+      return { ok: false, error: '响应解析失败', detail: stdout.slice(0, 300) }
+    }
+  } catch (error: any) {
+    return { ok: false, error: String(error?.message ?? error) }
+  } finally {
+    try { fs.rmSync(bodyFile, { force: true }) } catch { /* 清理失败忽略 */ }
+  }
+}
+
+/**
+ * 探测一个模型支持的 reasoning_effort 档位集合（off 恒支持、不发参数，故不探测）。
+ * 逐个用档位名作为 reasoning_effort 线值发请求，返回 accepted / rejected。
+ * 定义在 applyVisionHelper 内部（依赖 providerConfig/resolveApiKey/config 闭包）。
+ */
+
 // ── 插件主体 ────────────────────────────────────────────
 
 export function applyVisionHelper(ctx: PluginContext, configInput: Partial<Config>): void {
@@ -360,6 +431,7 @@ export function applyVisionHelper(ctx: PluginContext, configInput: Partial<Confi
   }
   /**
    * 单张生成（n=1，兼容性最好：部分 provider 不接受 n>1）。
+   * @param timeoutMs - 单次调用超时（ms），默认 320s；测试场景传短超时避免挂起。
    * @returns 成功返回 { ok: true, url }；失败返回 { ok: false, error }。
    */
   async function generateOne(
@@ -368,12 +440,13 @@ export function applyVisionHelper(ctx: PluginContext, configInput: Partial<Confi
     model: string,
     prompt: string,
     signal?: AbortSignal,
+    timeoutMs = 320000,
   ): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
     const safePrompt = String(prompt).replace(/'/g, "''")
-    const command = "$ErrorActionPreference = 'Stop'; [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; try { $b = @{ model = '" + model + "'; prompt = '" + safePrompt + "'; n = 1 } | ConvertTo-Json -Compress; $r = Invoke-RestMethod -UseBasicParsing -Uri '" + base + "/images/generations' -Method Post -Headers @{ Authorization = 'Bearer " + apiKey + "'; 'Content-Type' = 'application/json' } -Body $b -TimeoutSec 300; @{ ok = $true; data = @($r.data) } | ConvertTo-Json -Depth 6 -Compress } catch { $inner = ''; if ($_.Exception.InnerException) { $inner = $_.Exception.InnerException.Message }; @{ ok = $false; error = $_.Exception.Message; inner = $inner; ps = $PSVersionTable.PSVersion.ToString() } | ConvertTo-Json -Compress }"
+    const command = "$ErrorActionPreference = 'Stop'; [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; try { $b = @{ model = '" + model + "'; prompt = '" + safePrompt + "'; n = 1 } | ConvertTo-Json -Compress; $r = Invoke-RestMethod -UseBasicParsing -Uri '" + base + "/images/generations' -Method Post -Headers @{ Authorization = 'Bearer " + apiKey + "'; 'Content-Type' = 'application/json' } -Body $b -TimeoutSec " + Math.max(10, Math.floor(timeoutMs / 1000)) + "; @{ ok = $true; data = @($r.data) } | ConvertTo-Json -Depth 6 -Compress } catch { $inner = ''; if ($_.Exception.InnerException) { $inner = $_.Exception.InnerException.Message }; @{ ok = $false; error = $_.Exception.Message; inner = $inner; ps = $PSVersionTable.PSVersion.ToString() } | ConvertTo-Json -Compress }"
     try {
       const policy = ctx.sandboxPolicy.resolve({ mode: 'danger-full-access' })
-      const spec = ctx.shell.resolve({ command, timeoutMs: 320000, signal, sandboxPolicy: policy })
+      const spec = ctx.shell.resolve({ command, timeoutMs, signal, sandboxPolicy: policy })
       const result = await ctx.shell.run(spec)
       const stdout = result.stdout && result.stdout.text ? result.stdout.text : ''
       const stderr = result.stderr && result.stderr.text ? result.stderr.text : ''
@@ -963,7 +1036,9 @@ export function applyVisionHelper(ctx: PluginContext, configInput: Partial<Confi
               models: models.map((m: any) => ({
                 id: m.id,
                 name: m.name || m.id,
-                input: Array.isArray(m.input) ? m.input : null,
+                input: Array.isArray(m.inputModalities)
+                  ? [...m.inputModalities]
+                  : Array.isArray(m.input) ? m.input : null,
                 outputs: caps[`${info.id}/${m.id}`] ?? [],
               })),
             })
@@ -1036,7 +1111,9 @@ export function applyVisionHelper(ctx: PluginContext, configInput: Partial<Confi
               models: models.map((m: any) => ({
                 id: m.id,
                 name: m.name || m.id,
-                input: Array.isArray(m.input) ? m.input : null,
+                input: Array.isArray(m.inputModalities)
+                  ? [...m.inputModalities]
+                  : Array.isArray(m.input) ? m.input : null,
                 outputs: caps[`${info.id}/${m.id}`] ?? [],
               })),
             })
@@ -1070,7 +1147,9 @@ export function applyVisionHelper(ctx: PluginContext, configInput: Partial<Confi
               models: models.map((m: any) => ({
                 id: m.id,
                 name: m.name || m.id,
-                input: Array.isArray(m.input) ? m.input : null,
+                input: Array.isArray(m.inputModalities)
+                  ? [...m.inputModalities]
+                  : Array.isArray(m.input) ? m.input : null,
                 outputs: caps[`${info.id}/${m.id}`] ?? [],
               })),
             })
@@ -1166,7 +1245,7 @@ export function applyVisionHelper(ctx: PluginContext, configInput: Partial<Confi
       "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12",
       'try {',
       `  $b = @{ model = '${psEscape(model)}'; prompt = '${safePrompt}' } | ConvertTo-Json -Compress`,
-      `  $c = Invoke-RestMethod -UseBasicParsing -Uri '${psEscape(base)}/videos' -Method Post -Headers @{ Authorization = 'Bearer ${psEscape(apiKey)}'; 'Content-Type' = 'application/json' } -Body $b -TimeoutSec 120`,
+      `  $c = Invoke-RestMethod -UseBasicParsing -Uri '${psEscape(base)}/videos' -Method Post -Headers @{ Authorization = 'Bearer ${psEscape(apiKey)}'; 'Content-Type' = 'application/json' } -Body $b -TimeoutSec 15`,
       '  $id = $c.id',
       "  if ($id) { @{ ok = $true; id = $id } | ConvertTo-Json -Compress } else { @{ ok = $false; error = '响应无 id' } | ConvertTo-Json -Compress }",
       '} catch {',
@@ -1177,7 +1256,7 @@ export function applyVisionHelper(ctx: PluginContext, configInput: Partial<Confi
     ].join('; ')
     try {
       const policy = ctx.sandboxPolicy.resolve({ mode: 'danger-full-access' })
-      const spec = ctx.shell.resolve({ command, timeoutMs: 150000, signal, sandboxPolicy: policy })
+      const spec = ctx.shell.resolve({ command, timeoutMs: TEST_TIMEOUT_MS, signal, sandboxPolicy: policy })
       const result = await ctx.shell.run(spec)
       const stdout = result.stdout && result.stdout.text ? result.stdout.text : ''
       const stderr = result.stderr && result.stderr.text ? result.stderr.text : ''
@@ -1195,6 +1274,30 @@ export function applyVisionHelper(ctx: PluginContext, configInput: Partial<Confi
     } catch (error: any) {
       return { ok: false, error: '生视频 API 调用异常: ' + String(error?.message ?? error) }
     }
+  }
+
+  /** 探测模型支持的 reasoning_effort 档位（off 恒支持、不发参数，不探测）。 */
+  async function probeReasoningEfforts(
+    provider: string,
+    model: string,
+    signal?: AbortSignal,
+  ): Promise<any> {
+    const profile = providerConfig(ctx, provider)
+    if (!profile || typeof profile.baseURL !== 'string' || !profile.baseURL) {
+      return { ok: false, error: `provider "${provider}" 未配置 baseURL` }
+    }
+    const apiKey = await resolveApiKey(ctx, profile)
+    if (!apiKey) return { ok: false, error: `未找到 API 凭据（${profile.apiKeyEnv || '未知 env'}）` }
+    const base = String(profile.baseURL).replace(/[\\/]+$/, '')
+    const levels = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max']
+    const supported: string[] = []
+    const rejected: Array<{ level: string; reason: string }> = []
+    for (const level of levels) {
+      const r = await probeReasoningEffort(ctx, base, apiKey, model, level, TEST_TIMEOUT_MS, signal)
+      if (r.ok) supported.push(level)
+      else rejected.push({ level, reason: (r.error || r.detail || '拒绝').slice(0, 200) })
+    }
+    return { ok: true, supported, rejected }
   }
 
   async function testCapability(
@@ -1215,8 +1318,8 @@ export function applyVisionHelper(ctx: PluginContext, configInput: Partial<Confi
       try {
         const res = await callVisionChat(
           ctx, profile.baseURL, apiKey, model, TEST_IMAGE_PNG,
-          '这张图是什么颜色？用一句话回答。', config.timeoutMs, signal,
-          { flatImage: false, reasoningOff: null, maxTokens: config.maxTokens },
+          '这张图是什么颜色？用一句话回答。', TEST_TIMEOUT_MS, signal,
+          { flatImage: false, reasoningOff: null, maxTokens: Math.min(config.maxTokens, 64) },
         )
         if (res.ok && typeof res.content === 'string' && res.content.trim().length > 0) {
           return { ok: true, capability, result: res.content.trim() }
@@ -1234,7 +1337,7 @@ export function applyVisionHelper(ctx: PluginContext, configInput: Partial<Confi
       const apiKey = await resolveApiKey(ctx, profile)
       if (!apiKey) return { ok: false, capability, error: `未找到 API 凭据（${profile.apiKeyEnv || '未知 env'}）` }
       const base = String(profile.baseURL).replace(/[\\/]+$/, '')
-      const one = await generateOne(base, apiKey, model, 'a single red dot on white background', signal)
+      const one = await generateOne(base, apiKey, model, 'a single red dot on white background', signal, TEST_TIMEOUT_MS)
       if (!one.ok) return { ok: false, capability, error: one.error }
       return { ok: true, capability, result: one.url }
     }
@@ -1264,6 +1367,30 @@ export function applyVisionHelper(ctx: PluginContext, configInput: Partial<Confi
             return jsonResponse(res, 400, { ok: false, error: 'capability 须为 vision/image/video' })
           }
           const result = await testCapability(provider, model, capability)
+          jsonResponse(res, 200, result)
+        } catch (error: any) {
+          jsonResponse(res, 500, { ok: false, error: String(error?.message ?? error) })
+        }
+      },
+    })
+  })
+
+  // ── 推理等级自动探测接口（「自动检测」按钮：逐档位发请求探测支持情况）──
+
+  ctx.effect(() => {
+    const webServer = ctx.webServer
+    if (!webServer) return () => {}
+    return webServer.register({
+      kind: 'exact',
+      path: '/api/test-reasoning',
+      handler: async (req: any, res: any) => {
+        try {
+          if (req.method !== 'POST') return jsonResponse(res, 405, { ok: false, error: 'method not allowed' })
+          const body = await readBody(req)
+          const provider = body && typeof body.provider === 'string' ? body.provider : ''
+          const model = body && typeof body.model === 'string' ? body.model : ''
+          if (!provider || !model) return jsonResponse(res, 400, { ok: false, error: 'provider/model 不能为空' })
+          const result = await probeReasoningEfforts(provider, model)
           jsonResponse(res, 200, result)
         } catch (error: any) {
           jsonResponse(res, 500, { ok: false, error: String(error?.message ?? error) })

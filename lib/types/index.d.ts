@@ -8,6 +8,9 @@
  *     的 known-models 词典做法）。
  *  3. AnySearch 网页搜索 provider（原 dsh-web-search-anysearch 插件）：注册
  *     到 `ctx.web`，替换内置 DeepSeek 搜索为 https://api.anysearch.com。
+ *
+ * 功能模块开关：settings 命名空间 `webui-modules`（见 modules-host.ts），
+ * applyModulesHost 返回本次启动的全量布尔表，为 false 的模块完全不装配。
  */
 import type { Context } from 'cordis';
 export declare const name = "dsh-webui";

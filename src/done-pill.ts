@@ -111,9 +111,10 @@ export function applyDonePill(ctx: Context): void {
   const titles = new Map<string, string>()
   const items: DonePillEntry[] = []
   // 正在执行的回合：turn/start 时记录开始时间 + 触发消息（该会话最近的
-  // 真人 user/message，steering 中途插话也跟随更新），turn/end 移除（含
-  // aborted）。供前端展示「正在执行的消息 + 实时时长」。服务重启后清零。
-  const runningTurns = new Map<string, { since: number; question: string }>()
+  // 真人 user/message，steering 中途插话也跟随更新）+ 会话标题快照，
+  // turn/end 移除（含 aborted）。供前端展示「正在执行的消息 + 实时时长」。
+  // 服务重启后清零。subagent 回合不进表（与完成列表口径一致）。
+  const runningTurns = new Map<string, { since: number; question: string; title: string }>()
   const lastQuestions = new Map<string, string>()
   // seq = 启动时间戳 + 计数器：进程内单调；重启后启动时间戳变大，
   // 新 seq 必然大于客户端在旧进程里见过的所有 seq（增量水位永不回绕卡死）。
@@ -187,7 +188,8 @@ export function applyDonePill(ctx: Context): void {
         return
       }
       if (event.type === 'turn/start') {
-        runningTurns.set(session.id, { since: Date.now(), question: lastQuestions.get(session.id) ?? '' })
+        if (session.header?.origin === 'subagent') return
+        runningTurns.set(session.id, { since: Date.now(), question: lastQuestions.get(session.id) ?? '', title: titleOf(session) })
         return
       }
       if (event.type !== 'turn/end') return
@@ -247,6 +249,7 @@ export function applyDonePill(ctx: Context): void {
           sessionId,
           since: info.since,
           question: info.question,
+          title: info.title,
         })),
       }))
     },

@@ -21,6 +21,9 @@ interface FileExplorerDrawerProps {
 
 type WorkspaceState = 'loading' | 'error' | 'ready'
 
+/** 退出动画兜底时长（ms），需 ≥ styles.ts 中 fe-drawer-out 的时长。 */
+const DRAWER_EXIT_MS = 300
+
 /** 归一化路径用于比较（统一分隔符、去尾斜杠、忽略大小写——Windows）。 */
 function normalizePath(path: string): string {
   return path.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
@@ -46,6 +49,29 @@ export function FileExplorerDrawer({ open, onClose, currentCwd, t }: FileExplore
   const [wsState, setWsState] = useState<WorkspaceState>('loading')
   const [selected, setSelected] = useState('')
   const [openFile, setOpenFile] = useState<string | null>(null)
+  // 滑出动画：父级把 open 置 false 后仍渲染到动画播完再卸载。
+  const [visible, setVisible] = useState(open)
+  const closing = !open && visible
+
+  useEffect(() => {
+    if (open) setVisible(true)
+  }, [open])
+
+  useEffect(() => {
+    if (open || !visible) return
+    const timer = window.setTimeout(() => { setVisible(false) }, DRAWER_EXIT_MS)
+    return () => { window.clearTimeout(timer) }
+  }, [open, visible])
+
+  // Esc 关闭抽屉（文件弹窗打开时先让弹窗响应 Esc）。
+  useEffect(() => {
+    if (!open) return
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape' && openFile === null) onClose()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => { document.removeEventListener('keydown', onKey) }
+  }, [onClose, open, openFile])
 
   useEffect(() => {
     if (!open) return
@@ -71,14 +97,22 @@ export function FileExplorerDrawer({ open, onClose, currentCwd, t }: FileExplore
     setSelected(prev => (prev === preferred ? prev : preferred))
   }, [open, wsState, workspaces, currentCwd])
 
-  if (!open) return null
+  if (!visible) return null
 
   const current = workspaces.find(workspace => workspace.id === selected)
 
   return (
     <>
-      <div className={css.backdrop} aria-hidden="true" onClick={onClose} />
-      <div className={css.drawer} role="dialog" aria-label={t('drawerTitle')}>
+      <div
+        className={closing ? `${css.backdrop} ${css.backdropClosing}` : css.backdrop}
+        aria-hidden="true"
+        onClick={onClose}
+      />
+      <div
+        className={closing ? `${css.drawer} ${css.drawerClosing}` : css.drawer}
+        role="dialog"
+        aria-label={t('drawerTitle')}
+      >
         <div className={css.drawerHeader}>
           <span className={css.drawerTitle}>{t('drawerTitle')}</span>
         </div>

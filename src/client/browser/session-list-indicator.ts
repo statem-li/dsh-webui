@@ -33,9 +33,18 @@ export function applySessionListIndicator(ctx: ClientContext): () => void {
   const sessions = ctx.sessions
 
   let raf = 0
+  /** 两次扫描之间的最小间隔（ms）：DOM 高频变化时合并扫描，防止主线程被全量遍历占满。 */
+  const SCAN_MIN_INTERVAL_MS = 120
+  let lastScanAt = 0
   const schedule = (): void => {
     if (raf !== 0) return
-    raf = requestAnimationFrame(() => { raf = 0; scan() })
+    raf = requestAnimationFrame(() => {
+      raf = 0
+      const now = performance.now()
+      if (now - lastScanAt < SCAN_MIN_INTERVAL_MS) return
+      lastScanAt = now
+      scan()
+    })
   }
 
   const titleOf = (sessionId: string): string | undefined => {
@@ -54,6 +63,13 @@ export function applySessionListIndicator(ctx: ClientContext): () => void {
       }
     }
     const titles = [...byTitle.keys()]
+    // 无活跃 AI 浏览器会话：清掉已插入的图标并直接退出，不做任何行遍历。
+    // 否则每次 DOM 变化都会全量 querySelectorAll 扫描整棵会话树（实测
+    // 每秒 1.3 万+ 次 DOM 查询，占满渲染进程主线程导致 GUI 卡顿不可点）。
+    if (titles.length === 0) {
+      for (const el of document.querySelectorAll(`.${BADGE_CLASS}`)) el.remove()
+      return
+    }
 
     const rows = document.querySelectorAll<HTMLElement>('div[role="treeitem"][aria-selected]')
     for (const row of rows) {
@@ -86,13 +102,27 @@ export function applySessionListIndicator(ctx: ClientContext): () => void {
 
   const unsubStore = store.subscribe(schedule)
   const unsubList = sessions.list.subscribe(schedule)
+  // 仅在存在活跃浏览器会话时观察 DOM：空闲时断开，消除无谓的全树扫描。
   const observer = new MutationObserver(schedule)
-  observer.observe(document.body, { childList: true, subtree: true })
+  let observing = false
+  const syncObservation = (): void => {
+    const hasActive = store.active.size > 0
+    if (hasActive && !observing) {
+      observer.observe(document.body, { childList: true, subtree: true })
+      observing = true
+    } else if (!hasActive && observing) {
+      observer.disconnect()
+      observing = false
+    }
+  }
+  const unsubActivity = store.subscribe(syncObservation)
+  syncObservation()
   schedule()
 
   return () => {
     unsubStore()
     unsubList()
+    unsubActivity()
     observer.disconnect()
     if (raf !== 0) cancelAnimationFrame(raf)
     for (const el of document.querySelectorAll(`.${BADGE_CLASS}`)) el.remove()

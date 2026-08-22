@@ -21,7 +21,8 @@
     "lib",
     "scripts/build.sh",
     "scripts/conversation-done-card.ps1",
-    "assets/task-done.wav"
+    "assets/task-done.wav",
+    "assets/planweave-skills"
   ],
   "license": "BSD-3-Clause",
   "dsh": {
@@ -47,13 +48,11 @@
     "@shikijs/langs": "4.4.3",
     "@shikijs/themes": "4.4.3",
     "dompurify": "^3.4.14",
-    "echarts": "^5.6.0",
     "katex": "^0.18.4",
     "markdown-it": "^15.0.0",
     "markdown-it-emoji": "^3.1.0",
     "markdown-it-task-lists": "^2.1.1",
     "markstream-react": "0.0.55",
-    "mermaid": "11.16.1",
     "shiki": "4.4.3",
     "stream-markdown": "0.0.16"
   },

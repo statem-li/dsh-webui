@@ -50,7 +50,10 @@ const SHEET = `
   color: var(--dsw-alias-state-business-primary, #4176e6);
 }
 
-/* 4) 右键菜单：贴合 DSH Menu 观感（浮层卡片 + 菜单行）。 */
+/* 4) 右键菜单：贴合 DSH Menu 观感 + 磨砂玻璃底。
+   backdrop-filter 直加在浮层本体（本卡 portal 到 body，非布局容器）；
+   底色用 color-mix 从主题菜单色派生 76% 半透明，深/浅主题与玻璃质感
+   token 都自动适配，模糊透出背后内容。 */
 .dsp-menu-mask {
   position: fixed;
   inset: 0;
@@ -64,7 +67,9 @@ const SHEET = `
   padding: 4px;
   border: 1px solid var(--dsw-alias-border-l2, rgba(255,255,255,.14));
   border-radius: 10px;
-  background: var(--dsw-specific-menu, var(--dsw-alias-bg-layer-2, #16181d));
+  background: color-mix(in srgb, var(--dsw-specific-menu, var(--dsw-alias-bg-layer-2, #16181d)) 76%, transparent);
+  -webkit-backdrop-filter: blur(18px) saturate(1.6);
+  backdrop-filter: blur(18px) saturate(1.6);
   box-shadow: var(--dsw-shadow-lv3, 0 8px 40px rgba(0,0,0,.5));
   user-select: none;
 }
@@ -181,6 +186,48 @@ const SHEET = `
 .dsp-rename-btn[data-kind='primary']:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+
+/* 6) 置顶补行：折叠窗口顶部自绘的置顶会话行（图钉 + 标题），
+   高度/圆角/内边距与官方会话行一致。 */
+.dsp-pin-surrogates {
+  padding: 2px 0;
+}
+.dsp-pin-surrogate {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  box-sizing: border-box;
+  padding: 0 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--dsw-alias-label-primary, #eee);
+}
+.dsp-pin-surrogate:hover {
+  background: var(--dsw-alias-interactive-bg-hover, rgba(255,255,255,.06));
+}
+.dsp-pin-surrogate-selected,
+.dsp-pin-surrogate-selected:hover {
+  background: var(--dsw-alias-interactive-bg-active, rgba(255,255,255,.1));
+}
+.dsp-pin-surrogate-icon {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: var(--dsw-alias-state-business-primary, #4176e6);
+}
+.dsp-pin-surrogate [data-role="title"] {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  line-height: 20px;
 }
 
 @media (prefers-reduced-motion: reduce) {

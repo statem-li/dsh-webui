@@ -42,5 +42,10 @@ export declare const Config: z<Schemastery.ObjectS<{
     fallbackDescribePrompt: z<string, string>;
     fallbackCacheSize: z<number, number>;
 }>>;
+/**
+ * 探测一个模型支持的 reasoning_effort 档位集合（off 恒支持、不发参数，故不探测）。
+ * 逐个用档位名作为 reasoning_effort 线值发请求，返回 accepted / rejected。
+ * 定义在 applyVisionHelper 内部（依赖 providerConfig/resolveApiKey/config 闭包）。
+ */
 export declare function applyVisionHelper(ctx: PluginContext, configInput: Partial<Config>): void;
 export {};

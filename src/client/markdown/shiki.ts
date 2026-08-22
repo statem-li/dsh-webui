@@ -1,58 +1,56 @@
-import { createBundledHighlighter, createSingletonShorthands } from 'shiki/core'
-import { createJavaScriptRegexEngine } from 'shiki/engine/javascript'
+/**
+ * shiki stub —— client 侧代码高亮已移除（性能优先）。
+ *
+ * 原实现引用 shiki/core + shiki/engine/javascript + 28 个 @shikijs/langs +
+ * 2 个主题（codeSplitting:false 下全部内联，约 1.5MB+ 启动即解析）。
+ * 现改为零依赖 stub：
+ *
+ *  - SHIKI_LANGUAGES 恒为空数组 → markstream 的代码块组件判定「无可用语言」，
+ *    代码块走纯文本渲染（无高亮、无语言标签）；
+ *  - createHighlighter 返回假高亮器 → stream-markdown 的动态 import("shiki")
+ *    （被 tsdown 挂钩替换到本文件）即使被触达也只产出纯文本 token，不崩。
+ *
+ * host 半身（src/markdown-html.ts，node 侧）仍用真 shiki 做服务端渲染，
+ * 故 package.json 的 shiki / @shikijs/langs / @shikijs/themes 依赖保留。
+ */
 
-const languages = {
-  bash: () => import('@shikijs/langs/bash'),
-  c: () => import('@shikijs/langs/c'),
-  cpp: () => import('@shikijs/langs/cpp'),
-  csharp: () => import('@shikijs/langs/csharp'),
-  css: () => import('@shikijs/langs/css'),
-  dart: () => import('@shikijs/langs/dart'),
-  dockerfile: () => import('@shikijs/langs/dockerfile'),
-  go: () => import('@shikijs/langs/go'),
-  html: () => import('@shikijs/langs/html'),
-  java: () => import('@shikijs/langs/java'),
-  javascript: () => import('@shikijs/langs/javascript'),
-  json: () => import('@shikijs/langs/json'),
-  jsx: () => import('@shikijs/langs/jsx'),
-  kotlin: () => import('@shikijs/langs/kotlin'),
-  lua: () => import('@shikijs/langs/lua'),
-  markdown: () => import('@shikijs/langs/markdown'),
-  'objective-c': () => import('@shikijs/langs/objective-c'),
-  'objective-cpp': () => import('@shikijs/langs/objective-cpp'),
-  php: () => import('@shikijs/langs/php'),
-  powershell: () => import('@shikijs/langs/powershell'),
-  python: () => import('@shikijs/langs/python'),
-  ruby: () => import('@shikijs/langs/ruby'),
-  rust: () => import('@shikijs/langs/rust'),
-  scala: () => import('@shikijs/langs/scala'),
-  shellscript: () => import('@shikijs/langs/shellscript'),
-  sql: () => import('@shikijs/langs/sql'),
-  svelte: () => import('@shikijs/langs/svelte'),
-  swift: () => import('@shikijs/langs/swift'),
-  toml: () => import('@shikijs/langs/toml'),
-  tsx: () => import('@shikijs/langs/tsx'),
-  typescript: () => import('@shikijs/langs/typescript'),
-  vue: () => import('@shikijs/langs/vue'),
-  xml: () => import('@shikijs/langs/xml'),
-  yaml: () => import('@shikijs/langs/yaml'),
+export const SHIKI_LANGUAGES: readonly string[] = []
+
+interface StubToken {
+  content: string
+  color?: string
+  fontStyle?: number
 }
 
-const themes = {
-  'vitesse-dark': () => import('@shikijs/themes/vitesse-dark'),
-  'vitesse-light': () => import('@shikijs/themes/vitesse-light'),
+/** 按行切成纯文本 token（每行一个无样式 token，渲染时保留原文）。 */
+function plainTokens(code: string): StubToken[][] {
+  return String(code ?? '')
+    .split('\n')
+    .map((line) => [{ content: line }])
 }
 
-export const SHIKI_LANGUAGES = Object.freeze(Object.keys(languages))
-
-/** 已打包语言 key 的联合类型（与 createBundledHighlighter 推断一致）。 */
-export type ShikiLangKey = keyof typeof languages
-
-export const createHighlighter = createBundledHighlighter({
-  langs: languages,
-  themes,
-  engine: () => createJavaScriptRegexEngine(),
-})
-
-/** 单例 shorthand bundle：自动按需加载语言/主题；codeToTokens / codeToHtml 为异步。 */
-export const highlighter = createSingletonShorthands(createHighlighter)
+export async function createHighlighter(): Promise<unknown> {
+  return {
+    codeToTokens(code: string) {
+      return { tokens: plainTokens(code) }
+    },
+    codeToThemedTokens(code: string) {
+      return plainTokens(code)
+    },
+    codeToHtml(code: string) {
+      return String(code ?? '').split('\n').map((line) => `<span>${line}</span>`).join('\n')
+    },
+    getTheme() {
+      return undefined
+    },
+    dispose(): void {
+      // 无操作
+    },
+    loadLanguage(): Promise<void> {
+      return Promise.resolve()
+    },
+    loadTheme(): Promise<void> {
+      return Promise.resolve()
+    },
+  }
+}

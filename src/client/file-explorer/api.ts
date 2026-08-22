@@ -74,6 +74,22 @@ export function readFile(path: string): Promise<FileContent> {
   return getJson<FileContent>(`/read?path=${encodeURIComponent(path)}`)
 }
 
+/** URL for serving a file's raw bytes inline (images) or as a download. */
+export function rawFileUrl(path: string, download = false): string {
+  return `${API_BASE}/raw?path=${encodeURIComponent(path)}${download ? '&download=1' : ''}`
+}
+
+export interface BinaryPreview {
+  base64: string
+  size: number
+  truncated: boolean
+}
+
+/** Leading bytes of any file (base64) for the hex preview fallback. */
+export function readBinaryPreview(path: string): Promise<BinaryPreview> {
+  return getJson<BinaryPreview>(`/bin?path=${encodeURIComponent(path)}`)
+}
+
 export function writeFile(path: string, content: string, version?: string): Promise<WriteResult> {
   return sendJson<WriteResult>('PUT', '/write', { path, content, version })
 }

@@ -105,19 +105,36 @@ interface FiberLike {
   return?: FiberLike | null
 }
 
-/** 主路径：从会话行 DOM 元素沿 React fiber 链读 SessionNode.id。 */
-function resolveViaFiber(row: HTMLElement): SessionId | null {
-  for (const key of Object.keys(row)) {
+/**
+ * 沿 React fiber 链向上搜索：从元素自身的 fiber 出发，逐层检查
+ * memoizedProps，返回第一个让 pick 命中非空值的 props。fiber 链遍历失败
+ * （React 升级改键名 / 非 React 环境）返回 null。
+ * @param el - 挂有 `__reactFiber$*` 的 DOM 元素。
+ * @param pick - 从一组 memoizedProps 里取目标值（返回 null/undefined 继续向上）。
+ */
+export function resolveFiberProp<T>(
+  el: Element,
+  pick: (props: { node?: { id?: unknown } } & Record<string, unknown>) => T | null | undefined,
+): T | null {
+  for (const key of Object.keys(el)) {
     if (!key.startsWith(FIBER_KEY_PREFIX)) continue
-    let fiber = (row as unknown as Record<string, unknown>)[key] as FiberLike | undefined
+    let fiber = (el as unknown as Record<string, unknown>)[key] as FiberLike | undefined
     for (let depth = 0; fiber !== undefined && depth < FIBER_MAX_DEPTH; depth++) {
-      const id = fiber.memoizedProps?.node?.id
-      if (typeof id === 'string' && id.length > 0) return id as SessionId
+      const hit = fiber.memoizedProps === undefined ? undefined : pick(fiber.memoizedProps)
+      if (hit !== null && hit !== undefined) return hit
       fiber = fiber.return ?? undefined
     }
     break
   }
   return null
+}
+
+/** 主路径：从会话行 DOM 元素沿 React fiber 链读 SessionNode.id。 */
+function resolveViaFiber(row: HTMLElement): SessionId | null {
+  return resolveFiberProp(row, (props) => {
+    const id = props.node?.id
+    return typeof id === 'string' && id.length > 0 ? (id as SessionId) : null
+  })
 }
 
 /** 会话行的展示标题（`[class*="title"]` 文本；blank 行显示本地化「新会话」）。 */

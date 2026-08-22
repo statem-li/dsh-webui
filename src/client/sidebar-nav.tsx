@@ -25,8 +25,8 @@ const AUTO_HOST_ID = 'dsh-automation-menu-host'
 /** 侧边栏折叠观察：AutomationApp / sidebar-float 相同的框架容器选择器。 */
 const FRAME_SELECTOR = 'div:has(> [data-shell-overlay])'
 
-/** 槽位名 → 顺序即 DOM 顺序（用量/技能一组，记忆一组）。 */
-const SLOT_NAMES = ['usage', 'memory'] as const
+/** 槽位名 → 顺序即 DOM 顺序（用量/技能一组，记忆一组，PlanWeave 一组）。 */
+const SLOT_NAMES = ['usage', 'memory', 'planweave'] as const
 
 /** 槽位名。 */
 export type NavSlotName = (typeof SLOT_NAMES)[number]

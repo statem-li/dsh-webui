@@ -1085,9 +1085,9 @@ interface DragState {
 
 /** 顶部悬浮「对话完成」胶囊：点击进会话、悬停滑出记录、可拖拽、常驻显示。 */
 export function DonePill(props: DonePillProps): JSX.Element | null {
-  const { useSessions } = props
-  const byId = useSessions(state => state.byId)
-
+  // 按需加载：不订阅 DSH 会话全量 store（state.byId）。任何会话状态变化
+  // （如点击会话切换）都会让全量订阅组件重渲染并 Object.values 遍历全部
+  // 会话——running/完成数据改由 host 的 /api/webui-done-pill 增量推送驱动。
   const [entries, setEntries] = useState<DoneEntry[]>([])
   const [readIds, setReadIds] = useState<Set<string>>(() => loadReadIds())
   const [hovered, setHovered] = useState(false)
@@ -1103,7 +1103,7 @@ export function DonePill(props: DonePillProps): JSX.Element | null {
   const [dragging, setDragging] = useState(false)
   // 正在执行回合的信息（host 下发）：sessionId → { since, question }，
   // question = 当前正在执行的那条用户消息，供任务列表展示。
-  const [runInfo, setRunInfo] = useState<Record<string, { since: number; question: string }>>({})
+  const [runInfo, setRunInfo] = useState<Record<string, { since: number; question: string; title: string }>>({})
   // 实时时钟：任务面板展开时每秒走字。
   const [nowTick, setNowTick] = useState(() => Date.now())
   // 健康提醒时钟：每 30 秒刷新当前分钟，判断是否落在提醒时段内。
@@ -1219,7 +1219,7 @@ export function DonePill(props: DonePillProps): JSX.Element | null {
       fetch(`/api/webui-done-pill?since=${sinceRef.current}`, { cache: 'no-store' })
         .then(async (res) => {
           if (!res.ok) throw new Error(`http ${res.status}`)
-          return res.json() as Promise<{ ok: boolean; version: number; items: DoneEntry[]; running?: Array<{ sessionId: string; since: number; question?: string }> }>
+          return res.json() as Promise<{ ok: boolean; version: number; items: DoneEntry[]; running?: Array<{ sessionId: string; since: number; question?: string; title?: string }> }>
         })
         .then((data) => {
           if (stopped || data?.ok !== true || !Array.isArray(data.items)) return
@@ -1233,6 +1233,7 @@ export function DonePill(props: DonePillProps): JSX.Element | null {
                 next[entry.sessionId] = {
                   since: entry.since,
                   question: typeof entry.question === 'string' ? entry.question : '',
+                  title: typeof entry.title === 'string' ? entry.title : '',
                 }
               }
             }
@@ -1269,13 +1270,15 @@ export function DonePill(props: DonePillProps): JSX.Element | null {
     return () => { window.clearInterval(timer) }
   }, [funIdle])
 
-  // 正在执行中的任务 = running 的非 subagent 会话（与完成列表口径一致），
-  // 按最近更新时间降序。
+  // 正在执行中的任务：直接取 host 增量推送的 running 列表（turn/start 入表、
+  // turn/end 出表，已排除 subagent），按开始时间降序。不再订阅全量会话
+  // store（byId）——那会在任何会话状态变化（如点击会话）时触发本组件
+  // 重渲染 + Object.values 全量遍历。
   const runningSessions = useMemo(() => (
-    Object.values(byId)
-      .filter(session => session.running === true && session.origin !== 'subagent')
-      .sort((a, b) => b.updatedAt - a.updatedAt)
-  ), [byId])
+    Object.entries(runInfo)
+      .map(([sessionId, info]) => ({ id: sessionId, displayTitle: info.title, since: info.since }))
+      .sort((a, b) => b.since - a.since)
+  ), [runInfo])
 
   const markAllRead = useCallback((): void => {
     setReadIds(prev => {
@@ -1377,9 +1380,7 @@ export function DonePill(props: DonePillProps): JSX.Element | null {
     if (latest !== undefined) openSession(latest.sessionId, unreadCount > 0 ? latest.id : undefined)
   }, [latest, openSession, unreadCount])
 
-  const latestTitle = latest !== undefined
-    ? (byId[latest.sessionId as SessionId]?.displayTitle ?? latest.title)
-    : ''
+  const latestTitle = latest !== undefined ? latest.title : ''
 
   // 胶囊主文本：显示刚完成的那条对话消息（而非会话标题/AI 回复）；
   // 无消息时回退标题。
@@ -1560,8 +1561,6 @@ export function DonePill(props: DonePillProps): JSX.Element | null {
               {info !== undefined && (
                 <span style={runRowTimeStyle}>{formatElapsed(nowTick - info.since)}</span>
               )}
-              {session.pendingInteraction === 'approval' && <span style={runRowTagStyle}>待审批</span>}
-              {session.pendingInteraction === 'question' && <span style={runRowTagStyle}>待回答</span>}
             </button>
           )
         })}
@@ -1576,7 +1575,7 @@ export function DonePill(props: DonePillProps): JSX.Element | null {
           <span style={headMetaStyle}>{`${entries.length} 条 · 点击卡片进入会话`}</span>
         </div>
         {entries.map((item) => {
-          const title = byId[item.sessionId as SessionId]?.displayTitle ?? item.title
+          const title = item.title
           const unread = !readIds.has(item.id)
           // 主文本 = 完成的那条对话消息；无消息时回退会话标题。
           const headLabel = item.question !== '' ? item.question : item.title

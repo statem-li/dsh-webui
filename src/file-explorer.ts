@@ -7,10 +7,13 @@
  *   GET /workspaces           → [{ id, title, path }]
  *   GET /list?path=<dir>      → [{ name, type, size }]  (directories first)
  *   GET /read?path=<file>     → { content, version, path }
+ *   GET /raw?path=<file>      → raw bytes (inline image serving / download)
+ *   GET /bin?path=<file>      → { base64, size, truncated } hex-preview head
  *   PUT /write  { path, content, version? } → { version, operation }
  */
 
 import { URL } from 'node:url'
+import { open as openFileHandle } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
 
@@ -57,9 +60,11 @@ interface SandboxPolicyServiceLike {
 
 interface FileSystemService {
   resolve(path: string): Promise<FsTarget>
+  processPath(target: FsTarget): string
   stat(target: FsTarget): Promise<FsInfo | undefined>
   listDir(target: FsTarget): Promise<FsDirEntry[]>
   readText(target: FsTarget): Promise<string>
+  readBytes(target: FsTarget, signal: AbortSignal | undefined, maxBytes: number): Promise<Uint8Array>
   writeText(
     target: FsTarget,
     content: string,
@@ -105,6 +110,41 @@ const ROUTE_PREFIX = '/api/file-explorer'
 const MAX_READ_BYTES = 2 * 1024 * 1024
 /** Write body ceiling (JSON-escaped content can inflate ~2x). */
 const MAX_BODY_BYTES = 16 * 1024 * 1024
+/** Raw-byte ceiling for inline image serving / download. */
+const MAX_RAW_BYTES = 32 * 1024 * 1024
+/** Hex-preview head size for binary files (any type opens with a peek). */
+const HEX_PREVIEW_BYTES = 4 * 1024
+
+/** Extension → MIME for raw serving; unknown → application/octet-stream. */
+const MIME_BY_EXT: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.bmp': 'image/bmp',
+  '.ico': 'image/x-icon',
+  '.cur': 'image/x-icon',
+  '.svg': 'image/svg+xml',
+  '.avif': 'image/avif',
+  '.pdf': 'application/pdf',
+  '.mp3': 'audio/mpeg',
+  '.wav': 'audio/wav',
+  '.ogg': 'audio/ogg',
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
+  '.json': 'application/json',
+  '.txt': 'text/plain; charset=utf-8',
+  '.md': 'text/markdown; charset=utf-8',
+}
+
+/** Guess a serving MIME type from the file extension. */
+function mimeTypeForPath(path: string): string {
+  const name = path.split(/[\\/]/).pop() ?? ''
+  const dot = name.lastIndexOf('.')
+  if (dot <= 0) return 'application/octet-stream'
+  return MIME_BY_EXT[name.slice(dot).toLowerCase()] ?? 'application/octet-stream'
+}
 
 /** ── Errors ────────────────────────────────────────────────────────────── */
 
@@ -273,6 +313,49 @@ async function readFile(ctx: Context, rawPath: unknown): Promise<{ content: stri
   return { content, version: info.version, path: target.displayPath }
 }
 
+/** Serve the whole file as raw bytes (inline images, downloads). */
+async function readRaw(
+  ctx: Context,
+  rawPath: unknown,
+): Promise<{ bytes: Buffer; mime: string }> {
+  const target = await resolveWithinWorkspace(ctx, rawPath)
+  const info = await ctx.fs.stat(target)
+  if (info === undefined) throw new HttpError(404, 'file does not exist')
+  if (info.type !== 'file') throw new HttpError(400, 'path is not a file')
+  if (info.size !== undefined && info.size > MAX_RAW_BYTES) {
+    throw new HttpError(413, 'file is too large to serve')
+  }
+  const bytes = await ctx.fs.readBytes(target, undefined, MAX_RAW_BYTES)
+  return { bytes: Buffer.from(bytes), mime: mimeTypeForPath(target.displayPath) }
+}
+
+/** Read the leading bytes of any file as base64 for a hex preview.
+ *  `fs.readBytes` rejects files larger than its cap outright, so read the
+ *  head straight from disk via the resolved target path instead. */
+async function readBinaryPreview(
+  ctx: Context,
+  rawPath: unknown,
+): Promise<{ base64: string; size: number; truncated: boolean }> {
+  const target = await resolveWithinWorkspace(ctx, rawPath)
+  const info = await ctx.fs.stat(target)
+  if (info === undefined) throw new HttpError(404, 'file does not exist')
+  if (info.type !== 'file') throw new HttpError(400, 'path is not a file')
+  const handle = await openFileHandle(ctx.fs.processPath(target), 'r')
+  try {
+    const buffer = Buffer.alloc(HEX_PREVIEW_BYTES)
+    const { bytesRead } = await handle.read(buffer, 0, HEX_PREVIEW_BYTES, 0)
+    const head = buffer.subarray(0, bytesRead)
+    const size = info.size ?? bytesRead
+    return {
+      base64: head.toString('base64'),
+      size,
+      truncated: size > bytesRead,
+    }
+  } finally {
+    await handle.close()
+  }
+}
+
 async function writeFile(
   ctx: Context,
   body: { path?: unknown; content?: unknown; version?: unknown },
@@ -318,6 +401,24 @@ async function handle(ctx: Context, req: IncomingMessage, res: ServerResponse): 
     }
     if (method === 'GET' && rest === '/read') {
       json(res, 200, await readFile(ctx, url.searchParams.get('path')))
+      return
+    }
+    if (method === 'GET' && rest === '/raw') {
+      const { bytes, mime } = await readRaw(ctx, url.searchParams.get('path'))
+      const download = url.searchParams.get('download') === '1'
+      const name = String(url.searchParams.get('path') ?? '').split(/[\\/]/).pop() ?? 'file'
+      res.writeHead(200, {
+        'content-type': mime,
+        'content-length': String(bytes.length),
+        'cache-control': 'no-cache',
+        'x-content-type-options': 'nosniff',
+        ...(download ? { 'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(name)}` } : {}),
+      })
+      res.end(bytes)
+      return
+    }
+    if (method === 'GET' && rest === '/bin') {
+      json(res, 200, await readBinaryPreview(ctx, url.searchParams.get('path')))
       return
     }
     if (method === 'PUT' && rest === '/write') {

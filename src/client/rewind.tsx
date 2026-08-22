@@ -11,13 +11,16 @@
  * 顺序保证一致性：文件回退失败则绝不切上下文，用户停留在原会话且文件未被
  * 改动，可放心重试。
  */
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ClientContext, ISessions, IWorkspaces, SessionId } from '@deepseek-ai/dsh-client-runtime/client'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
+import type { ClientContext, ISessions, IWorkspaces, SessionId, SnapshotStore } from '@deepseek-ai/dsh-client-runtime/client'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm/types'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import type { ChatNodeViewProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
 // Type-only: 激活 ui-conversation 的 SlotMap / ChatNodeDataMap 合并声明。
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
+// Type-only: 拉入 ModelDirectoryState（ui-model-selection 的共享模型目录状态）。
+import type { ModelDirectoryState } from '@deepseek-ai/dsh-client-ui-model-selection/client'
 import {
   Button, IconCheckOutline16, IconCopyOutline16,
   JsonBlock, MessageText, Modal, Tooltip, writeClipboard,
@@ -67,6 +70,7 @@ const STYLE_ID = 'dsh-webui-rewind-styles'
 const SHEET = `
 .dsh-rewind-userRow{display:flex;flex-direction:column;align-items:flex-end;gap:6px}
 .dsh-rewind-userStack{display:flex;flex-direction:column;align-items:flex-end;gap:8px;min-width:0;max-width:min(525px,82%)}
+.dsh-rewind-visionTag{display:inline-flex;align-items:center;padding:2px 8px;border-radius:8px;font-size:11px;line-height:16px;background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.08));color:var(--dsw-alias-label-tertiary,#888);cursor:default}
 .dsh-rewind-bubble{max-width:100%;background:var(--dsw-specific-bubble,var(--dsw-alias-bg-layer-3,#1b1e24));border-radius:22px;padding:10px 16px;font-size:16px;line-height:24px;color:var(--dsw-alias-label-primary,#ddd);overflow-wrap:anywhere;white-space:pre-wrap}
 .dsh-rewind-referenceSummary{color:var(--dsw-alias-label-tertiary,#888);font-size:12px;line-height:18px}
 .dsh-rewind-actions{display:flex;align-items:center;gap:10px;height:28px}
@@ -85,8 +89,11 @@ const SHEET = `
 .dsh-rewind-diffAdd{background:rgba(52,199,123,.16);color:#34c77b}
 .dsh-rewind-diffDel{background:rgba(255,90,95,.16);color:#ff5a5f}
 .dsh-rewind-diffMore{color:var(--dsw-alias-label-tertiary,#888);font-size:12px;line-height:18px}
-.dsh-rewind-edit{width:100%;min-height:120px;resize:vertical;box-sizing:border-box;padding:10px 12px;border:1px solid var(--dsw-alias-line-divider,rgba(255,255,255,.12));border-radius:12px;background:var(--dsw-alias-bg-layer-2,transparent);color:var(--dsw-alias-label-primary,#ddd);font-size:14px;line-height:22px;font-family:inherit;outline:none}
+.dsh-rewind-edit{width:100%;min-height:132px;max-height:50vh;resize:none;overflow:auto;box-sizing:border-box;padding:10px 12px;border:1px solid var(--dsw-alias-line-divider,rgba(255,255,255,.12));border-radius:12px;background:var(--dsw-alias-bg-layer-2,transparent);color:var(--dsw-alias-label-primary,#ddd);font-size:14px;line-height:22px;font-family:inherit;outline:none}
 .dsh-rewind-edit:focus{border-color:var(--dsw-alias-state-business-primary,#4a9eff)}
+.dsh-rewind-edit:disabled{opacity:.55}
+.dsh-rewind-inlineEditor{display:flex;flex-direction:column;gap:8px;width:min(760px,100%);min-width:min(600px,100%);box-sizing:border-box}
+.dsh-rewind-editActions{display:flex;justify-content:flex-end;gap:8px}
 @media (hover:hover){
   [data-time-hover-root] .dsh-rewind-time{opacity:0;transition:opacity 80ms ease}
   [data-time-hover-root]:hover .dsh-rewind-time,[data-time-hover-root]:focus-within .dsh-rewind-time{opacity:1}
@@ -147,8 +154,60 @@ function formatTime(ts: number): string {
 
 /** 组件注入的业务面（由 applyRewindClient 经 slot inject 提供）。 */
 export interface RewindInjected {
-  sessions: Pick<ISessions, 'fork' | 'open' | 'binding'>
+  sessions: Pick<ISessions, 'fork' | 'open' | 'binding' | 'list'>
   workspaces: Pick<IWorkspaces, 'startSession' | 'archiveSession'>
+  /** 当前会话的共享模型目录（ui-model-selection）；辅助视觉徽章读当前选中模型。 */
+  directory?: SnapshotStore<ModelDirectoryState>
+}
+
+// ── 辅助视觉徽章：当前模型不支持图片输入时，用户消息图片下方标注 ──────────
+
+/** provider/model → input 是否含 image 的缓存（60s），来自 /api/vision-helper/providers。 */
+let visionCapCache: { at: number; map: Map<string, boolean> } | null = null
+
+/**
+ * 当前会话选中模型是否声明了图片输入。
+ * @returns true=支持（不显示徽章）；false=不支持（显示徽章）；undefined=未知（不显示）。
+ */
+function useModelSupportsImage(directory: SnapshotStore<ModelDirectoryState> | undefined): boolean | undefined {
+  const state = useSyncExternalStore(
+    fn => directory?.subscribe(fn) ?? (() => {}),
+    () => directory?.getSnapshot(),
+  )
+  const provider = state?.current?.provider
+  const model = state?.current?.model
+  const key = provider && model ? `${provider}/${model}` : undefined
+  const [supports, setSupports] = useState<boolean | undefined>(undefined)
+  useEffect(() => {
+    if (key === undefined) return
+    if (visionCapCache !== null && Date.now() - visionCapCache.at < 60_000) {
+      setSupports(visionCapCache.map.get(key))
+      return
+    }
+    let alive = true
+    fetch('/api/vision-helper/providers', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((d: any) => {
+        if (!alive || !d || d.ok === false) return
+        const map = new Map<string, boolean>()
+        let anyImageDeclared = false
+        for (const p of d.providers ?? []) {
+          for (const m of p.models ?? []) {
+            const has = Array.isArray(m.input) && m.input.includes('image')
+            if (has) anyImageDeclared = true
+            map.set(`${p.id}/${m.id}`, has)
+          }
+        }
+        visionCapCache = { at: Date.now(), map }
+        // 数据可信度兜底：整个目录没有任何模型声明 image，说明 host 版本过旧
+        // （inputModalities 未暴露，全部 null）而非真的全不支持——此时视为未知，
+        // 不显示徽章，避免对支持识图的模型误标。
+        setSupports(anyImageDeclared ? map.get(key) : undefined)
+      })
+      .catch(() => { /* 接口不可用则不显示徽章 */ })
+    return () => { alive = false }
+  }, [key])
+  return supports
 }
 
 /**
@@ -165,6 +224,29 @@ async function archiveBestEffort(
   } catch (err) {
     console.warn('[dsh-webui-rewind] archive original session failed:', err)
   }
+}
+
+/**
+ * 等待一个会话「浮出」客户端会话列表。fork 出的子会话在首条用户消息落盘前
+ * 是 blank，会被列表折叠（不进 ids）；此时对它 open()，list snapshot 会把
+ * current 打成 undefined（selected 不在列表且无 address），UI 闪进「无会话
+ * 空态」。所以切换前必须等它浮出。超时兜底放行，不卡死重发流程。
+ */
+function waitSessionSurfaced(list: ISessions['list'], id: SessionId, timeoutMs = 4000): Promise<void> {
+  const surfaced = (): boolean => {
+    const snapshot = list.getSnapshot()
+    return snapshot.ids.includes(id) || snapshot.byId[id] !== undefined
+  }
+  if (surfaced()) return Promise.resolve()
+  return new Promise((resolve) => {
+    const timer = window.setTimeout(finish, timeoutMs)
+    const unsub = list.subscribe(() => { if (surfaced()) finish() })
+    function finish(): void {
+      window.clearTimeout(timer)
+      unsub()
+      resolve()
+    }
+  })
 }
 
 // ── 退回前的差异查询（host /api/webui-rewind/diff）───────────────
@@ -224,11 +306,13 @@ function describeDiff(diff: RewindDiffResult): string {
  * 复制 + 退回。退回只对 user（turn-opening）开放。
  */
 export const UserRewindNodeView = memo(function UserRewindNodeView({
-  node, renderMessageImages, useSession, sessionId, sessions, workspaces,
+  node, renderMessageImages, useSession, sessionId, sessions, workspaces, directory,
 }: ChatNodeViewProps<'user' | 'steering'> & RewindInjected) {
   const data = node.data
   const { text, images, rest } = useMemo(() => contentParts(data.content), [data.content])
   const referenceLabels = data.referenceLabels
+  // 当前选中模型是否声明图片输入；false = 图片经辅助视觉降级（显示徽章）。
+  const supportsImage = useModelSupportsImage(directory)
 
   // 该消息所属 turn 号；退回 = fork 到上一个已完成 turn 的 turn/end seq。
   const turnNumber = node.location.kind === 'turn' || node.location.kind === 'step'
@@ -260,6 +344,9 @@ export const UserRewindNodeView = memo(function UserRewindNodeView({
   const [diffInfo, setDiffInfo] = useState<RewindDiffResult | null>(null)
   const [editing, setEditing] = useState(false)
   const [editText, setEditText] = useState('')
+  const editRef = useRef<HTMLTextAreaElement | null>(null)
+  const bubbleRef = useRef<HTMLDivElement | null>(null)
+  const bubbleHeightRef = useRef(0)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => () => {
@@ -360,42 +447,108 @@ export const UserRewindNodeView = memo(function UserRewindNodeView({
   }, [busy, doRewind])
 
   /**
-   * 重新发送：fork 到这条消息之前的 turn 边界 → 打开子会话 → 发送文本 →
-   * 归档原会话。prompt 失败时保留原会话（可切回重试），只告警不归档。
+   * 重新发送：fork 到这条消息之前的 turn 边界 → 先在后台把新文本发进子会话
+   * （fork 完成后 child 即已 listed，binding 可直接解析，无需先切换）→ 等
+   * 子会话浮出列表（blank 解除，见 waitSessionSurfaced）→ open 切换 → 归档
+   * 原会话。切过去时第一条消息已落进会话日志，且不会闪「无会话空态」。
+   * prompt 失败时不切换、不归档原会话（原地保留现场可重试），并静默清掉
+   * 空壳子会话。
    */
   const forkAndResend = useCallback(async (textToSend: string): Promise<void> => {
     if (prevTurnEnd === undefined) return
     const childId = await sessions.fork({ sessionId, atSeq: prevTurnEnd })
-    sessions.open(childId)
-    const child = sessions.binding(childId)?.session
-    let sent = child === undefined
+    let child = sessions.binding(childId)?.session
+    let opened = false
+    if (child === undefined) {
+      // 兜底：child 尚不可 binding 时回退旧顺序（先切再取）。
+      sessions.open(childId)
+      opened = true
+      child = sessions.binding(childId)?.session
+    }
+    let sent = false
     if (child !== undefined) {
       const res = await child.prompt([{ type: 'text', text: textToSend }], 'queue')
       sent = res.ok
       if (!res.ok) console.warn('[dsh-webui-rewind] resend prompt failed:', res.error)
+    } else {
+      console.warn('[dsh-webui-rewind] child binding unresolved after fork:', childId)
     }
-    if (sent) await archiveBestEffort(workspaces, sessionId)
+    if (sent) {
+      await waitSessionSurfaced(sessions.list, childId)
+      if (!opened) sessions.open(childId)
+      await archiveBestEffort(workspaces, sessionId)
+    } else if (!opened) {
+      try { await workspaces.archiveSession(childId) } catch { /* 清理尽力而为 */ }
+    }
   }, [prevTurnEnd, sessionId, sessions, workspaces])
 
-  /** 修改该对话：打开编辑框（预填当前文本）。 */
+  /**
+   * 编辑器自适应高度：贴内容高度，且不小于原气泡高度（编辑时不比原文区域
+   * 更矮）。封顶 50vh 与 CSS max-height 一致；但视口高度异常（如无头/最小化
+   * 窗口的 innerHeight=0）时跳过 JS 封顶，交给 CSS min-height 兜底。
+   */
+  const growEditor = useCallback((el: HTMLTextAreaElement) => {
+    el.style.height = 'auto'
+    const vhCap = Math.round(window.innerHeight * 0.5)
+    const cap = vhCap >= 240 ? vhCap : Number.POSITIVE_INFINITY
+    const target = Math.max(el.scrollHeight, bubbleHeightRef.current)
+    el.style.height = `${Math.min(target, cap)}px`
+  }, [])
+
+  /** 修改该对话：气泡原位进入内联编辑（预填当前文本），不弹窗。 */
   const onOpenEditor = useCallback(() => {
     if (busy || !canEdit) return
     setError(null)
+    // 先记住原气泡渲染高度：编辑框初始不矮于它，长消息不会被压成小窗。
+    bubbleHeightRef.current = bubbleRef.current?.offsetHeight ?? 0
     setEditText(text)
     setEditing(true)
   }, [busy, canEdit, text])
 
-  /** 修改后重新发送：关闭编辑框 → fork 回到消息之前 → 发送新文本。 */
+  // 进入编辑态后聚焦输入框并把光标移到末尾。
+  useEffect(() => {
+    if (!editing) return
+    const el = editRef.current
+    if (el === null) return
+    el.focus()
+    const end = el.value.length
+    el.setSelectionRange(end, end)
+    growEditor(el)
+  }, [editing, growEditor])
+
+  const onCancelEdit = useCallback(() => {
+    if (busy) return
+    setEditing(false)
+    setError(null)
+  }, [busy])
+
+  /**
+   * 修改后重新发送：不关编辑器，发送期间禁用输入；成功则会话切换、本节点
+   * 随旧会话卸载，失败时错误内联显示在编辑器下方，可直接重试或取消。
+   */
   const onResendEdited = useCallback(() => {
     if (busy) return
     const trimmed = editText.trim()
     if (trimmed === '') return
-    setEditing(false)
     setBusy(true)
     void forkAndResend(trimmed)
       .catch((err: unknown) => { setError(err instanceof Error ? err.message : String(err)) })
       .finally(() => { setBusy(false) })
   }, [busy, editText, forkAndResend])
+
+  /** 编辑框快捷键：Esc 取消；Ctrl/Cmd+Enter 发送。 */
+  const onEditKeyDown = useCallback((event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === 'Escape') {
+      if (!busy) {
+        event.stopPropagation()
+        setEditing(false)
+        setError(null)
+      }
+    } else if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault()
+      onResendEdited()
+    }
+  }, [busy, onResendEdited])
 
   /** 刷新重载：直接以原文本重新发起这次对话（重新生成回复）。 */
   const onRetry = useCallback(() => {
@@ -412,10 +565,36 @@ export const UserRewindNodeView = memo(function UserRewindNodeView({
   return (
     <>
       <div className="dsh-rewind-userRow" data-time-hover-root>
-        <div className="dsh-rewind-userStack">
-          {renderMessageImages({ images, align: 'end' })}
-          {showBubble && (
-            <div className="dsh-rewind-bubble">
+        {editing ? (
+          /* 编辑器挂在整行（不受 userStack 525px 气泡宽限制）：≥600px、常规 ≤760px */
+          <div className="dsh-rewind-inlineEditor">
+            <textarea
+              ref={editRef}
+              className="dsh-rewind-edit"
+              value={editText}
+              disabled={busy}
+              placeholder="输入新的消息内容…"
+              onChange={(event) => { setEditText(event.currentTarget.value); growEditor(event.currentTarget) }}
+              onKeyDown={onEditKeyDown}
+            />
+            <div className="dsh-rewind-editActions">
+              <Button variant="outline" disabled={busy} onClick={onCancelEdit}>取消</Button>
+              <Button variant="primary" disabled={busy || editText.trim() === ''} onClick={onResendEdited}>重新发送</Button>
+            </div>
+          </div>
+        ) : (
+          <div className="dsh-rewind-userStack">
+            {renderMessageImages({ images, align: 'end' })}
+            {images.length > 0 && supportsImage === false && (
+              <div
+                className="dsh-rewind-visionTag"
+                title="当前模型不支持直接读图：这张图已由辅助视觉模型转成文字描述后发给模型"
+              >
+                辅助视觉
+              </div>
+            )}
+            {showBubble && (
+            <div className="dsh-rewind-bubble" ref={bubbleRef}>
               {text !== '' && <MessageText text={text} />}
               {rest.map((block, i) => (
                 <JsonBlock
@@ -427,10 +606,12 @@ export const UserRewindNodeView = memo(function UserRewindNodeView({
               ))}
             </div>
           )}
-          {referenceLabels !== undefined && referenceLabels.length > 0 && (
-            <div className="dsh-rewind-referenceSummary">{referenceLabels.join(' ')}</div>
-          )}
-        </div>
+            {referenceLabels !== undefined && referenceLabels.length > 0 && (
+              <div className="dsh-rewind-referenceSummary">{referenceLabels.join(' ')}</div>
+            )}
+          </div>
+        )}
+        {!editing && (
         <div className="dsh-rewind-actions">
           <span className="dsh-rewind-time">{formatTime(data.time)}</span>
           <Tooltip label={copied ? '已复制' : '复制'} side="bottom">
@@ -478,6 +659,8 @@ export const UserRewindNodeView = memo(function UserRewindNodeView({
             </Tooltip>
           )}
         </div>
+        )}
+        {error !== null && <p className="dsh-rewind-error">{error}</p>}
       </div>
       <Modal
         open={confirmOpen}
@@ -527,39 +710,6 @@ export const UserRewindNodeView = memo(function UserRewindNodeView({
           )
         })()}
       </Modal>
-      <Modal
-        open={editing}
-        onClose={() => { if (!busy) setEditing(false) }}
-        title="修改该对话"
-        description="修改后将回到这条消息之前重新发送，这条消息及之后的回复会被新的对话替换。"
-        footer={(
-          <>
-            <Button variant="outline" disabled={busy} onClick={() => { if (!busy) setEditing(false) }}>取消</Button>
-            <Button variant="primary" disabled={busy || editText.trim() === ''} onClick={onResendEdited}>重新发送</Button>
-          </>
-        )}
-      >
-        <textarea
-          className="dsh-rewind-edit"
-          value={editText}
-          disabled={busy}
-          autoFocus
-          placeholder="输入新的消息内容…"
-          onChange={(event) => { setEditText(event.currentTarget.value) }}
-        />
-      </Modal>
-      {error !== null && (
-        <Modal
-          open
-          onClose={() => { setError(null) }}
-          title="退回失败"
-          footer={(
-            <Button variant="primary" onClick={() => { setError(null) }}>知道了</Button>
-          )}
-        >
-          <p className="dsh-rewind-error">{error}</p>
-        </Modal>
-      )}
     </>
   )
 })
@@ -573,21 +723,30 @@ export const UserRewindNodeView = memo(function UserRewindNodeView({
  */
 export function applyRewindClient(ctx: ClientContext): void {
   injectStyles()
-  const sessions = ctx.sessions
-  const workspaces = ctx.workspaces
-  const injectFace = (_sessionId: SessionId): RewindInjected => ({ sessions, workspaces })
-  ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({
-    name: 'conversation.chat.node',
-    key: 'user',
-    priority: -100,
-    locale: 'conversation',
-    inject: injectFace,
-  }, UserRewindNodeView))
-  ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({
-    name: 'conversation.chat.node',
-    key: 'steering',
-    priority: -100,
-    locale: 'conversation',
-    inject: injectFace,
-  }, UserRewindNodeView))
+  // modelDirectories（ui-model-selection）就绪后再接线：辅助视觉徽章需要
+  // 当前会话的共享模型目录来读「当前选中模型」。
+  ctx.inject(['slots', 'sessions', 'workspaces', 'modelDirectories'], (scope) => {
+    const sessions = scope.sessions
+    const workspaces = scope.workspaces
+    const models = scope.modelDirectories
+    const injectFace = (sessionId: SessionId): RewindInjected => ({
+      sessions,
+      workspaces,
+      directory: models.directoryFor(sessionId).store,
+    })
+    scope.slots.inject('conversation.chat.node', () => scope.slots.register({
+      name: 'conversation.chat.node',
+      key: 'user',
+      priority: -100,
+      locale: 'conversation',
+      inject: injectFace,
+    }, UserRewindNodeView))
+    scope.slots.inject('conversation.chat.node', () => scope.slots.register({
+      name: 'conversation.chat.node',
+      key: 'steering',
+      priority: -100,
+      locale: 'conversation',
+      inject: injectFace,
+    }, UserRewindNodeView))
+  })
 }

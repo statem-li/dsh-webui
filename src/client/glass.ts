@@ -99,13 +99,14 @@ export function getGlassOpacity(): number {
  */
 /**
  * 浮层面板总选择器：官方 CSS Modules 面板（*_panel）+ 插件/语义类名的
- * 弹窗、抽屉、卡片面板；遮罩层（*mask*）除外。
+ * 弹窗、抽屉、卡片面板；遮罩层（*mask*）一律排除——遮罩不是面板，
+ * 不该获得模糊+高光投影（否则弹窗后面会叠出一张「垫卡」）。
  * ⚠ 必须排除 [class*="webui-"]——本插件自绘 UI（会话导航横条 webui-panel、
  * 以及 composer 弹层的内部元素 webui-eff-panel-head / webui-po-panel-title
  * 等）都含 "panel" 子串，被子串匹配命中会出现「标题行带包裹底色」「贴右缘
  * 隐形毛玻璃卡」等事故；它们的模糊由专属规则提供。
  */
-const PANELS_SELECTOR = ':is([class*="panel"], [class*="modal"], [class*="drawer"]:not([class*="mask"])):not([class*="webui-"])'
+const PANELS_SELECTOR = ':is([class*="panel"], [class*="modal"], [class*="drawer"]):not([class*="mask"]):not([class*="webui-"])'
 
 function buildGlassCss(): string {
   return `
@@ -373,7 +374,7 @@ function applyGlassDom(on: boolean): void {
 // 浮层面板内，就把辉光坐标（面板局部系）写到该元素的内联 CSS 变量上，并
 // 打 data-dsh-glow 标记点亮；离开即熄灭。不新增 DOM 层。
 
-const GLOW_TARGET_SELECTOR = ':is([class*="panel"], [class*="modal"], [class*="drawer"]:not([class*="mask"])):not([class*="webui-"])'
+const GLOW_TARGET_SELECTOR = ':is([class*="panel"], [class*="modal"], [class*="drawer"]):not([class*="mask"]):not([class*="webui-"])'
 /** 辉光半径（与 CSS radial-gradient 的 260px circle 保持一致）。 */
 const GLOW_RADIUS = 260
 

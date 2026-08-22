@@ -13,8 +13,6 @@ import type {
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import { SHIKI_LANGUAGES } from './shiki.ts'
 import { activityBus } from './activity-bus.ts'
-import { EChartsDiagram } from './charts.ts'
-import { MermaidDiagram } from './mermaid.ts'
 
 const CUSTOM_COMPONENT_SCOPE = 'dsh-better-markdown'
 

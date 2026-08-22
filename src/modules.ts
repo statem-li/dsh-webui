@@ -47,8 +47,6 @@ export const WEBUI_MODULE_KEYS = [
   'mail',              // 邮箱验证码
   // ── 技能 ──
   'skills',            // 技能 slash 两级导航源 + 技能开关路由
-  // ── Markdown 渲染 ──
-  'markdownCharts',    // Mermaid / ECharts 图表围栏
   // ── AI 浏览器 ──
   'browser',           // AI 浏览器 host 工具 + dock UI + 设置开关
   // ── 自动化与计划 ──

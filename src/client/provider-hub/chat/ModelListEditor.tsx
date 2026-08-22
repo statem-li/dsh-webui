@@ -42,13 +42,13 @@ export const chatCopy = {
   contextWindow: '上下文窗口',
   maxTokens: '最大输出 token',
   modelAdvanced: '容量',
-  supportsImage: '支持识图',
-  supportsImageHint: '聊天中发送的图片直接交给该模型识别（多模态），不再降级为辅助视觉文字描述。对应模型配置 input: [text, image]。',
-  supportsImageGen: '支持生图',
+  supportsImage: '识图',
+  supportsImageHint: '聊天中发送的图片直接交给该模型识别（多模态），不再降级为辅助视觉文字描述。',
+  supportsImageGen: '生图',
   supportsImageGenHint: '声明该模型可生成图片，生图候选列表将标注「生图」。',
-  supportsVideoGen: '支持生视频',
+  supportsVideoGen: '生视频',
   supportsVideoGenHint: '声明该模型可生成视频，生视频候选列表将标注「生视频」。',
-  capabilityHint: '模型能力声明：识图走模型配置 input 字段；生图/生视频存入 model-router.json 的 capabilities（供生成候选标注）。',
+  capabilityHint: '模型能力',
   addModel: '添加模型',
   removeModel: '删除模型',
   modelIdRequired: '模型 ID 不能为空。',
@@ -334,98 +334,59 @@ function IconTrash(): ReactNode {
   )
 }
 
-/**
- * 官方风格开关（toggle/switch），替代 checkbox。iOS 风格——明显的轨道底色
- * 变化 + 圆钮滑动：关闭态 = bg-module-platform 灰底 + 白钮；
- * 开启态 = state-business-primary 蓝底 + 白钮（见 dsh-ui-style 技能）。
- * 不要把关闭态做成透明+小灰点——视觉上像未勾选的 radio，违反用户的「开关不是勾选」反馈。
- */
-function ToggleSwitch({ checked, disabled, ariaLabel, onChange }: {
-  checked: boolean
-  disabled?: boolean
-  ariaLabel: string
-  onChange: (on: boolean) => void
-}): ReactNode {
-  const W = 40
-  const H = 22
-  const KNOB = 18
-  const track: CSSProperties = {
-    position: 'relative',
-    boxSizing: 'border-box',
-    width: W,
-    height: H,
-    padding: 0,
-    borderRadius: H / 2,
-    background: checked
-      ? 'var(--dsw-alias-state-business-primary, #4176e6)'
-      : 'var(--dsw-alias-bg-module-platform, rgba(0,0,0,0.08))',
-    cursor: disabled ? 'default' : 'pointer',
-    opacity: disabled ? 0.5 : 1,
-    transition: 'background 160ms ease',
-    flex: 'none',
-  }
-  const knob: CSSProperties = {
-    position: 'absolute',
-    top: (H - KNOB) / 2,
-    left: checked ? W - KNOB - 2 : 2,
-    width: KNOB,
-    height: KNOB,
-    borderRadius: '50%',
-    background: '#fff',
-    boxShadow: '0 1px 2px rgba(0,0,0,0.2)',
-    transition: 'left 160ms cubic-bezier(0.4, 0, 0.2, 1)',
-    pointerEvents: 'none',
-  }
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      aria-label={ariaLabel}
-      disabled={disabled}
-      style={track}
-      onClick={() => { onChange(!checked) }}
-    >
-      <span style={knob} />
-    </button>
-  )
-}
 
 /**
- * 一行能力：开关 + 名称 + 「测试」按钮 + 测试结果反馈。
- * 测试按钮实际调用一次该能力（host /api/test-capability），验证模型真支持。
+ * 「一键检测」实时进度:分组行式列表(不用表格)。host 每完成一项写入状态,
+ * 前端轮询渲染——完成的项立即点亮(✓/✗ + 说明),运行中的显示「… 检测中」。
+ * 全部完成后底部显示自动保存结果。中性色,无表格。
  */
-function CapabilityRow({ checked, disabled, label, ariaLabel, onChange, onTest, testing, result }: {
-  checked: boolean
-  disabled?: boolean
-  label: string
-  ariaLabel: string
-  onChange: (on: boolean) => void
-  onTest: () => void
-  testing: boolean
-  result?: string
-}): ReactNode {
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <ToggleSwitch checked={checked} disabled={disabled} ariaLabel={ariaLabel} onChange={onChange} />
-        <span style={{ fontSize: 13, color: 'var(--dsw-alias-label-primary, #1f2329)' }}>{label}</span>
-        <button
-          type="button"
-          style={capabilityTestButtonStyle}
-          disabled={disabled || testing}
-          onClick={(event) => { event.stopPropagation(); onTest() }}
-        >
-          {testing ? '测试中…' : '测试'}
-        </button>
+function DetectProgress({ state }: { state?: any }): ReactNode {
+  if (!state) return null
+  const items: Array<any> = Array.isArray(state.items) ? state.items : []
+  const doneCount = items.filter(i => i.status === 'done').length
+  const capRows = items.filter(i => !i.key.startsWith('level:'))
+  const levelRows = items.filter(i => i.key.startsWith('level:'))
+  const rowOf = (it: any): ReactNode => {
+    const mark = it.status === 'pending' ? '—'
+      : it.status === 'running' ? '…'
+        : it.ok === true ? '✓' : it.ok === false ? '✗' : '—'
+    const markColor = it.status !== 'done'
+      ? 'var(--dsw-alias-label-tertiary, #8f959e)'
+      : it.ok === true ? 'var(--dsw-alias-label-primary, #1f2329)' : 'var(--dsw-alias-label-tertiary, #8f959e)'
+    return (
+      <div key={it.key} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '2px 0', minWidth: 0 }}>
+        <span style={{ flex: 'none', width: 88, fontSize: 12.5, color: 'var(--dsw-alias-label-primary, #1f2329)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {it.key.startsWith('level:') ? it.key.slice(6) : it.label}
+        </span>
+        <span style={{ flex: 'none', width: 76, fontSize: 12.5, color: markColor }}>{mark}{it.status === 'running' ? ' 检测中' : ''}</span>
+        <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: 'var(--dsw-alias-label-tertiary, #8f959e)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={it.note}>
+          {it.note}
+        </span>
       </div>
-      {result !== undefined
-        ? <p style={{ margin: 0, fontSize: 12, lineHeight: '16px', wordBreak: 'break-all', color: result.startsWith('测试失败') ? 'var(--dsw-alias-state-error-primary, #d54941)' : 'var(--dsw-alias-label-tertiary, #8f959e)' }}>{result}</p>
-        : null}
+    )
+  }
+  const groupTitle = (t: string): ReactNode => (
+    <div style={{ marginTop: 4, marginBottom: 2, fontSize: 11.5, fontWeight: 600, color: 'var(--dsw-alias-label-secondary, #4e5969)' }}>{t}</div>
+  )
+  return (
+    <div style={{
+      display: 'flex', flexDirection: 'column',
+      padding: '8px 12px',
+      border: '1px solid var(--dsw-alias-border-l3, #e5e6eb)',
+      borderRadius: 10,
+    }}>
+      {groupTitle('能力')}
+      {capRows.map(rowOf)}
+      {levelRows.length > 0 ? groupTitle('推理等级') : null}
+      {levelRows.map(rowOf)}
+      <p style={{ ...hintStyle, marginTop: 6 }}>
+        {state.running
+          ? `检测中… ${doneCount}/${items.length}（可离开此页，后台继续）`
+          : `已自动保存：能力声明 ${state.savedCaps ? '✓' : '—'} · 推理等级 ${state.savedLevels ? '✓' : '—'} · 识图输入 ${state.savedInput ? '✓' : '—'}${state.saveError ? `｜保存出错：${state.saveError}` : ''}`}
+      </p>
     </div>
   )
 }
-
 /** 作为文本编辑的两个 token 数，位于一行模型的 disclosure 之后。 */
 type CapacityField = 'contextWindow' | 'maxTokens'
 
@@ -469,56 +430,80 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
   // 在部分环境里点击无响应，且无法与主题同步。
   const [capacityMenu, setCapacityMenu] = useState<string | undefined>(undefined)
 
-  // 模型能力声明（生图/生视频；识图走模型 input 字段）。挂载时加载一次，
-  // 开关变更即时 POST 到 /api/model-capabilities（model-router.json 持久化）。
-  const [capabilities, setCapabilities] = useState<Record<string, string[]>>({})
-  useEffect(() => {
-    let alive = true
-    fetch('/api/model-capabilities', { cache: 'no-store' })
-      .then((r) => r.json())
-      .then((d: any) => {
-        if (!alive) return
-        if (d && typeof d.capabilities === 'object' && d.capabilities !== null) {
-          setCapabilities(d.capabilities as Record<string, string[]>)
-        }
-      })
-      .catch(() => { /* 接口不可用则全部 off */ })
-    return () => { alive = false }
-  }, [])
+  // 一键能力检测:后台任务 + 轮询。host 每完成一项写入状态,前端每 800ms
+  // 拉取一次,逐条实时点亮;全部完成后 host 自动落盘,client 同步本地草稿。
+  const [detecting, setDetecting] = useState<ReadonlySet<number>>(new Set())
+  const [detectState, setDetectState] = useState<ReadonlyMap<number, any>>(new Map())
+  const [detectError, setDetectError] = useState<ReadonlyMap<number, string>>(new Map())
 
-  // 能力测试（「测试」按钮）：key = `${index}:${capability}` → 测试中/结果。
-  const [testing, setTesting] = useState<ReadonlySet<string>>(new Set())
-  const [testResult, setTestResult] = useState<ReadonlyMap<string, string>>(new Map())
-  const testKey = (index: number, capability: string): string => `${String(index)}:${capability}`
-
-  /** 点「测试」：实际调用一次该能力，反馈成功/失败结果。 */
-  const runCapabilityTest = (index: number, capability: 'vision' | 'image' | 'video'): void => {
+  const runFullDetect = (index: number): void => {
     const provider = probe.provider
     const modelId = textOf(models[index]!, 'id')
     if (!provider || !modelId) return
-    const key = testKey(index, capability)
-    if (testing.has(key)) return
-    setTesting(current => new Set(current).add(key))
-    setTestResult(current => new Map(current).set(key, '测试中…'))
-    fetch('/api/test-capability', {
+    if (detecting.has(index)) return
+    setDetecting(current => new Set(current).add(index))
+    setDetectError(current => new Map(current).set(index, ''))
+    let timer: number | undefined
+    const pollOnce = async (): Promise<void> => {
+      try {
+        const r = await fetch('/api/detect-capability', { cache: 'no-store' })
+        const d: any = await r.json()
+        if (!d?.ok || !d.state) return
+        setDetectState(current => new Map(current).set(index, d.state))
+        if (!d.state.running) {
+          if (timer !== undefined) window.clearInterval(timer)
+          // 本地草稿同步(与 host 落盘一致,避免保存时覆盖)。
+          const st = d.state
+          const patches: Record<string, unknown> = {}
+          const model = models[index]!
+          const visionItem = (st.items ?? []).find((i: any) => i.key === 'vision')
+          if (visionItem?.ok === true) {
+            patches.input = Array.from(new Set([...(inputOf(model) ?? ['text']), 'image']))
+          } else if (visionItem?.ok === false && supportsImage(model)) {
+            const rest = (inputOf(model) ?? []).filter(x => x !== 'image')
+            patches.input = rest.length <= 1 ? undefined : rest
+          }
+          const thinkers = (st.items ?? []).filter((i: any) => i.key.startsWith('level:') && i.ok === true && i.key !== 'level:off')
+          if (thinkers.length > 0) {
+            const efforts: Record<string, string | null> = { off: null }
+            for (const t of thinkers) efforts[t.key.slice(6)] = t.key.slice(6)
+            patches.reasoningEfforts = efforts
+          }
+          if (Object.keys(patches).length > 0) patch(index, patches)
+          window.dispatchEvent(new CustomEvent('dsh-webui:model-capabilities-changed'))
+          setDetecting(current => {
+            const next = new Set(current)
+            next.delete(index)
+            return next
+          })
+        }
+      } catch { /* 轮询失败下次再试 */ }
+    }
+    fetch('/api/detect-capability', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ provider, model: modelId, capability }),
+      body: JSON.stringify({ provider, model: modelId }),
     })
       .then((r) => r.json())
       .then((d: any) => {
-        const msg = d && d.ok
-          ? (typeof d.result === 'string' ? d.result : '测试通过 ✓')
-          : `测试失败：${(d && d.error) || '未知错误'}`
-        setTestResult(current => new Map(current).set(key, msg))
+        if (!d || !d.ok) {
+          setDetectError(current => new Map(current).set(index, `检测失败：${(d && d.error) || '未知错误'}`))
+          setDetecting(current => {
+            const next = new Set(current)
+            next.delete(index)
+            return next
+          })
+          return
+        }
+        if (d.state !== undefined && d.state !== null) setDetectState(current => new Map(current).set(index, d.state))
+        timer = window.setInterval(() => { void pollOnce() }, 800)
+        void pollOnce()
       })
       .catch((error) => {
-        setTestResult(current => new Map(current).set(key, `测试失败：${String(error?.message ?? error)}`))
-      })
-      .finally(() => {
-        setTesting(current => {
+        setDetectError(current => new Map(current).set(index, `检测失败：${String(error?.message ?? error)}`))
+        setDetecting(current => {
           const next = new Set(current)
-          next.delete(key)
+          next.delete(index)
           return next
         })
       })
@@ -551,96 +536,6 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
         Object.entries({ ...model, ...next }).filter(([key]) => !cleared.has(key)),
       )
     }))
-  }
-
-  /** 一行的已声明等级映射；无声明时为空映射。 */
-  const effortMapOf = (model: ModelDraft): Record<string, string | null> => {
-    const efforts = model['reasoningEfforts']
-    return typeof efforts === 'object' && efforts !== null && !Array.isArray(efforts)
-      ? efforts as Record<string, string | null>
-      : {}
-  }
-
-  /** 一个等级的线上值字段显示什么：存储值，省略的 off 显示为空。 */
-  const effortWire = (map: Record<string, string | null>, level: string): string => {
-    const value = map[level]
-    return value === null || value === undefined ? '' : String(value)
-  }
-
-  /** 勾选/取消一个已声明等级，勾选时线上值从等级名播种。 */
-  const toggleEffort = (index: number, level: string, on: boolean): void => {
-    const current = effortMapOf(models[index]!)
-    const next: Record<string, string | null> = { ...current }
-    if (on) next[level] = level === 'off' ? null : level
-    else delete next[level]
-    patch(index, { reasoningEfforts: next })
-  }
-
-  /** 编辑一个等级的线上值；清空 off 表示「不发送该参数」。 */
-  const setEffortWire = (index: number, level: string, text: string): void => {
-    const current = effortMapOf(models[index]!)
-    const next: Record<string, string | null> = { ...current }
-    next[level] = text.length === 0 ? (level === 'off' ? null : '') : text
-    patch(index, { reasoningEfforts: next })
-  }
-
-  /**
-   * 勾选/取消「支持识图」：勾选时确保模型 input 声明含 image（未声明则从
-   * `['text', 'image']` 起步）；取消时移除 image——若只剩默认的 text（或空）
-   * 则整个字段离开 profile，回到「未声明/继承路由默认」语义。
-   */
-  const toggleSupportsImage = (index: number, on: boolean): void => {
-    const current = inputOf(models[index]!)
-    if (on) {
-      const next = current === undefined
-        ? ['text', 'image']
-        : Array.from(new Set([...current, 'image']))
-      patch(index, { input: next })
-      return
-    }
-    if (current === undefined) return
-    const rest = current.filter(x => x !== 'image')
-    if (rest.length === 0 || (rest.length === 1 && rest[0] === 'text')) {
-      patch(index, { input: undefined })
-    } else {
-      patch(index, { input: rest })
-    }
-  }
-
-  /** 一个模型的能力 key：provider 已知时才可声明（自定义添加草稿 provider 未定）。 */
-  const capabilityKey = (index: number): string | undefined => {
-    if (!probe.provider) return undefined
-    const modelId = textOf(models[index]!, 'id')
-    if (!modelId) return undefined
-    return `${probe.provider}/${modelId}`
-  }
-
-  /** 该模型是否声明了指定生成能力。 */
-  const hasCapability = (index: number, cap: 'image' | 'video'): boolean => {
-    const key = capabilityKey(index)
-    return key !== undefined && (capabilities[key]?.includes(cap) ?? false)
-  }
-
-  /** 勾选/取消生成能力：立即 POST 持久化到 model-router.json（生图/生视频候选标注用）。 */
-  const toggleCapability = (index: number, cap: 'image' | 'video', on: boolean): void => {
-    const key = capabilityKey(index)
-    if (key === undefined) return
-    const next: Record<string, string[]> = { ...capabilities }
-    const current = next[key] ? [...next[key]] : []
-    if (on) {
-      if (!current.includes(cap)) current.push(cap)
-    } else {
-      const at = current.indexOf(cap)
-      if (at >= 0) current.splice(at, 1)
-    }
-    if (current.length === 0) delete next[key]
-    else next[key] = current
-    setCapabilities(next)
-    fetch('/api/model-capabilities', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ capabilities: next }),
-    }).catch(() => { /* 保存失败时 UI 状态保留，下次加载回读 */ })
   }
 
   /** 键入或选取一个容量拼写，即时解析进草稿。 */
@@ -897,68 +792,23 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
                   })}
                 </div>
                 <div style={capabilityBlockStyle}>
-                  <span style={fieldLabelStyle}>{chatCopy.capabilityHint}</span>
-                  <CapabilityRow
-                    checked={supportsImage(model)}
-                    disabled={disabled}
-                    label={chatCopy.supportsImage}
-                    ariaLabel={`${chatCopy.supportsImage} ${index + 1}`}
-                    onChange={(on) => { toggleSupportsImage(index, on) }}
-                    onTest={() => { runCapabilityTest(index, 'vision') }}
-                    testing={testing.has(testKey(index, 'vision'))}
-                    result={testResult.get(testKey(index, 'vision'))}
-                  />
-                  <CapabilityRow
-                    checked={hasCapability(index, 'image')}
-                    disabled={disabled || probe.provider === undefined}
-                    label={chatCopy.supportsImageGen}
-                    ariaLabel={`${chatCopy.supportsImageGen} ${index + 1}`}
-                    onChange={(on) => { toggleCapability(index, 'image', on) }}
-                    onTest={() => { runCapabilityTest(index, 'image') }}
-                    testing={testing.has(testKey(index, 'image'))}
-                    result={testResult.get(testKey(index, 'image'))}
-                  />
-                  <CapabilityRow
-                    checked={hasCapability(index, 'video')}
-                    disabled={disabled || probe.provider === undefined}
-                    label={chatCopy.supportsVideoGen}
-                    ariaLabel={`${chatCopy.supportsVideoGen} ${index + 1}`}
-                    onChange={(on) => { toggleCapability(index, 'video', on) }}
-                    onTest={() => { runCapabilityTest(index, 'video') }}
-                    testing={testing.has(testKey(index, 'video'))}
-                    result={testResult.get(testKey(index, 'video'))}
-                  />
-                </div>
-                <div style={effortBlockStyle}>
-                  <span style={fieldLabelStyle}>{chatCopy.reasoningEfforts}</span>
-                  <p style={hintStyle}>{chatCopy.effortHint}</p>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                    {REASONING_LEVELS.map(level => {
-                      const map = effortMapOf(model)
-                      const checked = level in map
-                      return (
-                        <label key={level} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            disabled={disabled}
-                            aria-label={`${chatCopy.effortLevel} ${level} ${index + 1}`}
-                            onChange={(event) => { toggleEffort(index, level, event.target.checked) }}
-                          />
-                          <span style={effortLevelNameStyle}>{level}</span>
-                          <input
-                            style={inputStyle}
-                            type="text"
-                            value={effortWire(map, level)}
-                            placeholder={level === 'off' ? chatCopy.effortOffWire : level}
-                            aria-label={`${chatCopy.effortWire} ${level} ${index + 1}`}
-                            disabled={disabled || !checked}
-                            onChange={(event) => { setEffortWire(index, level, event.target.value) }}
-                          />
-                        </label>
-                      )
-                    })}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <span style={fieldLabelStyle}>{chatCopy.capabilityHint}</span>
+                    <button
+                      type="button"
+                      style={{ ...capabilityTestButtonStyle, color: 'var(--dsw-alias-state-business-primary, #4176e6)', borderColor: 'var(--dsw-alias-state-business-primary, #4176e6)' }}
+                      disabled={disabled || detecting.has(index) || probe.provider === undefined}
+                      title="实测识图/生图/生视频 + 逐级探测推理等级，完成后自动保存配置"
+                      onClick={(event) => { event.stopPropagation(); runFullDetect(index) }}
+                    >
+                      {detecting.has(index) ? '检测中…（约 1 分钟）' : '🔍 一键检测'}
+                    </button>
+                    {probe.provider === undefined ? <span style={hintStyle}>保存供应商后可检测</span> : null}
                   </div>
+                  {(detectError.get(index) ?? '') !== ''
+                    ? <p style={{ margin: 0, fontSize: 12, color: 'var(--dsw-alias-state-error-primary, #d54941)' }}>{detectError.get(index)}</p>
+                    : null}
+                  <DetectProgress state={detectState.get(index)} />
                 </div>
               </>
             )
@@ -1125,27 +975,17 @@ const fieldLabelStyle: CSSProperties = {
   color: 'var(--dsw-alias-label-secondary, #4e5969)',
 }
 
-/* 推理等级区块：容量之下、全宽、带顶部分隔线。 */
-const effortBlockStyle: CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: 6,
-  paddingTop: 10,
-  marginTop: 2,
-  borderTop: '1px solid var(--dsw-alias-border-l2, #dcdfe6)',
-}
-
-/* 能力区块（识图/生图/生视频开关 + 测试按钮）：容量之下、推理等级之上，带顶部分隔线。 */
+/* 能力区块（识图/生图/生视频开关 + 测试按钮 + 一键检测）：容量之下，带顶部分隔线。 */
 const capabilityBlockStyle: CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
-  gap: 6,
+  gap: 8,
   paddingTop: 10,
   marginTop: 2,
   borderTop: '1px solid var(--dsw-alias-border-l2, #dcdfe6)',
 }
 
-/* 能力「测试」按钮：行内小按钮。 */
+/* 「一键检测」按钮：行内小按钮。 */
 const capabilityTestButtonStyle: CSSProperties = {
   boxSizing: 'border-box',
   height: 22,
@@ -1158,14 +998,6 @@ const capabilityTestButtonStyle: CSSProperties = {
   lineHeight: '20px',
   cursor: 'pointer',
   flex: 'none',
-}
-
-/* 等级名：wire 标识，等宽字体，与候选 id 一致。 */
-const effortLevelNameStyle: CSSProperties = {
-  fontFamily: 'var(--ds-font-family-code, ui-monospace, SFMono-Regular, monospace)',
-  fontSize: 13,
-  minWidth: 64,
-  color: 'var(--dsw-alias-label-primary, #1f2329)',
 }
 
 const hintStyle: CSSProperties = {

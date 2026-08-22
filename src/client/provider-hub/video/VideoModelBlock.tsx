@@ -81,7 +81,7 @@ export function VideoModelBlock(): React.ReactElement {
   return (
     <div>
       <div style={BLOCK_TITLE}>生视频模型</div>
-      <div style={HINT}>generate_video 使用的模型（提示词 → 视频生成，异步任务自动轮询）。标注「生视频」的模型声明了视频生成能力（可在供应商的模型设置中勾选「支持生视频」）。</div>
+      <div style={HINT}>generate_video 使用的模型（提示词 → 视频生成，异步任务自动轮询）。标注「生视频」的模型声明了视频生成能力（可在供应商的模型设置中开启「生视频」）。</div>
       {error && <div style={{ color: 'var(--dsw-alias-state-error-primary)', marginBottom: 8 }}>{error}</div>}
       {providers.length === 0 && !error
         ? <div style={{ color: 'var(--dsw-alias-label-tertiary)' }}>加载中…</div>

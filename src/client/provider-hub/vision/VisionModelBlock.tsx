@@ -120,7 +120,7 @@ export function VisionModelBlock(): React.ReactElement {
   return (
     <div>
       <div style={BLOCK_TITLE}>辅助视觉模型</div>
-      <div style={HINT}>vision_describe 使用的模型（图片→文本描述）。从上到下依次尝试，第一个成功的即返回（可自定义降级方案）。标注「视觉」的模型声明了图片输入；对话模型是否支持识图，可在上方供应商的模型设置中勾选「支持识图」。</div>
+      <div style={HINT}>vision_describe 使用的模型（图片→文本描述）。从上到下依次尝试，第一个成功的即返回（可自定义降级方案）。标注「视觉」的模型声明了图片输入；对话模型是否支持识图，可在上方供应商的模型设置中开启「识图」。</div>
       {error && <div style={{ color: 'var(--dsw-alias-state-error-primary)', marginBottom: 8 }}>{error}</div>}
       {providers.length === 0 && !error
         ? <div style={{ color: 'var(--dsw-alias-label-tertiary)' }}>加载中…</div>

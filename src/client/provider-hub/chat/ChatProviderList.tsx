@@ -12,6 +12,7 @@ import type { ReactNode } from 'react'
 import type { CSSProperties } from 'react'
 import { getPath } from '@deepseek-ai/dsh-client-schema-form'
 import { chatCopy } from './ModelListEditor.tsx'
+import { PerfBenchModal } from '../perf/PerfBenchModal.tsx'
 import type { ModelsSettingsState, ProviderRow } from './store.ts'
 
 /** {@link ChatProviderList} 的 props。 */
@@ -79,18 +80,28 @@ export function ChatProviderList(props: ChatProviderListProps): ReactNode {
 
   // 模型能力声明（model-router.json capabilities），用于行卡片显示能力标签。
   const [capabilities, setCapabilities] = useState<Record<string, string[]>>({})
+  // 当前打开基准测试弹窗的供应商行（null = 关闭）。
+  const [benchRow, setBenchRow] = useState<ProviderRow | null>(null)
   useEffect(() => {
     let alive = true
-    fetch('/api/model-capabilities', { cache: 'no-store' })
-      .then((r) => r.json())
-      .then((d: any) => {
-        if (!alive) return
-        if (d && typeof d.capabilities === 'object' && d.capabilities !== null) {
-          setCapabilities(d.capabilities as Record<string, string[]>)
-        }
-      })
-      .catch(() => { /* 接口不可用则无标签 */ })
-    return () => { alive = false }
+    const load = (): void => {
+      fetch('/api/model-capabilities', { cache: 'no-store' })
+        .then((r) => r.json())
+        .then((d: any) => {
+          if (!alive) return
+          if (d && typeof d.capabilities === 'object' && d.capabilities !== null) {
+            setCapabilities(d.capabilities as Record<string, string[]>)
+          }
+        })
+        .catch(() => { /* 接口不可用则无标签 */ })
+    }
+    load()
+    // 模型行勾选/取消生图/生视频后，实时刷新能力标签（无需刷新页面）
+    window.addEventListener('dsh-webui:model-capabilities-changed', load)
+    return () => {
+      alive = false
+      window.removeEventListener('dsh-webui:model-capabilities-changed', load)
+    }
   }, [])
 
   if (state.status === 'loading' && state.rows.length === 0) {
@@ -115,6 +126,15 @@ export function ChatProviderList(props: ChatProviderListProps): ReactNode {
 
   return (
     <section style={sectionStyle}>
+      {benchRow !== null
+        ? (
+          <PerfBenchModal
+            provider={benchRow.entry.provider}
+            models={modelsOf(state, benchRow).map(m => ({ id: String(m['id'] ?? ''), name: typeof m['name'] === 'string' ? m['name'] : undefined }))}
+            onClose={() => { setBenchRow(null) }}
+          />
+        )
+        : null}
       <SectionTitle />
       {!state.writable && state.status === 'ready' ? <p style={hintStyle}>{chatCopy.readOnly}</p> : null}
 
@@ -129,6 +149,7 @@ export function ChatProviderList(props: ChatProviderListProps): ReactNode {
             counts={capabilityCountsOf(state, row, capabilities)}
             selected={selected === row.entry.provider}
             onSelect={() => { onSelect(row.entry.provider) }}
+            onBench={() => { setBenchRow(row) }}
             renderDetail={renderDetail}
           />
         ))}
@@ -175,7 +196,7 @@ function GroupLabel({ children }: { children: ReactNode }): ReactNode {
 
 /** 一行提供方卡片（已配置行或目录预设行），选中时卡片内展开详情。 */
 function ProviderRowCard({
-  row, preset, count, counts, selected, onSelect, renderDetail,
+  row, preset, count, counts, selected, onSelect, onBench, renderDetail,
 }: {
   row: ProviderRow
   /** 目录预设行（未配置）时加「未配置」标记并显示「配置」按钮。 */
@@ -186,6 +207,8 @@ function ProviderRowCard({
   counts: CapabilityCounts
   selected: boolean
   onSelect: () => void
+  /** 打开推理性能基准测试弹窗。 */
+  onBench?: () => void
   renderDetail?: (provider: string) => ReactNode
 }): ReactNode {
   const capTags: Array<{ key: string; label: string; n: number }> = [
@@ -218,6 +241,17 @@ function ProviderRowCard({
           ))}
         </span>
         <span style={rowActionsStyle}>
+          {preset !== true && onBench !== undefined
+            ? (
+              <button
+                type="button"
+                style={smButtonStyle}
+                onClick={(event) => { event.stopPropagation(); onBench() }}
+              >
+                测试
+              </button>
+            )
+            : null}
           <button
             type="button"
             style={smButtonStyle}

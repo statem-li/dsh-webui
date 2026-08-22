@@ -8,7 +8,7 @@ import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { modalAnimClass, modalMaskAnimClass } from '../modal-animation'
 import { useIsMobile } from '../responsive'
 import { fetchDeepseekAccount, fetchDeepseekBilling, saveDeepseekUserToken, type AccountSnapshot, type BillingModel, type BillingResponse } from './api'
-import { beijingClock, formatDelta, isPeak, nextTransition } from './schedule'
+import { beijingClock, formatDelta, isPeak, isWeekendFlatOff, nextTransition } from './schedule'
 
 export interface BillingModalProps {
   /** 正在播放收回动画（此时弹窗仍挂载，播放 pop-out / mask-out）。 */
@@ -397,9 +397,10 @@ export function BillingModal({ closing, onClose }: BillingModalProps): JSX.Eleme
   }, [])
 
   const clock = beijingClock(nowMs)
-  const peak = isPeak(clock.hour, clock.minute)
+  const peak = isPeak(clock)
+  const weekendFlat = isWeekendFlatOff(clock)
   const next = nextTransition(clock)
-  const peakLabel = peak ? '峰时（高峰计价）' : '谷时（低谷优惠）'
+  const peakLabel = peak ? '峰时（高峰计价）' : weekendFlat ? '谷时（周末全天优惠）' : '谷时（低谷优惠）'
   const countdownLabel = `${peak ? '距谷时' : '距峰时'} ${formatDelta(next.deltaMinutes)}`
 
   // 月份按时间倒序（最新在前），默认选中最新月。

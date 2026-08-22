@@ -53,6 +53,8 @@ const SCHEMA_FORM_ENTRY = resolveSchemaFormEntry()
 const CSS_PREFIX = '\0webui-css:'
 const CSS_SUFFIX = '.mjs'
 const STREAM_MONACO_STUB = '\0webui-stream-monaco-stub'
+const KATEX_MHCHEM_STUB = '\0webui-katex-mhchem-stub'
+const SHIKI_STREAM_STUB = '\0webui-shiki-stream-stub'
 const RAW_PREFIX = '\0webui-raw:'
 
 const clientBundle: UserConfig = {
@@ -88,11 +90,20 @@ const clientBundle: UserConfig = {
     name: 'webui-code-block-dependencies',
     resolveId(source) {
       if (source === 'shiki') return resolve('src/client/markdown/shiki.ts')
+      // markstream-react 把 mermaid 当 peerDependency 静态 import；图表渲染已移除，
+      // 用 stub 替换，避免 mermaid 全家（d3/dagre/vscode-lsp 等 ~2MB）内联进 bundle。
+      if (source === 'mermaid') return resolve('src/client/markdown/mermaid-stub.ts')
+      // katex 同理：webui 自身不引用，公式渲染走 stub 优雅降级（含 mhchem 副作用导入）。
+      if (source === 'katex') return resolve('src/client/markdown/katex-stub.ts')
+      if (source === 'katex/contrib/mhchem') return KATEX_MHCHEM_STUB
+      // stream-markdown 动态 import("shiki-stream") 做流式高亮；高亮已移除，空 stub。
+      if (source === 'shiki-stream') return SHIKI_STREAM_STUB
       if (source === 'stream-monaco') return STREAM_MONACO_STUB
       return null
     },
     load(id) {
-      return id === STREAM_MONACO_STUB ? 'export {}' : null
+      if (id === STREAM_MONACO_STUB || id === KATEX_MHCHEM_STUB || id === SHIKI_STREAM_STUB) return 'export {}'
+      return null
     },
   }, {
     name: 'webui-css',

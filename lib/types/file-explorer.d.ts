@@ -7,6 +7,8 @@
  *   GET /workspaces           → [{ id, title, path }]
  *   GET /list?path=<dir>      → [{ name, type, size }]  (directories first)
  *   GET /read?path=<file>     → { content, version, path }
+ *   GET /raw?path=<file>      → raw bytes (inline image serving / download)
+ *   GET /bin?path=<file>      → { base64, size, truncated } hex-preview head
  *   PUT /write  { path, content, version? } → { version, operation }
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -46,9 +48,11 @@ interface SandboxPolicyLike {
 }
 interface FileSystemService {
     resolve(path: string): Promise<FsTarget>;
+    processPath(target: FsTarget): string;
     stat(target: FsTarget): Promise<FsInfo | undefined>;
     listDir(target: FsTarget): Promise<FsDirEntry[]>;
     readText(target: FsTarget): Promise<string>;
+    readBytes(target: FsTarget, signal: AbortSignal | undefined, maxBytes: number): Promise<Uint8Array>;
     writeText(target: FsTarget, content: string, expected?: FsWriteIntent, signal?: unknown, sandboxPolicy?: SandboxPolicyLike): Promise<FsWriteOutcome>;
     contains(parent: FsTarget, child: FsTarget): boolean;
 }

@@ -4,7 +4,7 @@
  * 收起态（rail）退化为一个着色状态点。颜色走 DSH 主题令牌。
  */
 import { useEffect, useState, type CSSProperties } from 'react'
-import { beijingClock, formatDelta, isPeak, nextTransition } from './schedule'
+import { beijingClock, formatDelta, isPeak, isWeekendFlatOff, nextTransition } from './schedule'
 import { ensureModalAnimStyles, useModalClose } from '../modal-animation'
 import { BillingModal } from './BillingModal'
 
@@ -105,7 +105,8 @@ export function PeakValleyCard({ wide }: PeakValleyCardProps): JSX.Element {
   }, [])
 
   const clock = beijingClock(nowMs)
-  const peak = isPeak(clock.hour, clock.minute)
+  const peak = isPeak(clock)
+  const weekendFlat = isWeekendFlatOff(clock)
   const next = nextTransition(clock)
   const accent = peak ? PEAK_COLOR : OFF_COLOR
   const countdown = formatDelta(next.deltaMinutes)
@@ -115,7 +116,7 @@ export function PeakValleyCard({ wide }: PeakValleyCardProps): JSX.Element {
       <>
         <span
           style={{ ...railDot, background: accent }}
-          title={`DeepSeek ${peak ? '峰时（高峰计价）' : '谷时（低谷优惠）'} · ${peak ? '距谷时' : '距峰时'} ${countdown} · 点击查看账单`}
+          title={`DeepSeek ${peak ? '峰时（高峰计价）' : weekendFlat ? '谷时（周末全天优惠）' : '谷时（低谷优惠）'} · ${peak ? '距谷时' : '距峰时'} ${countdown} · 点击查看账单`}
           onClick={() => { setOpen(true) }}
         />
         {open && <BillingModal closing={closing} onClose={requestClose} />}
@@ -128,7 +129,7 @@ export function PeakValleyCard({ wide }: PeakValleyCardProps): JSX.Element {
       <div
         style={shell}
         className="dsh-peak-card"
-        title={`DeepSeek 峰谷时刻 · 高峰 每日 09:00–12:00 / 14:00–18:00 · 点击查看账单`}
+        title={`DeepSeek 峰谷时刻 · ${weekendFlat ? '周末全天空闲价' : '高峰 工作日 09:00–12:00 / 14:00–18:00'} · 点击查看账单`}
         onClick={() => { setOpen(true) }}
       >
         <div style={headRow}>
@@ -138,7 +139,9 @@ export function PeakValleyCard({ wide }: PeakValleyCardProps): JSX.Element {
             {peak ? '峰时' : '谷时'}
           </span>
         </div>
-        <div style={windowLine}>高峰 · 每日 09:00–12:00 / 14:00–18:00</div>
+        <div style={windowLine}>
+          {weekendFlat ? '周末全天空闲价（半价）· 周一恢复计峰' : '高峰 · 工作日 09:00–12:00 / 14:00–18:00'}
+        </div>
         <div style={countdownLine}>
           {peak ? '距谷时 ' : '距峰时 '}
           {countdown}

@@ -85,7 +85,7 @@ export function applyModulesHost(ctx: PluginContext): ResolvedModules {
           const patch = normalizeModules(body?.modules)
           if (Object.keys(patch).length > 0) {
             const merged = { ...readOverrides(), ...patch }
-            await scope.update(MODULES_SCHEMA(merged))
+            await scope.update(MODULES_SCHEMA(merged as Record<WebuiModuleKey, boolean>))
           }
         }
         const payload = JSON.stringify({ ok: true, modules: resolveAll(readOverrides()) })

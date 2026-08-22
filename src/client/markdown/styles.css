@@ -319,6 +319,52 @@
   display: none;
 }
 
+/* ---------------- 代码块去蓝化（覆盖 markstream 内置 slate-900 底） ----------------
+   markstream 默认给 .code-block / .code-block-node 硬编码 #0f172a（蓝黑）底、
+   亮蓝 hover（#3b82f6），且不分深浅主题。这里整体换成中性半透明灰 +
+   DSH 主题 token，深浅主题自适应，与 mermaid 图表的中性配色保持一致。 */
+.dsh-better-markdown__markdown .code-block,
+.dsh-better-markdown__markdown .code-block-node {
+  background: rgba(127, 127, 127, .07);
+  border: 1px solid var(--dsw-alias-border-base, rgba(127, 127, 127, .18));
+}
+
+.dsh-better-markdown__markdown .code-block-header {
+  background: transparent;
+  border-bottom: 1px solid var(--dsw-alias-border-l3, rgba(127, 127, 127, .14));
+}
+
+.dsh-better-markdown__markdown .code-block-language {
+  letter-spacing: .06em;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.dsh-better-markdown__markdown .code-block-badge {
+  background: rgba(127, 127, 127, .14);
+  color: var(--dsw-alias-label-secondary);
+}
+
+.dsh-better-markdown__markdown .code-block-btn {
+  border-color: var(--dsw-alias-border-base, rgba(127, 127, 127, .25));
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.dsh-better-markdown__markdown .code-block-btn:hover {
+  border-color: var(--dsw-alias-border-base, rgba(127, 127, 127, .32));
+  background: var(--dsw-alias-interactive-bg-hover, rgba(127, 127, 127, .12));
+  color: var(--dsw-alias-label-primary);
+}
+
+.dsh-better-markdown__markdown .code-block-footer {
+  border-top: 1px solid var(--dsw-alias-border-l3, rgba(127, 127, 127, .14));
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.dsh-better-markdown__markdown .code-block-overlay {
+  background: rgba(127, 127, 127, .1);
+}
+
 /* ============================================================
    丰富的 Markdown 排版（全部用主题 token，深浅主题自适应）
    ============================================================ */

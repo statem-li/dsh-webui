@@ -18,12 +18,42 @@ import {
   runDoctor,
   getPrompt,
   readProjectPaths,
+  loadPackage,
+  compileTaskGraph,
 } from '@planweave-ai/runtime'
 import { ensurePlanweaveHome } from './workspace.js'
 
 /** runtime 主入口未导出这些类型，用 ReturnType 派生。 */
 type ExecutionStatus = Awaited<ReturnType<typeof getExecutionStatus>>
 type ClaimResult = Awaited<ReturnType<typeof claimNext>>
+
+/** 任务图视图（供 UI 渲染）：节点内嵌块状态与依赖，客户端无需再拼 manifest。 */
+export interface GraphBlockView {
+  ref: string
+  id: string
+  type: 'implementation' | 'review'
+  title: string
+  status: string
+}
+
+export interface GraphTaskView {
+  taskId: string
+  title: string
+  status: string
+  dependsOn: string[]
+  /** 任务验收标准（manifest task 节点的 acceptance）。 */
+  acceptance: string[]
+  /** 任务 prompt 文件路径（相对 packageDir 的 markdown 路径）。 */
+  promptPath: string
+  /** manifest 配置的任务级 executor（未配置为 null）。 */
+  executor: string | null
+  blocks: GraphBlockView[]
+}
+
+export interface PlanGraphView {
+  projectTitle: string
+  nodes: GraphTaskView[]
+}
 
 export class PlanweaveEngine {
   private constructor(
@@ -83,5 +113,43 @@ export class PlanweaveEngine {
   /** 磁盘路径快照（供诊断/调试）。 */
   paths() {
     return readProjectPaths(this.root)
+  }
+
+  /**
+   * 任务图视图：manifest（节点/依赖）× 运行状态合并。图结构来自
+   * `loadPackage` + `compileTaskGraph`（runtime 纯函数），状态来自 status()。
+   */
+  async graph(): Promise<PlanGraphView> {
+    const [pkg, status] = await Promise.all([
+      loadPackage(this.root),
+      this.status(),
+    ])
+    const g = compileTaskGraph(pkg.manifest)
+    const blockStatus = new Map(status.blocks.map(b => [b.ref, b.status]))
+    const taskStatus = new Map(status.tasks.map(t => [t.taskId, t.status]))
+    const nodes: GraphTaskView[] = g.taskNodesInManifestOrder.map(taskId => {
+      const task = g.tasksById.get(taskId)
+      const blocks = (g.blocksByTask.get(taskId) ?? []).map(ref => {
+        const block = g.blocksByRef.get(ref)
+        return {
+          ref,
+          id: block?.id ?? ref,
+          type: block?.type === 'review' ? 'review' as const : 'implementation' as const,
+          title: block?.title ?? ref,
+          status: blockStatus.get(ref) ?? 'planned',
+        }
+      })
+      return {
+        taskId,
+        title: task?.title ?? taskId,
+        status: taskStatus.get(taskId) ?? 'planned',
+        dependsOn: g.taskDependenciesByTask.get(taskId) ?? [],
+        acceptance: task?.acceptance ?? [],
+        promptPath: task?.prompt ?? '',
+        executor: task?.executor ?? null,
+        blocks,
+      }
+    })
+    return { projectTitle: pkg.manifest.project.title, nodes }
   }
 }

@@ -12,6 +12,31 @@ import { claimNext, getExecutionStatus } from '@planweave-ai/runtime';
 /** runtime 主入口未导出这些类型，用 ReturnType 派生。 */
 type ExecutionStatus = Awaited<ReturnType<typeof getExecutionStatus>>;
 type ClaimResult = Awaited<ReturnType<typeof claimNext>>;
+/** 任务图视图（供 UI 渲染）：节点内嵌块状态与依赖，客户端无需再拼 manifest。 */
+export interface GraphBlockView {
+    ref: string;
+    id: string;
+    type: 'implementation' | 'review';
+    title: string;
+    status: string;
+}
+export interface GraphTaskView {
+    taskId: string;
+    title: string;
+    status: string;
+    dependsOn: string[];
+    /** 任务验收标准（manifest task 节点的 acceptance）。 */
+    acceptance: string[];
+    /** 任务 prompt 文件路径（相对 packageDir 的 markdown 路径）。 */
+    promptPath: string;
+    /** manifest 配置的任务级 executor（未配置为 null）。 */
+    executor: string | null;
+    blocks: GraphBlockView[];
+}
+export interface PlanGraphView {
+    projectTitle: string;
+    nodes: GraphTaskView[];
+}
 export declare class PlanweaveEngine {
     readonly root: string;
     readonly projectId: string;
@@ -36,5 +61,10 @@ export declare class PlanweaveEngine {
     prompt(ref: string): Promise<string>;
     /** 磁盘路径快照（供诊断/调试）。 */
     paths(): Promise<import("@planweave-ai/runtime").ProjectPathsResult>;
+    /**
+     * 任务图视图：manifest（节点/依赖）× 运行状态合并。图结构来自
+     * `loadPackage` + `compileTaskGraph`（runtime 纯函数），状态来自 status()。
+     */
+    graph(): Promise<PlanGraphView>;
 }
 export {};

@@ -41,6 +41,7 @@ import { applySidebarFloat } from './sidebar-float.js'
 import { applyAppearance } from './appearance.js'
 import { applyAutomationHost } from './automation-host.js'
 import { applyPlanweaveHost } from './planweave/host.js'
+import { applyPerfBench } from './perf-bench.js'
 import { applyModulesHost } from './modules-host.js'
 import {
   AnySearchSearchProvider,
@@ -305,4 +306,7 @@ export async function apply(ctx: Context, config: WebuiConfig = {}): Promise<voi
 
   // 20) PlanWeave：本地计划任务图 + 认领/执行/评审/反馈循环（@planweave-ai/runtime 内核 + ctx.llm 执行器）。
   if (modules.planweave) applyPlanweaveHost(ctx)
+
+  // 21) 推理性能基准测试（/api/perf-bench）：TTFT / TPS / E2E / RPS / 预填充速度。
+  applyPerfBench(ctx)
 }

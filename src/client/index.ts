@@ -51,8 +51,6 @@ import { applyApprovalNotifier } from './approval-notify'
 import {
   BetterAssistantNodeView, DshCodeBlockNode, DshImageNode, DshInlineCodeNode, DshLinkNode,
 } from './markdown/renderer'
-import { EChartsDiagram } from './markdown/charts'
-import { MermaidDiagram } from './markdown/mermaid'
 import { ToolGroupNodeView } from './tool-summary/ToolGroupNodeView'
 import { mountActivityDrawer } from './tool-summary/activity-drawer'
 import { injectStyles as injectToolSummaryStyles } from './tool-summary/styles'
@@ -81,6 +79,10 @@ import { bootGlass, retractGlass } from './glass'
 import { registerGlassSetting } from './glass-row'
 // 自动化：侧边栏「新会话」下方菜单项 + 一级设置卡片 + 二级内容选择抽屉。
 import { applyAutomation } from './automation'
+// PlanWeave：侧边栏导航行 + 计划面板（进度/块列表/一键推进）。
+import { applyPlanweaveClient } from './planweave'
+// PlanWeave：插件配置页签的设置卡（项目名/执行模型/每轮步数）。
+import { registerPlanweaveSettingsCard } from './planweave/SettingsCard'
 // 会话切换柔和过渡：内容区淡入浮入 + 侧边栏行选中底色平滑渐变。
 import { applySessionSwitchMotion } from './session-motion'
 // 会话置顶：置顶排序 + 行内归档按钮（替代三个点）+ 右键菜单（置顶/重命名/分叉/归档）。
@@ -162,9 +164,6 @@ export function apply(ctx: ClientContext): void {
       image: DshImageNode,
       inline_code: DshInlineCodeNode,
       link: DshLinkNode,
-      // 图表围栏可关（webui-modules.markdownCharts）：关闭后 mermaid/echarts
-      // 围栏按普通代码块渲染。
-      ...(on('markdownCharts') ? { mermaid: MermaidDiagram, echarts: EChartsDiagram } : {}),
     })
     return () => { removeCustomComponents(CUSTOM_COMPONENT_SCOPE) }
   }, 'webui: markstream component policy')
@@ -264,4 +263,10 @@ export function apply(ctx: ClientContext): void {
 
   // ---- 会话置顶：置顶排序 + 行内归档按钮 + 右键菜单 -------------------------
   if (on('sessionPin')) applySessionPin(ctx)
+
+  // ---- PlanWeave：侧边栏入口 + 计划面板 ------------------------------------
+  if (on('planweave')) applyPlanweaveClient(ctx)
+
+  // ---- PlanWeave：插件配置页签的设置卡 --------------------------------------
+  if (on('planweave')) registerPlanweaveSettingsCard(ctx)
 }
