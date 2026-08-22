@@ -250,24 +250,7 @@ function DrawerPanel({ turn, data, store, openFile, inspectCall }: {
                 {reasoningRunning && elapsed !== undefined && (
                   <span className="dts__modal-panel-live">思考中 · {formatDuration(elapsed)}</span>
                 )}
-                <span className="dts__modal-panel-count">{reasoning.length}</span>
               </header>
-              {reasoning.length > 1 && (
-                <nav className="dts__reasoning-nav" aria-label="思考条目导航">
-                  {reasoning.map((_, index) => (
-                    <button
-                      key={index}
-                      type="button"
-                      className="dts__reasoning-nav-item"
-                      data-active={activeIndex === index || undefined}
-                      title={`跳到第 ${index + 1} 条思考`}
-                      onClick={() => { jumpTo(index) }}
-                    >
-                      {index + 1}
-                    </button>
-                  ))}
-                </nav>
-              )}
               <ReasoningGroups items={reasoning} activeIndex={activeIndex} jumpToCategory={jumpTo} />
             </div>
           )}
@@ -278,7 +261,6 @@ function DrawerPanel({ turn, data, store, openFile, inspectCall }: {
                 {toolsRunning && toolsElapsed !== undefined && (
                   <span className="dts__modal-panel-live">进行中 · {formatDuration(toolsElapsed)}</span>
                 )}
-                <span className="dts__modal-panel-count">{toolNodes.length}</span>
               </header>
               <DrawerToolSummary stats={stats} cwd={data?.toolsCwd} openFile={openFile} kinds={kinds} />
               <div className="dts__modal-tools">

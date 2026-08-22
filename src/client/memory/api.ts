@@ -69,6 +69,25 @@ export interface MemoryTagsResponse {
   tags: Array<{ tag: string; count: number }>
 }
 
+/** 整理结果（host ConsolidateResult 镜像）。 */
+export interface ConsolidateResultView {
+  scope: string
+  merged: number
+  rewritten: number
+  dropped: number
+  promoted: number
+  changed: number
+}
+
+/** 修订版本（host RevisionMeta 镜像）。 */
+export interface RevisionView {
+  id: string
+  at: string
+  entryCount: number
+  scope: string
+  trigger: 'daily' | 'manual'
+}
+
 interface ApiError {
   error?: string
 }
@@ -117,6 +136,9 @@ export interface MemoryApi {
   }) => Promise<{ ok: boolean; created: boolean; entry: MemoryEntryView }>
   getInjectState: (sessionId: string) => Promise<{ enabled: boolean }>
   setInjectState: (sessionId: string, enabled: boolean) => Promise<{ ok: boolean; enabled: boolean }>
+  consolidate: (scope?: 'all' | 'global' | 'project', projectHash?: string) => Promise<{ ok: boolean; results: ConsolidateResultView[] }>
+  revisions: () => Promise<{ revisions: RevisionView[] }>
+  rollback: (revisionId: string) => Promise<{ ok: boolean }>
 }
 
 /** 构造面板 API 面。 */
@@ -144,5 +166,8 @@ export function createMemoryApi(): MemoryApi {
     remember: (input) => sendJson<{ ok: boolean; created: boolean; entry: MemoryEntryView }>('/remember', input),
     getInjectState: (sessionId) => getJson<{ enabled: boolean }>(`/inject-state?sessionId=${encodeURIComponent(sessionId)}`),
     setInjectState: (sessionId, enabled) => sendJson<{ ok: boolean; enabled: boolean }>('/inject-state', { sessionId, enabled }),
+    consolidate: (scope = 'all', projectHash) => sendJson<{ ok: boolean; results: ConsolidateResultView[] }>('/consolidate', { scope, projectHash }),
+    revisions: () => getJson<{ revisions: RevisionView[] }>('/revisions'),
+    rollback: (revisionId) => sendJson<{ ok: boolean }>('/rollback', { revisionId }),
   }
 }

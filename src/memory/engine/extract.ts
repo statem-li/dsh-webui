@@ -157,8 +157,8 @@ export function isSensitiveContent(text: string): boolean {
   return SENSITIVE_PATTERNS.some(pattern => pattern.test(text))
 }
 
-/** 解析 LLM 路由：agent 显式配置优先，回退默认模型选择。 */
-async function resolveRoute(
+/** 解析 LLM 路由：agent 显式配置优先，回退默认模型选择（consolidate 复用）。 */
+export async function resolveRoute(
   ctx: Context,
   agent: MinimalAgent,
 ): Promise<{ provider: string; model: string } | undefined> {

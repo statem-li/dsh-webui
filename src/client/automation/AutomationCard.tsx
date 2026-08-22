@@ -47,6 +47,12 @@ export interface AutomationCardProps {
   onNewTask: (presetCategory: string) => void
   /** 编辑任务。 */
   onEditTask: (taskId: string) => void
+  /** 立即执行任务。 */
+  onRunTask: (taskId: string) => void
+  /** 重跑任务（日志页）。 */
+  onRerunTask: (taskId: string) => void
+  /** 正在执行的任务 id 集合。 */
+  running: ReadonlySet<string>
   /** 菜单项锚点（popover 定位）；null/空间不足时回退 sheet。 */
   anchor: { left: number; top: number } | null
 }
@@ -54,7 +60,7 @@ export interface AutomationCardProps {
 /** 渲染 TAB 式一级卡片（含遮罩）。 */
 export function AutomationCard({
   open, closing, onClose, onCardMouseEnter, onCardMouseLeave, t, catalog, onCatalogChange, logs, onClearLogs,
-  onNewTask, onEditTask, anchor,
+  onNewTask, onEditTask, onRunTask, onRerunTask, running, anchor,
 }: AutomationCardProps): JSX.Element | null {
   // Hooks 在条件 return 之前（跨渲染数量一致）。
   const [tab, setTab] = useState<AutomationTab>('tasks')
@@ -140,10 +146,19 @@ export function AutomationCard({
               onDeleteTask={taskId => {
                 onCatalogChange({ ...catalog, tasks: catalog.tasks.filter(task => task.id !== taskId) })
               }}
+              onRunTask={onRunTask}
+              running={running}
             />
           )}
           {tab === 'logs' && (
-            <LogsPanel t={t} catalog={catalog} logs={logs} onClearLogs={onClearLogs} />
+            <LogsPanel
+              t={t}
+              catalog={catalog}
+              logs={logs}
+              onClearLogs={onClearLogs}
+              onRerunTask={onRerunTask}
+              running={running}
+            />
           )}
         </div>
       </div>

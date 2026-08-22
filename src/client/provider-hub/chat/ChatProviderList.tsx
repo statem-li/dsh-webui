@@ -7,6 +7,7 @@
  * 已配置行 → 编辑；目录预设行 → 配置（创建）；底部「添加自定义提供方」。
  */
 
+import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { CSSProperties } from 'react'
 import { getPath } from '@deepseek-ai/dsh-client-schema-form'
@@ -37,6 +38,35 @@ export function modelsCountOf(state: ModelsSettingsState, row: ProviderRow): num
   return Array.isArray(models) ? models.length : 0
 }
 
+/** 一行提供方的 models 数组（无则 []）。 */
+function modelsOf(state: ModelsSettingsState, row: ProviderRow): readonly Record<string, unknown>[] {
+  const namespace = state.namespaces.get(row.entry.settingsNs)
+  if (namespace === undefined) return []
+  const models = getPath(namespace.value, [...row.entry.settingsPath, 'models'])
+  return Array.isArray(models) ? models.filter((m): m is Record<string, unknown> => typeof m === 'object' && m !== null) : []
+}
+
+/** 一行提供方的能力统计：{ vision, image, video } 各支持几个模型。 */
+export interface CapabilityCounts { vision: number; image: number; video: number }
+
+export function capabilityCountsOf(
+  state: ModelsSettingsState,
+  row: ProviderRow,
+  capabilities: Record<string, string[]>,
+): CapabilityCounts {
+  const counts: CapabilityCounts = { vision: 0, image: 0, video: 0 }
+  for (const model of modelsOf(state, row)) {
+    const input = model['input']
+    if (Array.isArray(input) && (input as string[]).includes('image')) counts.vision++
+    const id = typeof model['id'] === 'string' ? model['id'] : ''
+    if (!id) continue
+    const caps = capabilities[`${row.entry.provider}/${id}`] ?? []
+    if (caps.includes('image')) counts.image++
+    if (caps.includes('video')) counts.video++
+  }
+  return counts
+}
+
 /**
  * 渲染「对话供应商」区块。
  * @param props - 快照、选中态与回调。
@@ -46,6 +76,22 @@ export function ChatProviderList(props: ChatProviderListProps): ReactNode {
   const { state, selected, onSelect, onAddCustom, onRetry, renderDetail } = props
   const configured = state.rows.filter(row => row.configured)
   const addable = state.rows.filter(row => !row.configured && row.entry.settingsNs !== '')
+
+  // 模型能力声明（model-router.json capabilities），用于行卡片显示能力标签。
+  const [capabilities, setCapabilities] = useState<Record<string, string[]>>({})
+  useEffect(() => {
+    let alive = true
+    fetch('/api/model-capabilities', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((d: any) => {
+        if (!alive) return
+        if (d && typeof d.capabilities === 'object' && d.capabilities !== null) {
+          setCapabilities(d.capabilities as Record<string, string[]>)
+        }
+      })
+      .catch(() => { /* 接口不可用则无标签 */ })
+    return () => { alive = false }
+  }, [])
 
   if (state.status === 'loading' && state.rows.length === 0) {
     return (
@@ -80,6 +126,7 @@ export function ChatProviderList(props: ChatProviderListProps): ReactNode {
             key={row.entry.provider}
             row={row}
             count={modelsCountOf(state, row)}
+            counts={capabilityCountsOf(state, row, capabilities)}
             selected={selected === row.entry.provider}
             onSelect={() => { onSelect(row.entry.provider) }}
             renderDetail={renderDetail}
@@ -96,6 +143,7 @@ export function ChatProviderList(props: ChatProviderListProps): ReactNode {
             row={row}
             preset
             count={modelsCountOf(state, row)}
+            counts={capabilityCountsOf(state, row, capabilities)}
             selected={selected === row.entry.provider}
             onSelect={() => { onSelect(row.entry.provider) }}
             renderDetail={renderDetail}
@@ -127,17 +175,24 @@ function GroupLabel({ children }: { children: ReactNode }): ReactNode {
 
 /** 一行提供方卡片（已配置行或目录预设行），选中时卡片内展开详情。 */
 function ProviderRowCard({
-  row, preset, count, selected, onSelect, renderDetail,
+  row, preset, count, counts, selected, onSelect, renderDetail,
 }: {
   row: ProviderRow
   /** 目录预设行（未配置）时加「未配置」标记并显示「配置」按钮。 */
   preset?: boolean
   /** 该 profile 当前的模型数。 */
   count: number
+  /** 该 profile 的能力统计（视觉/生图/生视频各几个模型）。 */
+  counts: CapabilityCounts
   selected: boolean
   onSelect: () => void
   renderDetail?: (provider: string) => ReactNode
 }): ReactNode {
+  const capTags: Array<{ key: string; label: string; n: number }> = [
+    { key: 'vision', label: '视觉', n: counts.vision },
+    { key: 'image', label: '生图', n: counts.image },
+    { key: 'video', label: '生视频', n: counts.video },
+  ].filter(item => item.n > 0)
   return (
     <div style={selected ? rowCardSelectedStyle : rowCardStyle}>
       <div
@@ -156,6 +211,11 @@ function ProviderRowCard({
           {preset === true ? <span style={tagStyle}>{chatCopy.unconfigured}</span> : null}
           {preset !== true ? <CredentialDot row={row} /> : null}
           <span style={countBadgeStyle} title={`${count} 模型`}>{count}</span>
+          {capTags.map(item => (
+            <span key={item.key} style={capabilityTagStyle} title={`${item.label}：${item.n} 个模型`}>
+              {item.label} {item.n}
+            </span>
+          ))}
         </span>
         <span style={rowActionsStyle}>
           <button
@@ -279,6 +339,14 @@ const countBadgeStyle: CSSProperties = {
   fontSize: 11, borderRadius: 10, textAlign: 'center',
   background: 'var(--dsw-alias-interactive-bg-hover, rgba(22,93,255,0.08))',
   color: 'var(--dsw-alias-label-tertiary, #8f959e)',
+}
+
+/* 能力标签：视觉/生图/生视频，标注该供应商下支持各能力的模型数。 */
+const capabilityTagStyle: CSSProperties = {
+  flexShrink: 0, padding: '1px 6px',
+  fontSize: 11, lineHeight: '16px', borderRadius: 4,
+  background: 'var(--dsw-alias-state-business-primary, #4176e6)',
+  color: '#fff',
 }
 
 const rowActionsStyle: CSSProperties = {

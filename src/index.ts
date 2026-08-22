@@ -36,6 +36,8 @@ import { apply as applySkillToggles } from './skill-toggles.js'
 import { applyPromptOptimize } from './prompt-optimize.js'
 import { applySidebarFloat } from './sidebar-float.js'
 import { applyAppearance } from './appearance.js'
+import { applyAutomationHost } from './automation-host.js'
+import { applyPlanweaveHost } from './planweave/host.js'
 import {
   AnySearchSearchProvider,
   ANYSEARCH_DEFAULT_BASE_URL,
@@ -283,4 +285,10 @@ export async function apply(ctx: Context, config: WebuiConfig = {}): Promise<voi
 
   // 18) 外观设置：玻璃质感（Glassmorphism）开关持久化 + /api/webui-appearance。
   applyAppearance(ctx)
+
+  // 19) 自动化执行引擎（/api/webui-automation）：真实执行任务步骤 + 文件下载/打开所在文件夹。
+  applyAutomationHost(ctx)
+
+  // 20) PlanWeave：本地计划任务图 + 认领/执行/评审/反馈循环（@planweave-ai/runtime 内核 + ctx.llm 执行器）。
+  applyPlanweaveHost(ctx)
 }

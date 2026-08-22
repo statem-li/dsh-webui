@@ -1,4 +1,4 @@
-import type { UsageDay } from './aggregate'
+import type { UsagePayload } from './aggregate'
 
 async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, { cache: 'no-store', ...init, headers: { accept: 'application/json', ...init?.headers } })
@@ -28,7 +28,7 @@ export interface AccountSnapshot {
 }
 
 export const usageApi = {
-  usage: () => fetchJson<{ ok: boolean; days: UsageDay[]; updatedAt?: number }>('/api/usage-stats/usage'),
+  usage: () => fetchJson<UsagePayload>('/api/usage-stats/usage'),
   providers: () => fetchJson<{ ok: boolean; providers: ProviderInfo[] }>('/api/usage-stats/providers'),
   account: (provider: string, refresh = false) =>
     fetchJson<{ ok: boolean; message?: string; account: AccountSnapshot }>(`/api/usage-stats/account?provider=${encodeURIComponent(provider)}${refresh ? '&refresh=1' : ''}`),

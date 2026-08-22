@@ -9,6 +9,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { MemoryConfig } from '../types.js'
 import { compileAll, promoteEntries, writeDailyLog } from './compile.js'
+import { consolidateAll } from './consolidate.js'
 import { decayImportance, shouldEvict } from './scoring.js'
 import {
   localDate,
@@ -108,6 +109,16 @@ export function createTicker(
     await compileAll(store, config)
     await writeDailyLog(store)
     ctx.logger?.debug?.(`[dsh-memory] daily compile done (promoted=${promoted.length}, evicted=${evicted.length})`)
+
+    // 6) LLM 语义整理（Memory Dream）：合并去重 / 精炼重写 / 删除 / 提升长期。
+    //    与规则整理正交：规则处理「分数」，本步处理「语义」。失败不阻塞（内部吞错）。
+    if (config.consolidateEnabled) {
+      const results = await consolidateAll(ctx, store, config, 'daily')
+      const changed = results.reduce((sum, result) => sum + result.changed, 0)
+      if (changed > 0) {
+        ctx.logger?.debug?.(`[dsh-memory] daily consolidate done (scopes=${results.length}, changed=${changed})`)
+      }
+    }
   }
 
   /** 每 N 轮增量编译（timeline 重写）。 */

@@ -16,6 +16,7 @@ import { ChatProviderDetail } from './chat/ChatProviderDetail'
 import type { ChatProviderMode, ChatProviderTarget } from './chat/ChatProviderDetail'
 import { VisionModelBlock } from './vision/VisionModelBlock'
 import { ImageModelBlock } from './image/ImageModelBlock'
+import { VideoModelBlock } from './video/VideoModelBlock'
 
 /** slot `inject` 注入的依赖。 */
 export interface ProviderHubInjected {
@@ -148,6 +149,11 @@ function Loaded({ injected }: { injected: ProviderHubInjected }): ReactNode {
 
       {/* 区块 3：生图模型 */}
       <ImageModelBlock />
+
+      <div style={SEP_STYLE} />
+
+      {/* 区块 4：生视频模型 */}
+      <VideoModelBlock />
     </div>
   )
 }

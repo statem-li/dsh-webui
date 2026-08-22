@@ -37,7 +37,9 @@ export const css = {
   shotPath: 'webui-shot-path',
   shotActions: 'webui-shot-actions',
   shotAction: 'webui-shot-action',
+  shotPrimary: 'webui-shot-primary',
   shotError: 'webui-shot-error',
+  exportFrame: 'webui-export-frame',
 } as const
 
 const STYLE_ID = 'dsh-webui-styles'
@@ -45,11 +47,16 @@ const STYLE_ID = 'dsh-webui-styles'
 const SHEET = `
 /* 视图图块 + 消息按钮一行（右上角 utilities 区，与 Session log 同行） */
 .webui-host{display:flex;align-items:center;gap:8px;position:relative;flex:none}
-/* 图块按钮（对话/轨迹） */
-.webui-view-tile{display:inline-flex;align-items:center;justify-content:center;height:28px;padding:0 12px;border:1px solid var(--dsw-alias-border-l2,#333);border-radius:8px;background:var(--dsw-alias-bg-layer-2,transparent);color:var(--dsw-alias-label-tertiary,#888);font-size:13px;line-height:16px;font-weight:500;cursor:pointer;white-space:nowrap;transition:border-color .12s,color .12s,background .12s,box-shadow .12s}
-.webui-view-tile:hover{border-color:var(--dsw-alias-border-l1,#555);color:var(--dsw-alias-label-primary,#ddd)}
-.webui-view-tile-active{border-color:var(--dsw-alias-state-business-primary,#4a9eff);color:var(--dsw-alias-state-business-primary,#4a9eff);background:color-mix(in srgb,var(--dsw-alias-state-business-primary,#4a9eff) 12%,transparent)}
-.webui-view-tile-active:hover{border-color:var(--dsw-alias-state-business-primary,#4a9eff);color:var(--dsw-alias-state-business-primary,#4a9eff)}
+/* 图块按钮（对话/轨迹）：无外圈线条、无底色（与消息数字按钮同风格）；
+   选中态用蓝色光影（辉光 + 淡蓝底），hover 提亮文字 */
+.webui-view-tile{display:inline-flex;align-items:center;justify-content:center;height:28px;padding:0 12px;border:none;border-radius:8px;background:transparent;color:var(--dsw-alias-label-tertiary,#888);font-size:13px;line-height:16px;font-weight:500;cursor:pointer;white-space:nowrap;transition:color .12s,background .12s,box-shadow .12s,transform 120ms}
+.webui-view-tile:hover{color:var(--dsw-alias-label-primary,#ddd)}
+.webui-view-tile-active{color:var(--dsw-alias-state-business-primary,#4a9eff);background:color-mix(in srgb,var(--dsw-alias-state-business-primary,#4a9eff) 12%,transparent);box-shadow:0 0 10px color-mix(in srgb,var(--dsw-alias-state-business-primary,#4a9eff) 45%,transparent)}
+.webui-view-tile-active:hover{color:var(--dsw-alias-state-business-primary,#4a9eff)}
+/* 对话完成胶囊外壳：常态极淡蓝底 + 微辉光（保持可感知的存在感），
+ * hover 时提亮为明显光影（与对话/轨迹图块选中态一致） */
+.dsh-done-pill-shell{background:color-mix(in srgb,var(--dsw-alias-state-business-primary,#4a9eff) 5%,transparent);box-shadow:0 0 8px color-mix(in srgb,var(--dsw-alias-state-business-primary,#4a9eff) 12%,transparent);transition:background .12s,box-shadow .12s}
+.dsh-done-pill-shell:hover{background:color-mix(in srgb,var(--dsw-alias-state-business-primary,#4a9eff) 10%,transparent);box-shadow:0 0 12px color-mix(in srgb,var(--dsw-alias-state-business-primary,#4a9eff) 38%,transparent)}
 /* 隐藏原生「对话/轨迹」标签页行（视图切换改由右上角图块接管） */
 [data-slot="conversation.session.header"] [role="tablist"]{display:none}
 /* Session log 按钮移到右侧：webui 的对话/轨迹/消息按钮排在其左侧 */
@@ -110,7 +117,10 @@ const SHEET = `
 .webui-shot-actions{display:flex;align-items:center;gap:8px}
 .webui-shot-action{display:inline-flex;align-items:center;justify-content:center;height:28px;padding:0 12px;border:1px solid var(--dsw-alias-border-l2,#333);border-radius:8px;background:transparent;color:var(--dsw-alias-label-secondary,#bbb);font-size:12px;cursor:pointer;transition:border-color .12s,color .12s}
 .webui-shot-action:hover{border-color:var(--dsw-alias-state-business-primary,#4a9eff);color:var(--dsw-alias-state-business-primary,#4a9eff)}
+.webui-shot-primary{display:inline-flex;align-items:center;justify-content:center;height:28px;padding:0 14px;border:1px solid transparent;border-radius:14px;background:var(--dsw-alias-button-primary-fill,#111);color:var(--dsw-alias-label-primary-foreground,#fff);font-size:12px;font-weight:600;text-decoration:none;cursor:pointer;transition:opacity .12s}
+.webui-shot-primary:hover{opacity:.86}
 .webui-shot-error{font-size:12px;color:var(--dsw-alias-state-danger-primary,#f56c6c);line-height:1.5}
+.webui-export-frame{width:100%;height:480px;border:1px solid var(--dsw-alias-border-l2,#333);border-radius:10px;background:#fff;display:block}
 
 /* ── 移动端：消息横条提示泡不超出屏幕 ─────────────────────────── */
 @media (max-width: 767.98px) {

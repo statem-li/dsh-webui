@@ -2,7 +2,7 @@ import { memo, useEffect, useMemo, useRef, useState, useSyncExternalStore } from
 import type { ReactNode } from 'react'
 import MarkdownRender, { MarkdownCodeBlockNode } from 'markstream-react'
 import type { NodeComponentProps } from 'markstream-react'
-import type { CodeBlockNode, ImageNode, InlineCodeNode, LinkNode } from 'stream-markdown-parser'
+import type { CodeBlockNode, HeadingNode, ImageNode, InlineCodeNode, LinkNode, ParsedNode } from 'stream-markdown-parser'
 import { IconThinkOutline14, JsonBlock } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { MarkdownFileMentions } from '@deepseek-ai/dsh-client-ui-primitives'
 import { ImageGallery } from '@deepseek-ai/dsh-client-ui-attachment'
@@ -13,6 +13,8 @@ import type {
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import { SHIKI_LANGUAGES } from './shiki.ts'
 import { activityBus } from './activity-bus.ts'
+import { EChartsDiagram } from './charts.ts'
+import { MermaidDiagram } from './mermaid.ts'
 
 const CUSTOM_COMPONENT_SCOPE = 'dsh-better-markdown'
 
@@ -110,6 +112,100 @@ function useIsDark(): boolean {
   )
 }
 
+/** 从标题文本生成稳定的 URL slug（保留中文/字母/数字，其余转连字符）。 */
+function slugify(text: string): string {
+  const base = text.trim().toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, '-')
+    .replace(/^-+|-+$/g, '')
+  return base || 'section'
+}
+
+/** 剥离常见行内 Markdown 标记，得到与 parser 提取文本接近的纯文本。 */
+function stripInlineMarkdown(text: string): string {
+  return text
+    .replace(/`([^`]*)`/g, '$1')
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/(\*\*|__)(.*?)\1/g, '$2')
+    .replace(/(\*|_)(.*?)\1/g, '$2')
+    .replace(/~~(.*?)~~/g, '$1')
+    .replace(/<[^>]+>/g, '')
+    .trim()
+}
+
+/** 同名 slug 去重：首个原样，其后追加 -2/-3… */
+function dedupSlug(used: Map<string, number>, slug: string): string {
+  const count = used.get(slug) ?? 0
+  used.set(slug, count + 1)
+  return count === 0 ? slug : `${slug}-${count + 1}`
+}
+
+/** 给标题节点注入 attrs.id，供 TOC 锚点跳转（内置 HeadingNode 会透传 attrs）。 */
+function injectHeadingIds(nodes: ParsedNode[]): ParsedNode[] {
+  const used = new Map<string, number>()
+  return nodes.map((node) => {
+    if (node.type !== 'heading') return node
+    const heading = node as HeadingNode
+    const id = dedupSlug(used, slugify(heading.text ?? ''))
+    return { ...heading, attrs: { ...(heading.attrs ?? {}), id } }
+  })
+}
+
+interface HeadingInfo {
+  readonly level: number
+  readonly text: string
+  readonly id: string
+}
+
+/** 从 Markdown 源码提取标题列表（跳过代码围栏），生成与 postTransformNodes 一致的 id。 */
+function extractHeadings(text: string): HeadingInfo[] {
+  const result: HeadingInfo[] = []
+  const used = new Map<string, number>()
+  let inFence = false
+  for (const raw of text.split('\n')) {
+    const line = raw.trimStart()
+    if (/^```|^~~~/.test(line)) { inFence = !inFence; continue }
+    if (inFence) continue
+    const match = /^(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$/.exec(line)
+    if (!match) continue
+    const level = match[1].length
+    const clean = stripInlineMarkdown(match[2])
+    const id = dedupSlug(used, slugify(clean))
+    result.push({ level, text: clean || match[2].trim(), id })
+  }
+  return result
+}
+
+/** 悬浮目录：标题 ≥ 3 个时展示在 Markdown 正文上方，点击平滑滚动到对应标题。 */
+function MarkdownToc({ headings }: { headings: readonly HeadingInfo[] }) {
+  if (headings.length < 3) return null
+  const jump = (id: string) => (event: { preventDefault: () => void }) => {
+    event.preventDefault()
+    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+  return (
+    <details className="dsh-better-markdown__toc" open>
+      <summary className="dsh-better-markdown__toc-summary">
+        <span className="dsh-better-markdown__toc-title">目录</span>
+        <span className="dsh-better-markdown__toc-count">{headings.length}</span>
+      </summary>
+      <nav className="dsh-better-markdown__toc-nav">
+        {headings.map(heading => (
+          <a
+            key={heading.id}
+            href={`#${heading.id}`}
+            className={`dsh-better-markdown__toc-item dsh-better-markdown__toc-item--l${heading.level}`}
+            title={heading.text}
+            onClick={jump(heading.id)}
+          >
+            {heading.text}
+          </a>
+        ))}
+      </nav>
+    </details>
+  )
+}
+
 /** Markstream wrapper configured for untrusted assistant output. */
 export const MarkstreamMarkdown = memo(function MarkstreamMarkdown({ text, streaming, fileMentions }: {
   text: string
@@ -120,8 +216,11 @@ export const MarkstreamMarkdown = memo(function MarkstreamMarkdown({ text, strea
   const codeBlockProps = useMemo(() => ({
     fileMentions: streaming ? undefined : fileMentions,
   }), [fileMentions, streaming])
+  const parseOptions = useMemo(() => ({ postTransformNodes: injectHeadingIds }), [])
+  const headings = useMemo(() => extractHeadings(text), [text])
   return (
     <div className="dsh-better-markdown__markdown" data-markdown-renderer="markstream-react">
+      <MarkdownToc headings={headings} />
       <MarkdownRender
         content={text}
         final={!streaming}
@@ -132,6 +231,7 @@ export const MarkstreamMarkdown = memo(function MarkstreamMarkdown({ text, strea
         viewportPriority={false}
         codeBlockStream={streaming}
         codeBlockProps={codeBlockProps}
+        parseOptions={parseOptions}
         isDark={isDark}
       />
     </div>

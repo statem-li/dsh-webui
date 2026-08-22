@@ -14,12 +14,12 @@
 
 import { useEffect, useState } from 'react'
 import { usageApi, type ProviderInfo } from './api'
-import { averageCacheHitRate, providerShare, sumTokens, type UsageDay } from './aggregate'
+import { averageCacheHitRate, providerShare, sumActivity, sumTokens, type UsageDay, type UsageHour } from './aggregate'
 import {
-  aggregateSeries, dailyAverage, deltaPercent, filterDays, pickGrain, prevRange,
+  aggregateHourSeries, aggregateSeries, dailyAverage, deltaPercent, filterDays, pickGrain, prevRange,
   type DateRange,
 } from './range'
-import { formatExact, formatHitRate, formatUnits, formatYiExact } from './format'
+import { formatExact, formatHitRate, formatUnits, formatWorkDuration, formatYiExact } from './format'
 import { providerPalette } from './theme'
 import { AreaChart } from './charts/AreaChart'
 import { DonutChart } from './charts/DonutChart'
@@ -112,10 +112,11 @@ export function modelRank(days: UsageDay[]): Array<{ label: string; value: numbe
   return [...map.entries()].map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value)
 }
 
-const GRAIN_NAME = { day: '按日', week: '按周', month: '按月' } as const
+const GRAIN_NAME = { hour: '按小时', day: '按日', week: '按周', month: '按月' } as const
 
 export function TrendTab({ range, rangeLabel, onJumpAccounts, refreshTick }: TrendTabProps): JSX.Element {
   const [usage, setUsage] = useState<UsageDay[] | null>(null)
+  const [hours, setHours] = useState<UsageHour[]>([])
   const [providers, setProviders] = useState<ProviderInfo[]>([])
   const [error, setError] = useState<string | null>(null)
   const [retryTick, setRetryTick] = useState(0)
@@ -129,6 +130,7 @@ export function TrendTab({ range, rangeLabel, onJumpAccounts, refreshTick }: Tre
         if (u.ok !== true) throw new Error('用量数据加载失败')
         if (p.ok !== true) throw new Error('供应商数据加载失败')
         setUsage(u.days)
+        setHours(u.hours ?? [])
         setProviders(p.providers ?? [])
       })
       .catch((e: unknown) => { if (alive) setError(e instanceof Error ? e.message : String(e)) })
@@ -148,10 +150,11 @@ export function TrendTab({ range, rangeLabel, onJumpAccounts, refreshTick }: Tre
   const prevSum = sumTokens(previous)
   const hitRate = averageCacheHitRate(filtered)
   const avg = dailyAverage(filtered)
+  const activity = sumActivity(filtered)
 
-  // 粒度自适应趋势；单点（如查询单日）时主图位改排模型榜。
+  // 粒度自适应趋势：≤2 天按小时、≤31 天按日、≤120 天按周、更长按月。
   const grain = pickGrain(range)
-  const series = aggregateSeries(filtered, grain)
+  const series = grain === 'hour' ? aggregateHourSeries(hours, range) : aggregateSeries(filtered, grain)
   const showTrend = series.length >= 2
   const rank = modelRank(filtered)
 
@@ -169,12 +172,14 @@ export function TrendTab({ range, rangeLabel, onJumpAccounts, refreshTick }: Tre
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       {/* 概要：`.editor` 填充面 + 统计行（竖线分隔，非卡片网格） */}
       <div style={editorFace}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0, 1fr))' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))' }}>
           <Stat first label={`${rangeLabel} Tokens`} value={formatYiExact(sum.total)?.yi ?? formatUnits(sum.total)} exact={formatYiExact(sum.total)?.exact ?? formatExact(sum.total)} delta={deltaPercent(sum.total, prevSum.total)} />
           <Stat label="输入" value={formatYiExact(sum.input)?.yi ?? formatUnits(sum.input)} exact={formatExact(sum.input)} delta={deltaPercent(sum.input, prevSum.input)} />
           <Stat label="输出" value={formatYiExact(sum.output)?.yi ?? formatUnits(sum.output)} exact={formatExact(sum.output)} delta={deltaPercent(sum.output, prevSum.output)} />
           <Stat label="缓存命中率" value={formatHitRate(hitRate)} sub={`缓存量 ${formatUnits(sum.cache)}`} />
           <Stat label="日均 Tokens" value={formatUnits(avg)} sub={`${filtered.length} 天有数据`} />
+          <Stat label="调用次数" value={formatUnits(activity.requests)} sub={filtered.length > 0 ? `日均 ${(activity.requests / filtered.length).toFixed(1)} 次` : undefined} />
+          <Stat label="工作时长" value={formatWorkDuration(activity.workMs)} sub={filtered.length > 0 ? `日均 ${formatWorkDuration(activity.workMs / filtered.length)}` : undefined} />
         </div>
       </div>
 

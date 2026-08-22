@@ -107,6 +107,12 @@ export interface MemoryConfig {
   extractMaxChars: number
   /** 低于该 importance 的候选直接丢弃。 */
   minImportance: number
+  /** 是否启用每日 LLM 语义整理（Memory Dream，openhanako 同款）。 */
+  consolidateEnabled: boolean
+  /** 单次整理最大条目数（token 保护；超过则只取短期层 + 最近更新）。 */
+  consolidateMaxEntries: number
+  /** 整理 LLM 调用超时（毫秒）。 */
+  consolidateTimeoutMs: number
 }
 
 /** 默认配置。 */
@@ -121,6 +127,51 @@ export const DEFAULT_CONFIG: MemoryConfig = {
   dailyCompileEnabled: true,
   extractMaxChars: 6000,
   minImportance: 6,
+  consolidateEnabled: true,
+  consolidateMaxEntries: 200,
+  consolidateTimeoutMs: 60_000,
+}
+
+/** LLM 整理操作（consolidate.ts 的 LLM 输出结构）。 */
+export interface ConsolidateOp {
+  /** merge=合并多条为一条；rewrite=重写单条；drop=删除；promote=升长期。 */
+  type: 'merge' | 'rewrite' | 'drop' | 'promote'
+  /** 参与该操作的条目 id（merge/drop/promote 可多条；rewrite 单条）。 */
+  ids: string[]
+  /** merge/rewrite 的新内容（不含原条目中不存在的虚构信息）。 */
+  content?: string
+  /** merge/rewrite 的新标签。 */
+  tags?: string[]
+}
+
+/** 整理统计结果（供面板/工具返回）。 */
+export interface ConsolidateResult {
+  /** 本次整理的 scope：global | project:<hash> | all。 */
+  scope: string
+  /** 合并条数（源条目被合并后数量减少）。 */
+  merged: number
+  /** 重写条数。 */
+  rewritten: number
+  /** 删除条数。 */
+  dropped: number
+  /** 提升长期条数。 */
+  promoted: number
+  /** 整理产生的条目变动总数（merge 按源条目数 + 1 计）。 */
+  changed: number
+}
+
+/** 修订版本元数据（revisions/<id>.json）。 */
+export interface RevisionMeta {
+  /** 修订 id（时间戳 + 随机）。 */
+  id: string
+  /** 快照时间 ISO。 */
+  at: string
+  /** 快照内条目数。 */
+  entryCount: number
+  /** 触发范围（global | project:<hash> | all）。 */
+  scope: string
+  /** 触发动机：daily=每日自动；manual=手动/工具触发。 */
+  trigger: 'daily' | 'manual'
 }
 
 /** LLM 提取候选（extract.ts 的 LLM 输出结构）。 */

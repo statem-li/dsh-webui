@@ -34,6 +34,8 @@ import {
   evaluateJson,
   inspectElementAt,
   getViewportSize,
+  setViewport,
+  clearViewport,
   dispatchKey,
   dispatchMouseMove,
   dispatchMouseClick,
@@ -122,6 +124,8 @@ interface SessionBrowserState {
   tabTargets: Map<string, string>
   /** 当前激活标签（AI 工具作用于此）。 */
   activeTabId: string | null
+  /** 最近一次 attach 的视口尺寸（CSS px）；选取模式 detach 时用 Emulation 覆写固定，避免 detach 后 innerWidth 归零。 */
+  viewport: { width: number; height: number } | null
 }
 
 /** 一次浏览器操作在时间线上的记录（供 Web GUI 内嵌面板展示）。 */
@@ -221,6 +225,7 @@ export function applyBrowser(ctx: PluginContext, config: Config): void {
         bvKey: sessionId.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 48) || 'default',
         tabTargets: new Map(),
         activeTabId: null,
+        viewport: null,
       }
       sessions.set(sessionId, st)
     }
@@ -1383,21 +1388,46 @@ export function applyBrowser(ctx: PluginContext, config: Config): void {
             const cx = Number(body.x), cy = Number(body.y), cw = Number(body.w), ch = Number(body.h)
             const show = [cx, cy, cw, ch].every(v => Number.isFinite(v)) && cw > 50 && ch > 50
             if (!show) {
+              // 选取模式（keepViewport）：detach 前先截一张 attach 状态的实时画面作
+              // 冻结帧——detach 后 WebContentsView 不再合成，截图/screencast 都会超时，
+              // 画面只能靠这张冻结帧兜底（否则选取模式画面会是「连接中」空屏）。
+              if (body.keepViewport === true) {
+                try {
+                  const base64 = await captureScreenshot(st.session, 90, 'jpeg', true)
+                  st.frame = {
+                    data: base64,
+                    width: st.viewport?.width ?? 0,
+                    height: st.viewport?.height ?? 0,
+                    ts: Date.now(),
+                    rev: (st.frame?.rev ?? 0) + 1,
+                  }
+                } catch { /* 截图失败则画面保持上一帧 */ }
+              }
               await bvPost('/view/detach', { sessionKey: st.bvKey })
+              // detach 后 WebContentsView 视口可能归零（初始未 attach 场景），用最近
+              // attach 尺寸 Emulation 覆写兜底，确保 elementFromPoint 命中。
+              if (body.keepViewport === true && st.viewport) {
+                try { await setViewport(st.session, st.viewport.width, st.viewport.height) } catch { /* 忽略 */ }
+              }
               try { await stopScreencast(st.session) } catch {}
               return respond(200, { ok: true, hidden: true })
             }
             if (st.activeTabId == null || !st.tabTargets.has(st.activeTabId)) {
               return respond(409, { ok: false, error: '无激活标签页' })
             }
+            // attach 前清除视口覆写，恢复跟随真实视图；随后记录视口尺寸供选取模式使用。
+            try { await clearViewport(st.session) } catch { /* 未覆写则忽略 */ }
+            const vw = Math.round(cw / dpr)
+            const vh = Math.round(ch / dpr)
             await bvPost('/view/attach', {
               sessionKey: st.bvKey,
               tabId: st.activeTabId,
               x: Math.round(cx / dpr),
               y: Math.round(cy / dpr),
-              w: Math.round(cw / dpr),
-              h: Math.round(ch / dpr),
+              w: vw,
+              h: vh,
             }, 3000)
+            st.viewport = { width: vw, height: vh }
             return respond(200, { ok: true, hidden: false, uiH: 0 })
           }
           const win: any = await st.conn.send('Browser.getWindowForTarget', { targetId: st.session.targetId })

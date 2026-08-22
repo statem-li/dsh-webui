@@ -10,7 +10,7 @@
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { captureSnapshotSync, restoreSnapshot } from '../lib/rewind.js'
+import { captureSnapshotSync, diffSnapshot, restoreSnapshot } from '../lib/rewind.js'
 
 let passed = 0
 let failed = 0
@@ -105,10 +105,13 @@ async function testExcludedDirs() {
   writeFileSync(join(root, 'dist', 'bundle.js'), 'dist-content')
   mkdirSync(join(root, '_tmp_scratch'), { recursive: true })
   writeFileSync(join(root, '_tmp_scratch', 'x.txt'), 'tmp-content')
+  // 下划线前缀的「工具/分析产物」目录（_planweave_analysis 等）也应被跳过。
+  mkdirSync(join(root, '_planweave_analysis', 'repo'), { recursive: true })
+  writeFileSync(join(root, '_planweave_analysis', 'repo', 'README.md'), 'pw-content')
 
   const S0 = snap(root, 0)
   const s0Keys = Object.keys(S0.files)
-  if (s0Keys.some(k => k.startsWith('node_modules/') || k.startsWith('dist/') || k.startsWith('_tmp_scratch/'))) {
+  if (s0Keys.some(k => k.startsWith('node_modules/') || k.startsWith('dist/') || k.startsWith('_tmp_scratch/') || k.startsWith('_planweave_analysis/'))) {
     fail('排除目录不应被快照', `keys=${s0Keys.join(', ')}`)
   } else {
     ok('排除目录未进入快照')
@@ -118,6 +121,7 @@ async function testExcludedDirs() {
   writeFileSync(join(root, 'node_modules', 'pkg', 'index.js'), 'nm-v1')
   writeFileSync(join(root, 'dist', 'bundle.js'), 'dist-v1')
   writeFileSync(join(root, '_tmp_scratch', 'x.txt'), 'tmp-v1')
+  writeFileSync(join(root, '_planweave_analysis', 'repo', 'README.md'), 'pw-v1')
   snap(root, 1)
 
   await restoreSnapshot(S0)
@@ -131,10 +135,11 @@ async function testExcludedDirs() {
   const nmNow = readFileSync(join(root, 'node_modules', 'pkg', 'index.js'), 'utf8')
   const distNow = readFileSync(join(root, 'dist', 'bundle.js'), 'utf8')
   const tmpNow = readFileSync(join(root, '_tmp_scratch', 'x.txt'), 'utf8')
-  if (nmNow === 'nm-v1' && distNow === 'dist-v1' && tmpNow === 'tmp-v1') {
+  const pwNow = readFileSync(join(root, '_planweave_analysis', 'repo', 'README.md'), 'utf8')
+  if (nmNow === 'nm-v1' && distNow === 'dist-v1' && tmpNow === 'tmp-v1' && pwNow === 'pw-v1') {
     ok('排除目录内容保持未被回退')
   } else {
-    fail('排除目录内容应保持 v1', `nm=${nmNow} dist=${distNow} tmp=${tmpNow}`)
+    fail('排除目录内容应保持 v1', `nm=${nmNow} dist=${distNow} tmp=${tmpNow} pw=${pwNow}`)
   }
   rmSync(root, { recursive: true, force: true })
 }
@@ -209,11 +214,64 @@ async function testOutsideFiles() {
   rmSync(outside, { recursive: true, force: true })
 }
 
+async function testDiff() {
+  console.log('\n[5] 差异检测（diffSnapshot）：')
+  const root = mkdtempSync(join(tmpdir(), 'rewind-diff-'))
+  writeFileSync(join(root, 'a.txt'), 'A-v0')
+  writeFileSync(join(root, 'keep.txt'), 'keep')
+  const S0 = snap(root, 0)
+
+  // 无修改 → 三数组均为空
+  const noChange = await diffSnapshot(S0)
+  if (!noChange.modified.length && !noChange.added.length && !noChange.deleted.length) {
+    ok('无修改 → modified/added/deleted 均为空')
+  } else {
+    fail('无修改应返回空差异', JSON.stringify(noChange))
+  }
+
+  // 修改 a.txt + 新增 new.txt + 删除 keep.txt
+  writeFileSync(join(root, 'a.txt'), 'A-v1')
+  writeFileSync(join(root, 'new.txt'), 'new')
+  rmSync(join(root, 'keep.txt'))
+  const diff = await diffSnapshot(S0)
+  const modOk = diff.modified.length === 1 && diff.modified.includes('a.txt')
+  const addOk = diff.added.length === 1 && diff.added.includes('new.txt')
+  const delOk = diff.deleted.length === 1 && diff.deleted.includes('keep.txt')
+  if (modOk && addOk && delOk) {
+    ok('改/增/删 分别命中 modified/added/deleted')
+  } else {
+    fail('差异分类不正确', JSON.stringify(diff))
+  }
+
+  // writtenPaths 过滤：只报告白名单（本会话写过）内的文件，其他文件不参与。
+  writeFileSync(join(root, 'a.txt'), 'A-v2')
+  writeFileSync(join(root, 'other.txt'), 'other-v0')
+  const scoped = await diffSnapshot(S0, undefined, [join(root, 'a.txt')])
+  const scopedMod = scoped.modified.length === 1 && scoped.modified.includes('a.txt')
+  const scopedClean = scoped.added.length === 0 && scoped.deleted.length === 0
+  if (scopedMod && scopedClean) {
+    ok('writtenPaths 过滤：只报告白名单内的文件')
+  } else {
+    fail('writtenPaths 过滤不正确', JSON.stringify(scoped))
+  }
+
+  // 空白名单 → 无差异（退回不误伤其他来源的文件）。
+  const emptyScoped = await diffSnapshot(S0, undefined, [])
+  if (!emptyScoped.modified.length && !emptyScoped.added.length && !emptyScoped.deleted.length) {
+    ok('空白名单 → 无差异（不误伤其他来源文件）')
+  } else {
+    fail('空白名单应返回空差异', JSON.stringify(emptyScoped))
+  }
+
+  rmSync(root, { recursive: true, force: true })
+}
+
 async function main() {
   await testMultiRound()
   await testExcludedDirs()
   await testNestedAndBatch()
   await testOutsideFiles()
+  await testDiff()
   console.log(`\n结果：${passed} 通过，${failed} 失败`)
   if (failed > 0) process.exit(1)
 }

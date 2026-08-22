@@ -81,8 +81,9 @@ function niceTicks(max: number, count = 4): number[] {
   return ticks.length >= 2 ? ticks : [0, step]
 }
 
-/** X 轴标签：YYYY-MM-DD → MM-DD；YYYY-MM → YY-MM；YYYY 原样。 */
+/** X 轴标签：小时（含冒号，如 "14:00"/"08-21 14:00"）原样；YYYY-MM-DD → MM-DD；YYYY-MM → YY-MM。 */
 function axisLabel(label: string): string {
+  if (label.includes(':')) return label
   if (label.length >= 8) return label.slice(5)
   if (label.length === 7) return label.slice(2)
   return label

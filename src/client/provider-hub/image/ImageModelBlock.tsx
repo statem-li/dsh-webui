@@ -5,7 +5,7 @@
  */
 import { useEffect, useState } from 'react'
 
-interface ModelInfo { id: string; name: string }
+interface ModelInfo { id: string; name: string; outputs?: string[] }
 interface ProviderInfo { id: string; name: string; models: ModelInfo[] }
 
 const BLOCK_TITLE: React.CSSProperties = { fontSize: 14, fontWeight: 600, marginBottom: 6, color: 'var(--dsw-alias-label-primary)' }
@@ -26,6 +26,10 @@ const SELECT: React.CSSProperties = {
   color: 'var(--dsw-alias-label-primary)', fontSize: 14, lineHeight: '22px', cursor: 'pointer',
 }
 const ACTIVE_HINT: React.CSSProperties = { fontSize: 12, color: 'var(--dsw-alias-label-secondary)' }
+
+function isImageModel(m: ModelInfo): boolean {
+  return Array.isArray(m.outputs) && m.outputs.includes('image')
+}
 
 export function ImageModelBlock(): React.ReactElement {
   const [providers, setProviders] = useState<ProviderInfo[]>([])
@@ -75,7 +79,7 @@ export function ImageModelBlock(): React.ReactElement {
   return (
     <div>
       <div style={BLOCK_TITLE}>生图模型</div>
-      <div style={HINT}>generate_image 使用的模型（提示词 → 图片生成）。</div>
+      <div style={HINT}>generate_image 使用的模型（提示词 → 图片生成）。标注「生图」的模型声明了图片生成能力（可在供应商的模型设置中勾选「支持生图」）。</div>
       {error && <div style={{ color: 'var(--dsw-alias-state-error-primary)', marginBottom: 8 }}>{error}</div>}
       {providers.length === 0 && !error
         ? <div style={{ color: 'var(--dsw-alias-label-tertiary)' }}>加载中…</div>
@@ -101,7 +105,7 @@ export function ImageModelBlock(): React.ReactElement {
               >
                 <option value="">{currentModels.length === 0 ? '无模型' : '选择模型'}</option>
                 {currentModels.map(m => (
-                  <option key={m.id} value={m.id}>{m.name || m.id}</option>
+                  <option key={m.id} value={m.id}>{m.name || m.id}{isImageModel(m) ? '（生图）' : ''}</option>
                 ))}
               </select>
             </div>

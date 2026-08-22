@@ -7,9 +7,10 @@
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { InferArgs, ParameterSchemaSpec } from '@deepseek-ai/dsh-tools'
 import type { Context } from '@deepseek-ai/cordis'
-import type { MemoryConfig } from './types.js'
+import type { ConsolidateResult, MemoryConfig } from './types.js'
 import { projectHashOf, summarize, type MemoryStore } from './engine/store.js'
 import { workspaceHashOf } from './engine/compile.js'
+import { consolidateAll, consolidateScope } from './engine/consolidate.js'
 
 /** 当前会话项目 hash（exec.agent 缺失时回退 null → global 或全部）。 */
 interface AgentLike {
@@ -63,7 +64,7 @@ function rank(a: EntryView, b: EntryView): number {
 export function registerMemoryTools(
   ctx: Context,
   store: MemoryStore,
-  _config: MemoryConfig,
+  config: MemoryConfig,
 ): () => void {
   const disposers: Array<() => void> = []
 
@@ -238,6 +239,33 @@ export function registerMemoryTools(
     },
   })))
 
+  // ── memory_consolidate ───────────────────────────────────────────────
+  disposers.push(ctx.tools.register(textTool({
+    name: 'memory_consolidate',
+    description: '整理本地记忆（合并重复/去重/精炼重写/删除低价值/提升长期）——即 openhanako 的 Memory Dream。每天会自动运行一次，也可手动触发。',
+    parameters: {
+      scope: { type: 'string', enum: ['all', 'global', 'project'], description: 'all=全局+全部项目；global=仅全局层；project=当前工作区项目。默认 all。' },
+    },
+    async execute(args, exec) {
+      let results: ConsolidateResult[]
+      if (args.scope === 'global') {
+        results = [await consolidateScope(ctx, store, config, 'global', 'manual')]
+      } else if (args.scope === 'project') {
+        const agent = exec.agent as AgentLike | undefined
+        const hash = agent !== undefined ? workspaceHashOf(agent.session.header) : null
+        if (hash === null) throw new Error('无法判定当前工作区项目（无 cwd），请用 scope: "all" 或 "global"')
+        results = [await consolidateScope(ctx, store, config, { projectHash: hash }, 'manual')]
+      } else {
+        results = await consolidateAll(ctx, store, config, 'manual')
+      }
+      const changed = results.reduce((sum, result) => sum + result.changed, 0)
+      if (changed === 0) return '记忆已是最佳状态，本次整理无变动。'
+      const lines = results.map(result =>
+        `- ${result.scope}：合并 ${result.merged}、改写 ${result.rewritten}、删除 ${result.dropped}、提升长期 ${result.promoted}`)
+      return `已整理记忆（${changed} 处变动）：\n${lines.join('\n')}`
+    },
+  })))
+
   return () => {
     for (const dispose of disposers) dispose()
   }
@@ -260,6 +288,7 @@ const TOOL_PRESENTATION: Record<string, { kind: 'read' | 'other'; title: (args: 
   memory_pin: { kind: 'other', title: args => `置顶：${String(args.entryId ?? '')}` },
   memory_tag: { kind: 'other', title: args => `改标签：${String(args.entryId ?? '')}` },
   memory_forget: { kind: 'other', title: args => `删除：${String(args.entryId ?? '')}` },
+  memory_consolidate: { kind: 'other', title: () => '整理记忆' },
 }
 
 /** 文本工具包装（openviking 同款模式，泛型保留参数推断）。 */

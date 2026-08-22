@@ -42,6 +42,8 @@ export function EffortSeat({ available, directory, load, select, locked }: Effor
   // 关闭动画态：先播下沉淡出（.13s），结束后再真正卸载面板
   const [closing, setClosing] = useState(false)
   const closeTimer = useRef<number | null>(null)
+  // hover 移出后的延迟关闭定时器（悬停交互，与提示词优化卡片一致）
+  const hoverLeaveTimer = useRef<number | null>(null)
   const [dragIndex, setDragIndex] = useState<number | null>(null)
   const rootRef = useRef<HTMLDivElement | null>(null)
   const sliderRef = useRef<HTMLDivElement | null>(null)
@@ -58,9 +60,38 @@ export function EffortSeat({ available, directory, load, select, locked }: Effor
     }, 130)
   }
 
-  // 卸载清理关闭定时器。
+  /** 取消「移出后延迟关闭」的定时器。 */
+  const cancelHoverHide = (): void => {
+    if (hoverLeaveTimer.current !== null) {
+      window.clearTimeout(hoverLeaveTimer.current)
+      hoverLeaveTimer.current = null
+    }
+  }
+
+  /** hover 进入按钮/面板：立即显示并取消延迟关闭；关闭动画中则中断恢复。 */
+  const showPanel = (): void => {
+    cancelHoverHide()
+    if (closing) {
+      if (closeTimer.current !== null) window.clearTimeout(closeTimer.current)
+      closeTimer.current = null
+      setClosing(false)
+    }
+    setOpen(true)
+  }
+
+  /** hover 移出：延迟 0.08 秒再关闭，给用户时间从按钮移入面板拖动滑杆。 */
+  const scheduleHide = (): void => {
+    cancelHoverHide()
+    hoverLeaveTimer.current = window.setTimeout(() => {
+      hoverLeaveTimer.current = null
+      closePanel()
+    }, 80)
+  }
+
+  // 卸载清理关闭/延迟隐藏定时器。
   useEffect(() => () => {
     if (closeTimer.current !== null) window.clearTimeout(closeTimer.current)
+    if (hoverLeaveTimer.current !== null) window.clearTimeout(hoverLeaveTimer.current)
   }, [])
 
   // 当前模型（含其 reasoning 元数据）。目录外模型无法确定等级列表 → 隐藏入口。
@@ -108,22 +139,6 @@ export function EffortSeat({ available, directory, load, select, locked }: Effor
   useEffect(() => {
     if (available) load()
   }, [available, load])
-
-  useEffect(() => {
-    if (!open || closing) return
-    const closeOutside = (event: MouseEvent): void => {
-      if (!rootRef.current?.contains(event.target as Node)) closePanel()
-    }
-    const onKey = (event: globalThis.KeyboardEvent): void => {
-      if (event.key === 'Escape') closePanel()
-    }
-    document.addEventListener('mousedown', closeOutside)
-    document.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('mousedown', closeOutside)
-      document.removeEventListener('keydown', onKey)
-    }
-  }, [open, closing, closePanel])
 
   // 打开面板期间持续流动：光点沿轨道从左流向滑块，关闭时停止。
   useEffect(() => {
@@ -213,13 +228,20 @@ export function EffortSeat({ available, directory, load, select, locked }: Effor
         aria-expanded={open}
         title={`推理等级：${activeChoice?.label ?? '默认'}`}
         disabled={locked || state.status === 'selecting'}
-        onClick={() => { open ? closePanel() : setOpen(true) }}
+        onMouseEnter={showPanel}
+        onMouseLeave={scheduleHide}
       >
         <span className={css.effLabel}>{activeChoice?.label ?? '默认'}</span>
       </button>
 
       {open && (
-        <div className={`${css.effPanel} ${closing ? 'dsh-glass-anim-out' : 'dsh-glass-anim-in'}`} role="dialog" aria-label="修改推理等级">
+        <div
+          className={`${css.effPanel} ${closing ? 'dsh-glass-anim-out' : 'dsh-glass-anim-in'}`}
+          role="dialog"
+          aria-label="修改推理等级"
+          onMouseEnter={showPanel}
+          onMouseLeave={scheduleHide}
+        >
           <div className={css.effPanelHead}>
             <span className={css.effPanelTitle}>推理等级</span>
             <span className={css.effPanelValue}>{activeChoice?.label ?? '默认'}</span>

@@ -40,7 +40,7 @@ function resolveConfig(input: Partial<MemoryConfig> | undefined): MemoryConfig {
   const config: MemoryConfig = { ...DEFAULT_CONFIG }
   if (input === undefined || typeof input !== 'object') return config
   const candidate = input as Record<string, unknown>
-  const numbers = ['extractEveryTurns', 'compileEveryTurns', 'compileThreshold', 'decayLambda', 'hitBonus', 'injectTokenBudget', 'injectRefreshSteps', 'extractMaxChars', 'minImportance'] as const
+  const numbers = ['extractEveryTurns', 'compileEveryTurns', 'compileThreshold', 'decayLambda', 'hitBonus', 'injectTokenBudget', 'injectRefreshSteps', 'extractMaxChars', 'minImportance', 'consolidateMaxEntries', 'consolidateTimeoutMs'] as const
   for (const key of numbers) {
     const value = candidate[key]
     if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
@@ -49,6 +49,9 @@ function resolveConfig(input: Partial<MemoryConfig> | undefined): MemoryConfig {
   }
   if (typeof candidate.dailyCompileEnabled === 'boolean') {
     config.dailyCompileEnabled = candidate.dailyCompileEnabled
+  }
+  if (typeof candidate.consolidateEnabled === 'boolean') {
+    config.consolidateEnabled = candidate.consolidateEnabled
   }
   return config
 }

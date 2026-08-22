@@ -67,3 +67,16 @@ export function relativeTime(ts: number, now = Date.now()): string {
   if (abs < day) return `${Math.round(abs / hour)} 小时${future ? '后' : '前'}`
   return `${Math.round(abs / day)} 天${future ? '后' : '前'}`
 }
+
+/** 工作时长（毫秒）→ 中文紧凑："45分钟" / "2小时15分" / "3天2小时"。 */
+export function formatWorkDuration(ms: number): string {
+  if (!isFinite(ms) || ms <= 0) return '—'
+  const totalMinutes = Math.round(ms / 60000)
+  if (totalMinutes < 1) return '不足1分钟'
+  const minutes = totalMinutes % 60
+  const hours = Math.floor(totalMinutes / 60) % 24
+  const days = Math.floor(totalMinutes / 1440)
+  if (days > 0) return `${days}天${hours > 0 ? `${hours}小时` : ''}`
+  if (hours > 0) return `${hours}小时${minutes > 0 ? `${minutes}分` : ''}`
+  return `${minutes}分钟`
+}

@@ -34,6 +34,11 @@ export declare function extractUserPrompt(transcript: string): string;
 export declare function extractCandidates(ctx: Context, agent: MinimalAgent, transcript: string, config: MemoryConfig): Promise<ExtractCandidate[]>;
 /** 检测内容是否包含敏感凭据。 */
 export declare function isSensitiveContent(text: string): boolean;
+/** 解析 LLM 路由：agent 显式配置优先，回退默认模型选择（consolidate 复用）。 */
+export declare function resolveRoute(ctx: Context, agent: MinimalAgent): Promise<{
+    provider: string;
+    model: string;
+} | undefined>;
 /** 从事件流维护的 turn 缓冲里取文本（extract 输入）。 */
 export declare function transcriptFromEvents(events: Array<{
     type: string;

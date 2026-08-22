@@ -105,7 +105,7 @@ export function getGlassOpacity(): number {
  * 等）都含 "panel" 子串，被子串匹配命中会出现「标题行带包裹底色」「贴右缘
  * 隐形毛玻璃卡」等事故；它们的模糊由专属规则提供。
  */
-const PANELS_SELECTOR = ':is([class*="_panel"]:not([class*="webui-panel"]), [class*="-drawer"]:not([class*="-mask"]))'
+const PANELS_SELECTOR = ':is([class*="panel"], [class*="modal"], [class*="drawer"]:not([class*="mask"])):not([class*="webui-"])'
 
 function buildGlassCss(): string {
   return `
@@ -157,9 +157,10 @@ html[${GLASS_ATTRIBUTE}] ${PANELS_SELECTOR} {
     0 12px 40px rgba(31,35,41,.16),
     0 2px 8px rgba(31,35,41,.06);
   transition: var(--dsh-glass-ease);
-  /* 滑入动效：面板挂载/显示时轻微上滑淡入（幅度克制，播完即回归原位，
-   * 不残留 transform——避免动画帧成为 fixed 后代的临时包含块） */
-  animation: dsh-glass-rise .22s cubic-bezier(.2,.8,.2,1);
+  /* 注意：不在此处挂滑入动画——会与记忆/技能等面板自带的
+   * dsh-modal-stagger 动画体系冲突（animation 属性互相覆盖，
+   * 面板卡死在初始帧打不开，实测踩坑）。滑入动画只挂在
+   * composer 弹层（.dsh-glass-anim-in）上。 */
 }
 @keyframes dsh-glass-rise {
   from { opacity: 0; transform: translateY(8px); }
@@ -191,7 +192,7 @@ html[${GLASS_ATTRIBUTE}] :is(
     [class*="skm-modal"],
     [class*="skm-bundle"],
     [class*="auto-panel"],
-    [class*="auto-drawer"]:not([class*="mask"]),
+    [class*="auto-modal"]:not([class*="mask"]),
     [class*="dsh-browser-sites__panel"],
     [class*="dsh-modal-slide-in"],
     [class*="dsh-modal-side-in"]) {
@@ -260,14 +261,52 @@ html[${GLASS_ATTRIBUTE}] body[data-ds-dark-theme] [class*="_composerSeat"] [clas
   background-color: rgba(30,31,36,.38);
 }
 /* composer 工具条弹出层（提示词优化 / 选择模型 / 推理等级）：
- * 底色已随 token 半透明，这里补上毛玻璃模糊 */
+ * 这三个弹层的底色 token --dsw-specific-menu 引用 --dsw-alias-bg-layer-3，
+ * 随玻璃覆盖层半透明（≈0.75 不透明度），但比记忆/技能面板的「完全透明 +
+ * 毛玻璃」要实，观感上仍像包着一层深色色块 → 这里同样去掉底色（transparent）、
+ * 补毛玻璃模糊与高光投影，对齐记忆面板。
+ * ⚠ 必须用精确类选择器（.webui-po-panel / .webui-ms-menu / .webui-eff-panel），
+ * 不能用 [class*="webui-po-panel"] 之类子串匹配——webui-po-panel-title /
+ * webui-eff-panel-head 等内部文字元素也含 panel 子串，会被误加 backdrop-filter，
+ * 造成「标题行带包裹底色」斑块。 */
 html[${GLASS_ATTRIBUTE}] :is(
-    [class*="webui-po-panel"],
-    [class*="webui-ms-menu"],
-    [class*="webui-eff-panel"]) {
+    .webui-po-panel,
+    .webui-ms-menu,
+    .webui-eff-panel) {
+  background-color: transparent;
   backdrop-filter: var(--dsh-glass-blur);
   -webkit-backdrop-filter: var(--dsh-glass-blur);
   animation: dsh-glass-rise .22s cubic-bezier(.2,.8,.2,1);
+}
+html[${GLASS_ATTRIBUTE}] :is(
+    .webui-po-panel,
+    .webui-ms-menu,
+    .webui-eff-panel) {
+  box-shadow:
+    inset 0 0 0 1px rgba(255,255,255,.50),
+    0 0 0 1px rgba(15,17,21,.08),
+    0 12px 40px rgba(31,35,41,.16),
+    0 2px 8px rgba(31,35,41,.06);
+}
+html[${GLASS_ATTRIBUTE}] body[data-ds-dark-theme] :is(
+    .webui-po-panel,
+    .webui-ms-menu,
+    .webui-eff-panel) {
+  box-shadow:
+    inset 0 0 0 1px rgba(255,255,255,.08),
+    0 0 0 1px rgba(255,255,255,.05),
+    0 12px 40px rgba(0,0,0,.45),
+    0 2px 8px rgba(0,0,0,.30);
+}
+/* 多轮优化候选大卡片（portal 到 body 的全屏居中卡，也是 .webui-po-panel 变体）：
+ * 内容多、面积大，完全透明会让背后消息流透出干扰阅读 → 保留一层轻半透明纱
+ * （对齐 done-pill 任务面板的标准毛玻璃），毛玻璃模糊仍由上面的 .webui-po-panel
+ * 规则提供。 */
+html[${GLASS_ATTRIBUTE}] .webui-po-panel-multi {
+  background-color: rgba(255,255,255,.62);
+}
+html[${GLASS_ATTRIBUTE}] body[data-ds-dark-theme] .webui-po-panel-multi {
+  background-color: rgba(22,23,28,.55);
 }
 /* ===== 右上角「对话/轨迹」入口（仅玻璃质感开启期间）=====
  * 图块按钮去背景；消息弹出卡改毛玻璃（去实色底）+ 滑入动画。
@@ -334,7 +373,7 @@ function applyGlassDom(on: boolean): void {
 // 浮层面板内，就把辉光坐标（面板局部系）写到该元素的内联 CSS 变量上，并
 // 打 data-dsh-glow 标记点亮；离开即熄灭。不新增 DOM 层。
 
-const GLOW_TARGET_SELECTOR = ':is([class*="_panel"]:not([class*="webui-panel"]), [class*="-drawer"]:not([class*="-mask"]))'
+const GLOW_TARGET_SELECTOR = ':is([class*="panel"], [class*="modal"], [class*="drawer"]:not([class*="mask"])):not([class*="webui-"])'
 /** 辉光半径（与 CSS radial-gradient 的 260px circle 保持一致）。 */
 const GLOW_RADIUS = 260
 

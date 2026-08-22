@@ -10,6 +10,7 @@
  * 写回走标准 kit 的 `inputActions.setDraft`（唯一公开写入路径），不碰 DOM。
  */
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { createPortal } from 'react-dom'
 import clsx from 'clsx'
 import type { SessionId, SnapshotStore } from '@deepseek-ai/dsh-client-runtime/client'
 import type { ModelDirectoryState } from '@deepseek-ai/dsh-client-ui-model-selection/client'
@@ -35,12 +36,13 @@ export interface PromptOptimizeProps extends PromptOptimizeInjected {
 }
 
 /** popover 生命周期阶段。 */
-type Phase = 'idle' | 'optimizing' | 'done' | 'error'
+type Phase = 'idle' | 'optimizing' | 'done' | 'error' | 'multi'
 
 /** SSE 帧负载（host 端发送）。 */
 interface StreamFrame {
-  type?: 'delta' | 'done' | 'error'
+  type?: 'delta' | 'done' | 'error' | 'candidate'
   text?: string
+  index?: number
   elapsedMs?: number
   message?: string
 }
@@ -56,6 +58,13 @@ function formatMs(ms: number | undefined): string {
 const TARGET_KEY = 'dsh-webui:prompt-optimize:set-target'
 /** 「使用 AI 浏览器验证」开关的 localStorage 键。 */
 const VERIFY_KEY = 'dsh-webui:prompt-optimize:verify-browser'
+/** 「多轮优化」开关的 localStorage 键。 */
+const MULTI_KEY = 'dsh-webui:prompt-optimize:multi-round'
+
+/** 多轮优化候选数量（固定 3，与 host 端 MULTI_VARIANTS 顺序一致）。 */
+const CANDIDATE_COUNT = 3
+/** 多轮候选展示标签（候选 0 额外加「推荐」徽标）。 */
+const CANDIDATE_LABELS: ReadonlyArray<string> = ['均衡优化', '精简高效', '详尽具体']
 
 /** 从 localStorage 读开关状态；缺省值在首次（从未点过）时生效。 */
 function readFlag(key: string, fallback: boolean): boolean {
@@ -90,9 +99,25 @@ export function PromptOptimizeButton({ available, directory, input, inputActions
   const [setTarget, setSetTarget] = useState<boolean>(() => readFlag(TARGET_KEY, true))
   // 「使用 AI 浏览器验证」开关：默认 OFF，localStorage 持久化（缺省视为关闭）。
   const [verifyWithBrowser, setVerifyWithBrowser] = useState<boolean>(() => readFlag(VERIFY_KEY, false))
+  // 「多轮优化」开关：默认 OFF，localStorage 持久化。
+  const [multiRound, setMultiRound] = useState<boolean>(() => readFlag(MULTI_KEY, false))
+  // 多轮候选结果（按 host 返回的 index 放置，空串表示该候选失败/未返回）。
+  const [candidates, setCandidates] = useState<string[]>([])
+  // 多轮优化的「原话」基准：展示在卡片顶部，连续优化时保持不变。
+  const [sourceText, setSourceText] = useState('')
+  // 多轮迭代轮次（用户手动改草稿时重置为 1）。
+  const [round, setRound] = useState(1)
+  // 多轮候选卡片是否正在滑出（播完动画再卸载）。
+  const [closing, setClosing] = useState(false)
   const closeTimer = useRef<number | null>(null)
   const hoverLeaveTimer = useRef<number | null>(null)
   const abortRef = useRef<AbortController | null>(null)
+  // 多轮「原话」基准（供 optimize 读取最新值，避免闭包陈旧）。
+  const sourceRef = useRef<string>('')
+  // 本组件最近一次写回草稿的值：用于识别「用户手动改了草稿」→ 重置原话基准。
+  const lastWrittenRef = useRef<string>('')
+  // 多轮迭代轮次 ref（供 optimize 读取最新值，避免闭包陈旧）。
+  const roundRef = useRef(1)
   const busy = phase === 'optimizing'
 
   // 卸载时清理「完成后短暂停留」与「hover 延迟关闭」的定时器。
@@ -116,13 +141,15 @@ export function PromptOptimizeButton({ available, directory, input, inputActions
     setHovered(true)
   }
 
-  // 鼠标移出：延迟 2 秒再隐藏，给用户时间把鼠标移到卡片上点开关。
+  // 鼠标移出：延迟 0.08 秒再隐藏，给用户时间把鼠标移到卡片上点开关。
+  // 多轮候选卡片展示期间不随 hover 关闭（需点选候选或「关闭」才收起）。
   const scheduleHide = (): void => {
+    if (phase === 'multi') return
     cancelHoverHide()
     hoverLeaveTimer.current = window.setTimeout(() => {
       hoverLeaveTimer.current = null
       setHovered(false)
-    }, 2000)
+    }, 80)
   }
 
   const finish = (next: Phase, text: string): void => {
@@ -147,6 +174,14 @@ export function PromptOptimizeButton({ available, directory, input, inputActions
     setVerifyWithBrowser(prev => {
       const next = !prev
       writeFlag(VERIFY_KEY, next)
+      return next
+    })
+  }
+
+  const toggleMulti = (): void => {
+    setMultiRound(prev => {
+      const next = !prev
+      writeFlag(MULTI_KEY, next)
       return next
     })
   }
@@ -179,7 +214,18 @@ export function PromptOptimizeButton({ available, directory, input, inputActions
       finish('error', '请先选择模型')
       return
     }
+    const provider = current.provider
+    const model = current.model
+    if (multiRound) {
+      await optimizeMulti(provider, model)
+    } else {
+      await optimizeSingle(provider, model)
+    }
+  }
 
+  /** 单轮优化：流式边收边写回草稿（现有行为，保留实时体验）。 */
+  const optimizeSingle = async (provider: string, model: string): Promise<void> => {
+    const draft = input.draft.trim()
     const original = input.draft
     setPhase('optimizing')
     setDetail('正在调用模型…')
@@ -192,7 +238,7 @@ export function PromptOptimizeButton({ available, directory, input, inputActions
       const response = await fetch('/api/webui-prompt-optimize', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ provider: current.provider, model: current.model, text: draft, setTarget, verifyWithBrowser, sessionId }),
+        body: JSON.stringify({ provider, model, text: draft, setTarget, verifyWithBrowser, sessionId }),
         signal: controller.signal,
       })
       if (!response.ok) throw new Error(`优化请求失败（HTTP ${String(response.status)}）`)
@@ -279,6 +325,124 @@ export function PromptOptimizeButton({ available, directory, input, inputActions
     }
   }
 
+  /** 多轮优化：每轮基于当前草稿（上一轮选中的候选）继续优化，卡片顶部固定展示最初「原话」。 */
+  const optimizeMulti = async (provider: string, model: string): Promise<void> => {
+    // 草稿自上次写回后又被手动改过 → 重置「原话」与轮次；否则迭代轮次 +1。
+    if (input.draft !== lastWrittenRef.current) {
+      sourceRef.current = input.draft
+      setSourceText(input.draft)
+      roundRef.current = 1
+      setRound(1)
+    } else {
+      roundRef.current += 1
+      setRound(roundRef.current)
+    }
+    // 优化输入 = 当前草稿（迭代基准）；原话只作卡片顶部固定参照，不参与本次优化。
+    const text = input.draft.trim()
+
+    setPhase('optimizing')
+    setDetail(`第 ${String(roundRef.current)} 轮 · 正在生成 ${String(CANDIDATE_COUNT)} 个候选…`)
+    setCandidates([])
+
+    const controller = new AbortController()
+    abortRef.current = controller
+    let reader: ReadableStreamDefaultReader<Uint8Array> | null = null
+    try {
+      const response = await fetch('/api/webui-prompt-optimize', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ provider, model, text, multi: true, count: CANDIDATE_COUNT, sessionId }),
+        signal: controller.signal,
+      })
+      if (!response.ok) throw new Error(`优化请求失败（HTTP ${String(response.status)}）`)
+      if (response.body === null) throw new Error('无响应流')
+      reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      let sawTerminal = false
+      let received = 0
+
+      const onFrame = (payload: StreamFrame): void => {
+        if (payload.type === 'candidate' && typeof payload.index === 'number' && typeof payload.text === 'string') {
+          const index = payload.index
+          const text = payload.text
+          setCandidates(prev => {
+            const next = prev.slice()
+            next[index] = text
+            return next
+          })
+          received += 1
+          setDetail(`正在生成候选 ${String(received)}/${String(CANDIDATE_COUNT)}…`)
+          return
+        }
+        if (payload.type === 'done') {
+          sawTerminal = true
+          setPhase('multi')
+          setDetail('')
+          return
+        }
+        if (payload.type === 'error') {
+          sawTerminal = true
+          throw new Error(payload.message ?? '优化失败')
+        }
+      }
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        let idx: number
+        while ((idx = buffer.indexOf('\n\n')) !== -1) {
+          const frame = buffer.slice(0, idx)
+          buffer = buffer.slice(idx + 2)
+          for (const line of frame.split('\n')) {
+            if (!line.startsWith('data: ')) continue
+            const data = line.slice(6)
+            if (data === '') continue
+            let payload: unknown
+            try { payload = JSON.parse(data) } catch { continue }
+            onFrame(payload as StreamFrame)
+          }
+        }
+      }
+      buffer += decoder.decode()
+
+      if (!sawTerminal) {
+        if (controller.signal.aborted) throw new Error('stopped')
+        throw new Error('响应流意外结束')
+      }
+    } catch (error) {
+      if (controller.signal.aborted) {
+        finish('error', '已停止优化')
+      } else {
+        finish('error', `失败：${error instanceof Error ? error.message : String(error)}`)
+      }
+    } finally {
+      if (abortRef.current === controller) abortRef.current = null
+      if (reader !== null) reader.cancel().catch(() => {})
+    }
+  }
+
+  /** 点选某个候选：写回草稿并滑出关闭卡片。 */
+  const pickCandidate = (text: string): void => {
+    inputActions.setDraft(text)
+    lastWrittenRef.current = text
+    closeMultiCard()
+  }
+
+  /** 滑出并关闭多轮候选卡片（播完动画再卸载）。 */
+  const closeMultiCard = (): void => {
+    if (closing) return
+    setClosing(true)
+    window.setTimeout(() => {
+      setClosing(false)
+      // 仅在仍处于候选展示态时收起；若滑出期间用户又触发了优化，不打断新流程。
+      setPhase(prev => prev === 'multi' ? 'idle' : prev)
+      setCandidates([])
+      setDetail('')
+    }, 150)
+  }
+
   const panelVisible = hovered || phase !== 'idle'
   const statusClass = phase === 'optimizing' ? css.statusOptimizing
     : phase === 'done' ? css.statusDone
@@ -302,7 +466,7 @@ export function PromptOptimizeButton({ available, directory, input, inputActions
         {busy ? <IconLoadingOutline16 className={css.busy} /> : <IconSparkle16 />}
       </button>
 
-      {panelVisible && (
+      {panelVisible && phase !== 'multi' && (
         <div
           className={`${css.panel} dsh-glass-anim-in`}
           role="group"
@@ -313,6 +477,19 @@ export function PromptOptimizeButton({ available, directory, input, inputActions
           <div className={css.panelTitle}>优化提示词</div>
           <div className={css.caption}>用 {modelName} 优化当前草稿</div>
           <div className={css.options}>
+            <div className={css.option}>
+              <span className={css.optionLabel}>多轮优化</span>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={multiRound}
+                aria-label="多轮优化"
+                className={clsx(css.switch, multiRound && css.switchOn)}
+                onClick={toggleMulti}
+              >
+                <span className={clsx(css.knob, multiRound && css.knobOn)} />
+              </button>
+            </div>
             <div className={css.option}>
               <span className={css.optionLabel}>设定目标</span>
               <button
@@ -342,7 +519,7 @@ export function PromptOptimizeButton({ available, directory, input, inputActions
           </div>
           <div className={clsx(css.status, statusClass)}>
             {phase === 'optimizing' && <IconLoadingOutline16 className={css.busy} />}
-            <span>{phase === 'idle' ? '点击用当前模型优化' : detail}</span>
+            <span>{phase === 'idle' ? (multiRound ? '点击生成多个候选' : '点击用当前模型优化') : detail}</span>
           </div>
           {busy && (
             <button type="button" className={css.stop} onClick={stop}>
@@ -350,6 +527,43 @@ export function PromptOptimizeButton({ available, directory, input, inputActions
             </button>
           )}
         </div>
+      )}
+
+      {phase === 'multi' && createPortal(
+        <div
+          className={clsx(css.panel, css.panelMulti, closing ? css.panelClosing : 'dsh-glass-anim-in')}
+          role="group"
+          aria-label="多轮优化候选"
+        >
+          <div className={css.multiBody}>
+            <div className={css.panelTitle}>多轮优化候选 · 第 {round} 轮</div>
+            <div className={css.caption}>点选任意候选即可写入对话框，再点优化进入下一轮；顶部「原话」始终保留你最初写的内容。</div>
+            <div className={css.sourceBlock}>
+              <div className={css.sourceLabel}>原话</div>
+              <div className={css.sourceText}>{sourceText}</div>
+            </div>
+            <div className={css.candidates}>
+              {candidates.map((text, index) => text.trim() === '' ? null : (
+                <button
+                  key={index}
+                  type="button"
+                  className={css.candidate}
+                  onClick={() => { pickCandidate(text) }}
+                >
+                  <span className={css.candidateHead}>
+                    <span className={css.candidateLabel}>{CANDIDATE_LABELS[index] ?? `候选 ${String(index + 1)}`}</span>
+                    {index === 0 && <span className={css.recommendBadge}>推荐</span>}
+                  </span>
+                  <span className={css.candidateText}>{text}</span>
+                </button>
+              ))}
+            </div>
+            <button type="button" className={css.closeCard} onClick={closeMultiCard}>
+              关闭
+            </button>
+          </div>
+        </div>,
+        document.body,
       )}
     </div>
   )

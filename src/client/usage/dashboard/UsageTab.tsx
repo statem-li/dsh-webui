@@ -107,7 +107,7 @@ export function UsageTab({ range, rangeLabel, refreshTick }: UsageTabProps): JSX
     const dateStr = `${monthPrefix}-${String(i + 1).padStart(2, '0')}`
     const hit = monthDays.find(d => d.date === dateStr)
     return {
-      key: dateStr, label: dateStr, value: hit?.tokens ?? 0,
+      key: dateStr, label: dateStr, short: String(i + 1), value: hit?.tokens ?? 0,
       input: hit?.inputTokens ?? 0,
       output: hit?.outputTokens ?? 0,
       cache: hit ? (hit.cacheReadTokens ?? 0) + (hit.cacheWriteTokens ?? 0) : 0,
@@ -120,7 +120,7 @@ export function UsageTab({ range, rangeLabel, refreshTick }: UsageTabProps): JSX
     const days = usage.filter(d => d.date.startsWith(key))
     const sum = sumTokens(days)
     return {
-      key, label: `${i + 1} 月`, value: sum.total,
+      key, label: `${i + 1} 月`, short: `${i + 1}月`, value: sum.total,
       input: sum.input,
       output: sum.output,
       cache: sum.cache,
@@ -134,11 +134,11 @@ export function UsageTab({ range, rangeLabel, refreshTick }: UsageTabProps): JSX
       <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 8, alignItems: 'start' }}>
         <div style={rowCard}>
           <CardHead name={`${year} 年 ${month} 月热力`} meta="点击格子看当日模型明细" />
-          <Heatmap cells={monthCells} onSelect={c => setSelectedDay(c.label)} />
+          <Heatmap cells={monthCells} onSelect={c => setSelectedDay(c.label)} cellText="both" />
         </div>
         <div style={rowCard}>
           <CardHead name={`${year} 年度热力`} meta="1-6 月 / 7-12 月" />
-          <Heatmap cells={yearCells} rows={2} />
+          <Heatmap cells={yearCells} rows={2} cellText="both" />
         </div>
       </div>
 

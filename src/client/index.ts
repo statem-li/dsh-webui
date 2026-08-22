@@ -43,6 +43,8 @@ import { applyApprovalNotifier } from './approval-notify'
 import {
   BetterAssistantNodeView, DshCodeBlockNode, DshImageNode, DshInlineCodeNode, DshLinkNode,
 } from './markdown/renderer'
+import { EChartsDiagram } from './markdown/charts'
+import { MermaidDiagram } from './markdown/mermaid'
 import { ToolGroupNodeView } from './tool-summary/ToolGroupNodeView'
 import { mountActivityDrawer } from './tool-summary/activity-drawer'
 import { injectStyles as injectToolSummaryStyles } from './tool-summary/styles'
@@ -73,6 +75,8 @@ import { registerGlassSetting } from './glass-row'
 import { applyAutomation } from './automation'
 // 会话切换柔和过渡：内容区淡入浮入 + 侧边栏行选中底色平滑渐变。
 import { applySessionSwitchMotion } from './session-motion'
+// 会话置顶：置顶排序 + 行内归档按钮（替代三个点）+ 右键菜单（置顶/重命名/分叉/归档）。
+import { applySessionPin } from './session-pin'
 const CUSTOM_COMPONENT_SCOPE = 'dsh-better-markdown'
 
 export const inject = ['slots', 'settingsScope', 'connection', 'conversationEvents', 'locale', 'remote', 'sessions', 'workspaces', 'inputTriggers', 'layout', 'theme']
@@ -141,6 +145,8 @@ export function apply(ctx: ClientContext): void {
       image: DshImageNode,
       inline_code: DshInlineCodeNode,
       link: DshLinkNode,
+      mermaid: MermaidDiagram,
+      echarts: EChartsDiagram,
     })
     return () => { removeCustomComponents(CUSTOM_COMPONENT_SCOPE) }
   }, 'webui: markstream component policy')
@@ -233,4 +239,7 @@ export function apply(ctx: ClientContext): void {
 
   // ---- 会话切换柔和过渡：内容区淡入浮入 + 侧边栏行底色平滑 ----------------
   ctx.effect(() => applySessionSwitchMotion(), 'webui: session switch motion')
+
+  // ---- 会话置顶：置顶排序 + 行内归档按钮 + 右键菜单 -------------------------
+  applySessionPin(ctx)
 }

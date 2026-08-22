@@ -66,6 +66,16 @@ export const zh = {
   selectAll: '全选',
   selectedCount: '已选 {n} 项',
   deleteSelectedConfirm: '确定删除选中的 {n} 条记忆？此操作不可恢复。',
+  tabRevisions: '修订',
+  consolidate: '整理',
+  consolidateHint: '用模型合并重复、精炼重写、删除低价值、提升长期（Memory Dream）',
+  consolidating: '整理中…',
+  revisionsEmpty: '还没有整理快照；每天自动整理或手动整理后生成',
+  revManual: '手动',
+  revDaily: '每日',
+  revEntries: '{n} 条',
+  rollback: '回滚',
+  rollbackConfirm: '回滚到该快照（{time}，{id}）？当前全部记忆将被替换为该快照内容，不可撤销。',
 } satisfies Record<string, string>
 
 /** dsh-memory locale key union. */
@@ -140,6 +150,16 @@ export const en = {
   selectAll: 'All',
   selectedCount: '{n} selected',
   deleteSelectedConfirm: 'Delete {n} selected memories? This cannot be undone.',
+  tabRevisions: 'Revisions',
+  consolidate: 'Consolidate',
+  consolidateHint: 'Merge duplicates, rewrite, prune low-value, promote long-term with the model (Memory Dream)',
+  consolidating: 'Consolidating…',
+  revisionsEmpty: 'No snapshots yet; created after daily or manual consolidation',
+  revManual: 'Manual',
+  revDaily: 'Daily',
+  revEntries: '{n} entries',
+  rollback: 'Rollback',
+  rollbackConfirm: 'Roll back to this snapshot ({time}, {id})? All memories will be replaced by that snapshot — this cannot be undone.',
 } satisfies Record<MemoryLocaleKey, string>
 
 /** 轻量翻译函数类型（面板/入口组件共用）。 */

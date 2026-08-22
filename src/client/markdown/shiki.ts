@@ -1,4 +1,4 @@
-import { createBundledHighlighter } from 'shiki/core'
+import { createBundledHighlighter, createSingletonShorthands } from 'shiki/core'
 import { createJavaScriptRegexEngine } from 'shiki/engine/javascript'
 
 const languages = {
@@ -45,8 +45,14 @@ const themes = {
 
 export const SHIKI_LANGUAGES = Object.freeze(Object.keys(languages))
 
+/** 已打包语言 key 的联合类型（与 createBundledHighlighter 推断一致）。 */
+export type ShikiLangKey = keyof typeof languages
+
 export const createHighlighter = createBundledHighlighter({
   langs: languages,
   themes,
   engine: () => createJavaScriptRegexEngine(),
 })
+
+/** 单例 shorthand bundle：自动按需加载语言/主题；codeToTokens / codeToHtml 为异步。 */
+export const highlighter = createSingletonShorthands(createHighlighter)

@@ -213,6 +213,7 @@ interface FunLine {
 }
 
 const FUN_LINES: FunLine[] = [
+  // 开心话术（13 条）
   { icon: 'sparkle', text: '今天也是充满可能的一天！' },
   { icon: 'sparkle', text: '你解决问题的样子真的很酷' },
   { icon: 'sparkle', text: '每一行代码都在靠近目标' },
@@ -226,22 +227,109 @@ const FUN_LINES: FunLine[] = [
   { icon: 'sparkle', text: '小步前进也是一种抵达' },
   { icon: 'sparkle', text: '你的努力，时间看得见' },
   { icon: 'sparkle', text: '笑一笑，bug 都会少一点' },
+  // AI 名词小知识（100+ 条）
   { icon: 'bulb', text: 'LLM 大语言模型：通过海量文本训练、能理解并生成自然语言的 AI 模型' },
-  { icon: 'bulb', text: 'Token 词元：模型处理文本的最小单位，一个汉字通常是 1~2 个 token' },
-  { icon: 'bulb', text: 'Transformer：2017 年提出的神经网络架构，注意力机制让它成为现代 AI 的基石' },
-  { icon: 'bulb', text: 'Prompt 提示词：你发给 AI 的指令——写得越清晰，回答越靠谱' },
-  { icon: 'bulb', text: '微调 Fine-tuning：用特定数据继续训练模型，让它更擅长某个领域' },
-  { icon: 'bulb', text: 'RAG 检索增强生成：先查资料再回答，让 AI 的答案有据可依' },
-  { icon: 'bulb', text: '幻觉 Hallucination：AI 一本正经编造不存在的事实——重要信息记得核实' },
-  { icon: 'bulb', text: '多模态 Multimodal：能同时理解文字、图片、音频等多种信息的模型' },
+  { icon: 'bulb', text: 'Token 词元：模型处理文本的最小单位，一个汉字通常是 1~2 个' },
+  { icon: 'bulb', text: 'Transformer：2017 年提出的注意力架构，现代大模型的基石' },
+  { icon: 'bulb', text: 'Prompt 提示词：你发给 AI 的指令，写得越清晰回答越靠谱' },
+  { icon: 'bulb', text: '微调 Fine-tuning：用特定数据继续训练，让它更擅长某个领域' },
+  { icon: 'bulb', text: 'RAG 检索增强生成：先查资料再回答，让答案有据可依' },
+  { icon: 'bulb', text: '幻觉 Hallucination：AI 一本正经编造不存在的事实，记得核实' },
+  { icon: 'bulb', text: '多模态 Multimodal：能同时理解文字、图片、音频等信息的模型' },
   { icon: 'bulb', text: 'Agent 智能体：能自主规划步骤、调用工具、完成任务的 AI' },
-  { icon: 'bulb', text: '上下文窗口：模型一次能「看到」的最大文本长度，超出的部分它就忘了' },
-  { icon: 'bulb', text: '温度 Temperature：控制回答随机性的参数——越低越严谨，越高越发散' },
-  { icon: 'bulb', text: 'Embedding 向量嵌入：把文字变成数字向量，让计算机能计算语义相似度' },
-  { icon: 'bulb', text: '思维链 Chain-of-Thought：让 AI 一步步推理，复杂问题的正确率明显提升' },
-  { icon: 'bulb', text: '蒸馏 Distillation：用大模型的输出教出小模型——更快更便宜，能力保留大半' },
-  { icon: 'bulb', text: '对齐 Alignment：让 AI 行为符合人类意图与价值观的研究方向' },
-  { icon: 'bulb', text: 'RLHF：基于人类反馈的强化学习，ChatGPT 变好聊的关键技术' },
+  { icon: 'bulb', text: '上下文窗口 Context Window：模型一次能「看到」的最大文本长度' },
+  { icon: 'bulb', text: '温度 Temperature：控制回答随机性的参数，越低越严谨' },
+  { icon: 'bulb', text: 'Embedding 向量嵌入：把文字变成数字向量，可计算语义相似度' },
+  { icon: 'bulb', text: '思维链 Chain-of-Thought：让 AI 一步步推理，复杂题正确率大增' },
+  { icon: 'bulb', text: '蒸馏 Distillation：用大模型教小模型，更快更便宜' },
+  { icon: 'bulb', text: '对齐 Alignment：让 AI 行为符合人类意图与价值观' },
+  { icon: 'bulb', text: 'RLHF 人类反馈强化学习：用人类偏好训练，回答更合意' },
+  { icon: 'bulb', text: '机器学习 ML：让计算机从数据中自动学规律，无需显式编程' },
+  { icon: 'bulb', text: '深度学习 DL：用多层神经网络自动抽取特征的分支' },
+  { icon: 'bulb', text: '神经网络：模拟人脑神经元连接的计算模型，深度学习的基石' },
+  { icon: 'bulb', text: '参数 Parameter：模型内部可学习的数值，决定「记忆」与能力' },
+  { icon: 'bulb', text: '权重 Weight：神经网络连接的强度数值，训练时不断被调整' },
+  { icon: 'bulb', text: '训练 Training：用海量数据反复调整参数、让模型学会任务' },
+  { icon: 'bulb', text: '推理 Inference：训练好的模型对输入计算并输出结果' },
+  { icon: 'bulb', text: '数据集 Dataset：用于训练与评估模型的样本集合' },
+  { icon: 'bulb', text: '语料库 Corpus：大规模文本集合，大模型训练的主要原料' },
+  { icon: 'bulb', text: '注意力机制 Attention：让模型聚焦输入中关键部分的技术' },
+  { icon: 'bulb', text: '自注意力 Self-Attention：让每个词关联上下文中的所有词' },
+  { icon: 'bulb', text: '多头注意力 Multi-Head：并行多组注意力，捕捉不同关系' },
+  { icon: 'bulb', text: '编码器 Encoder：把输入编码成向量表示的模块' },
+  { icon: 'bulb', text: '解码器 Decoder：根据编码信息逐字生成的模块' },
+  { icon: 'bulb', text: '位置编码 Positional Encoding：让模型感知词序的方法' },
+  { icon: 'bulb', text: '残差连接 Residual：跨层直连通道，缓解深层网络退化' },
+  { icon: 'bulb', text: '归一化 Normalization：稳定数值分布、加速训练的技巧' },
+  { icon: 'bulb', text: '激活函数 Activation：引入非线性，让网络能学复杂关系' },
+  { icon: 'bulb', text: '预训练 Pre-training：在大规模语料上无监督学习通用知识' },
+  { icon: 'bulb', text: '监督微调 SFT：用问答范例教模型按指令作答' },
+  { icon: 'bulb', text: '损失函数 Loss：衡量预测与目标的差距，指导参数更新' },
+  { icon: 'bulb', text: '梯度下降 Gradient Descent：沿梯度方向迭代减小误差' },
+  { icon: 'bulb', text: '学习率 Learning Rate：每步参数更新的步幅' },
+  { icon: 'bulb', text: '批大小 Batch Size：一次训练喂给模型的样本数' },
+  { icon: 'bulb', text: '轮次 Epoch：完整过一遍训练数据的次数' },
+  { icon: 'bulb', text: '过拟合 Overfitting：模型死记训练数据、泛化能力差' },
+  { icon: 'bulb', text: '欠拟合 Underfitting：模型没学到足够规律，训练集都做不好' },
+  { icon: 'bulb', text: '正则化 Regularization：抑制过拟合的一系列手段' },
+  { icon: 'bulb', text: '早停 Early Stopping：验证集不再提升就提前结束训练' },
+  { icon: 'bulb', text: '量化 Quantization：压缩数值精度，减小体积加速推理' },
+  { icon: 'bulb', text: '剪枝 Pruning：移除冗余参数，给模型瘦身' },
+  { icon: 'bulb', text: '迁移学习 Transfer Learning：把已学知识迁移到新任务' },
+  { icon: 'bulb', text: '分词器 Tokenizer：把文本切分成词元序列的工具' },
+  { icon: 'bulb', text: '生成 Generation：模型逐字预测下一个词元的过程' },
+  { icon: 'bulb', text: '自回归 Autoregressive：用已生成的词预测下一个词' },
+  { icon: 'bulb', text: '采样 Sampling：按概率分布随机选择下一个词' },
+  { icon: 'bulb', text: 'Top-p 核采样：只在累计概率达 p 的候选词中采样' },
+  { icon: 'bulb', text: 'Top-k 采样：只在概率最高的 k 个词中采样' },
+  { icon: 'bulb', text: '贪心解码 Greedy：每步都选概率最高的词，稳定但易重复' },
+  { icon: 'bulb', text: '束搜索 Beam Search：保留多条候选路径，兼顾质量与多样' },
+  { icon: 'bulb', text: '停止词 Stop Token：标记生成结束的特殊词元' },
+  { icon: 'bulb', text: '长度惩罚 Length Penalty：调节输出长短倾向的参数' },
+  { icon: 'bulb', text: '推理 Reasoning：模型推导、计算、多步思考的能力' },
+  { icon: 'bulb', text: '提示工程 Prompt Engineering：设计输入让模型表现更好' },
+  { icon: 'bulb', text: '少样本提示 Few-shot：给几个范例，模型照着格式做' },
+  { icon: 'bulb', text: '零样本 Zero-shot：不给范例，直接提问' },
+  { icon: 'bulb', text: '上下文学习 In-Context Learning：靠提示词临时学会任务' },
+  { icon: 'bulb', text: '自一致性 Self-Consistency：多次采样投票，取多数答案' },
+  { icon: 'bulb', text: '思维树 Tree-of-Thoughts：多分支探索推理路径并回溯' },
+  { icon: 'bulb', text: '规划 Planning：把复杂任务拆解成可执行步骤' },
+  { icon: 'bulb', text: '向量数据库 Vector DB：存储并检索高维向量的数据库' },
+  { icon: 'bulb', text: '相似度检索 Similarity Search：按向量距离找最相关内容' },
+  { icon: 'bulb', text: '余弦相似度 Cosine：衡量两向量方向接近程度的指标' },
+  { icon: 'bulb', text: '知识库 Knowledge Base：供检索引用的结构化资料集合' },
+  { icon: 'bulb', text: '分块 Chunking：把长文档切成便于检索的小段' },
+  { icon: 'bulb', text: '重排序 Rerank：对召回结果二次排序，提升相关性' },
+  { icon: 'bulb', text: '语义搜索 Semantic Search：按含义而非关键词匹配' },
+  { icon: 'bulb', text: '混合检索 Hybrid：关键词 + 向量两种方式结合' },
+  { icon: 'bulb', text: '工具调用 Function Calling：模型按需调用外部函数或 API' },
+  { icon: 'bulb', text: '多智能体 Multi-Agent：多个智能体分工协作完成目标' },
+  { icon: 'bulb', text: '记忆 Memory：智能体跨轮次保留上下文与事实' },
+  { icon: 'bulb', text: '反思 Reflection：让智能体自我审查并改进输出' },
+  { icon: 'bulb', text: '自主性 Autonomy：智能体不依赖人逐步指挥的能力' },
+  { icon: 'bulb', text: '视觉语言模型 VLM：能看图识图、图文推理的模型' },
+  { icon: 'bulb', text: '文生图 Text-to-Image：根据文字描述生成图片' },
+  { icon: 'bulb', text: '扩散模型 Diffusion：逐步去噪生成图像的主流方法' },
+  { icon: 'bulb', text: '文生视频 Text-to-Video：根据文字生成视频' },
+  { icon: 'bulb', text: '语音识别 ASR：把语音转成文字' },
+  { icon: 'bulb', text: '语音合成 TTS：把文字转成语音' },
+  { icon: 'bulb', text: 'OCR 文字识别：从图片中提取文字' },
+  { icon: 'bulb', text: '基准 Benchmark：标准化测试集，用来衡量模型能力' },
+  { icon: 'bulb', text: '困惑度 Perplexity：衡量语言模型预测能力的指标' },
+  { icon: 'bulb', text: 'BLEU：机器翻译质量的自动评分指标' },
+  { icon: 'bulb', text: 'ROUGE：摘要质量的自动评分指标' },
+  { icon: 'bulb', text: '安全性 Safety：防止模型输出有害、违规内容' },
+  { icon: 'bulb', text: '越狱 Jailbreak：用诱导话术突破模型安全限制' },
+  { icon: 'bulb', text: '红队测试 Red Teaming：主动攻击模型找漏洞' },
+  { icon: 'bulb', text: '偏见 Bias：模型放大训练数据中的刻板印象' },
+  { icon: 'bulb', text: '可解释性 Interpretability：理解模型为何如此决策' },
+  { icon: 'bulb', text: '数据污染 Data Contamination：测试题混进训练数据、分数虚高' },
+  { icon: 'bulb', text: '小模型 SLM：参数少、可本地运行的高效模型' },
+  { icon: 'bulb', text: '开源模型 Open-source：权重公开，可自由使用与微调' },
+  { icon: 'bulb', text: '流式输出 Streaming：边生成边返回，体验更顺滑' },
+  { icon: 'bulb', text: '系统提示词 System Prompt：设定角色与规则的顶层指令' },
+  { icon: 'bulb', text: '多轮对话 Multi-turn：带历史上下文的连续问答' },
+  { icon: 'bulb', text: '缓存 Cache：缓存重复请求，省钱又提速' },
 ]
 
 /** 轮播间隔（ms）。 */
@@ -406,7 +494,8 @@ const wrapStyle = (dragging: boolean, pos: PillPos | null, scale: number, fontSt
   paddingBottom: 'calc(8px * var(--dps))',
 } as unknown as CSSProperties)
 
-/** 胶囊外壳：透明背景 + 细描边外圈（融入页面），宽度受控 + 过渡。 */
+/** 胶囊外壳：透明背景、无外圈线条（融入页面，hover 光影由样式表
+ * .dsh-done-pill-shell 提供），宽度受控 + 过渡。 */
 const pillShellStyle = (unread: number, width: number | null): CSSProperties => ({
   display: 'flex',
   alignItems: 'stretch',
@@ -414,7 +503,7 @@ const pillShellStyle = (unread: number, width: number | null): CSSProperties => 
   maxWidth: 'min(720px, calc(100vw - 48px))',
   ...(width !== null ? { width } : {}),
   borderRadius: 'calc(15px * var(--dps))',
-  border: '1px solid rgba(255,255,255,.16)',
+  border: 'none',
   background: 'transparent',
   color: unread > 0 ? '#ffffff' : 'rgba(255,255,255,.74)',
   fontSize: 'calc(12px * var(--dps))',
@@ -1313,13 +1402,12 @@ export function DonePill(props: DonePillProps): JSX.Element | null {
   // 平时（无提醒）：随机轮播开心话术 / AI 名词小知识。
   const funLine = FUN_LINES[funIdx % FUN_LINES.length] ?? FUN_LINES[0]
 
-  // 优先级：未读通知 > 最近完成时间/平时轮播（图标与文字分开渲染）。
-  // 健康提醒不再挤占主文案——作为独立黄色徽章常驻最左侧，与通知共存。
+  // 优先级：未读通知 > 平时轮播（开心话术 / AI 名词小知识）。
+  // 已读（悬停面板即全部已读）后不再停留「最近完成时间」，直接回到知识轮播。
+  // 健康提醒不挤占主文案——作为独立黄色徽章常驻最左侧，与通知共存。
   const pillLabel = unreadCount > 0 && latest !== undefined
     ? `${unreadCount} 个对话完成 · ${truncate(latestLabel, 56)}`
-    : latest !== undefined
-      ? `对话完成 · 最近 ${formatTime(latest.endedAt)}`
-      : `${funLine.icon} ${funLine.text}`
+    : funLine.text
 
   // 面板定位：与胶囊**中心对齐**（整数像素），并做视口边界保护——
   // 面板左/右缘都不超出视口，胶囊贴边时自动向内收。
@@ -1336,8 +1424,8 @@ export function DonePill(props: DonePillProps): JSX.Element | null {
   const doneShift = centeredPanelLeft(DONE_PANEL_W)
   const runShift = centeredPanelLeft(RUN_PANEL_W)
 
-  // 主文案显示上限：最多 20 字（超出省略号截断）。
-  const displayText = truncate(pillLabel, 20)
+  // 主文案：完整展示，不再截断（知识/话术全文）；超出由外壳 maxWidth + 省略号兜底。
+  const displayText = pillLabel
 
   // 宽度平滑跟随：每次渲染后对**子块宽度求和**（子块均不收缩，求和不受
   // shell 自身受控宽度污染，扩/缩双向都准确），交给 CSS transition 过渡。
@@ -1372,7 +1460,7 @@ export function DonePill(props: DonePillProps): JSX.Element | null {
       onMouseEnter={() => { if (dragRef.current === null) setHovered(true) }}
       onMouseLeave={() => { setHovered(false); setHoveredRunning(false); setFileHovered(false) }}
     >
-      <div ref={shellRef} style={pillShellStyle(unreadCount, shellWidth)}>
+      <div ref={shellRef} className="dsh-done-pill-shell" style={pillShellStyle(unreadCount, shellWidth)}>
         {/* 健康提醒徽章：设定时段内常驻显示（黄色），与完成通知共存不挤占 */}
         {reminderLabel !== null && (
           <>

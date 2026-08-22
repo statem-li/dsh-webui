@@ -141,6 +141,21 @@ const SHEET = `
   pointer-events:none;white-space:nowrap;z-index:5;
 }
 
+/* hover 范围提示框：像 DevTools 一样的半透明高亮 + 左上角 tag 标签 */
+.dsh-browser-drawer__pickbox{
+  position:absolute;z-index:4;pointer-events:none;
+  border:1px solid var(--dsw-alias-state-business-primary,#4a9eff);
+  background:rgba(74,158,255,.14);
+  box-shadow:0 0 0 1px rgba(0,0,0,.35);
+}
+.dsh-browser-drawer__pickbox-tag{
+  position:absolute;left:-1px;top:-1px;
+  background:var(--dsw-alias-state-business-primary,#4a9eff);
+  color:#fff;font-size:11px;line-height:18px;padding:0 6px;
+  border-radius:0 0 6px 0;white-space:nowrap;max-width:220px;
+  overflow:hidden;text-overflow:ellipsis;pointer-events:none;
+}
+
 /* ── 快捷标签网站栏（chips + 管理面板，对齐官方控件规格）── */
 .dsh-browser-sites{flex:none;border-bottom:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.08))}
 .dsh-browser-sites__row{
@@ -220,6 +235,22 @@ const SHEET = `
 .dsh-browser-drawer__frame img{max-width:100%;max-height:100%;object-fit:contain;display:block;cursor:default;outline:none;user-select:none;-webkit-user-drag:none}
 .dsh-browser-drawer__empty{
   color:var(--dsw-alias-label-tertiary,#888);font-size:13px;
+}
+
+/* 画面加载中：星环滚动 + 正在加载 */
+.dsh-browser-loading{
+  position:absolute;inset:0;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:14px;pointer-events:none;
+}
+.dsh-browser-loading__orbit{flex:none}
+.dsh-browser-loading__ring{
+  transform-box:fill-box;transform-origin:center;
+  animation:dsh-orbit-roll 2.4s linear infinite;
+}
+@keyframes dsh-orbit-roll{to{transform:rotate(360deg)}}
+.dsh-browser-loading__sat{filter:drop-shadow(0 0 3px rgba(124,184,255,.9))}
+.dsh-browser-loading__text{
+  color:var(--dsw-alias-label-secondary,#bbb);font-size:12px;letter-spacing:.5px;
 }
 .dsh-browser-drawer__timeline{
   /* 底部悬浮条：不占画面布局（原生视图高度让位 32px/展开 45%）。

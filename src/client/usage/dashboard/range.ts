@@ -5,7 +5,7 @@
  * 日期一律 YYYY-MM-DD 字符串（与 UsageDay.date 同构），字典序即时间序。
  */
 
-import type { UsageDay } from './aggregate'
+import type { UsageDay, UsageHour } from './aggregate'
 import type { SeriesPoint } from './charts/AreaChart'
 
 /** 范围预设。 */
@@ -88,10 +88,11 @@ export function filterDays(days: UsageDay[], r: DateRange): UsageDay[] {
   return days.filter(d => d.date >= r.start && d.date <= r.end)
 }
 
-/** 展示粒度：≤31 天按日、≤120 天按周、更长按月。 */
-export type Grain = 'day' | 'week' | 'month'
+/** 展示粒度：≤2 天按小时、≤31 天按日、≤120 天按周、更长按月。 */
+export type Grain = 'hour' | 'day' | 'week' | 'month'
 export function pickGrain(r: DateRange): Grain {
   const n = rangeDays(r)
+  if (n <= 2) return 'hour'
   if (n <= 31) return 'day'
   if (n <= 120) return 'week'
   return 'month'
@@ -123,6 +124,37 @@ export function aggregateSeries(days: UsageDay[], grain: Grain): SeriesPoint[] {
         cache += (d.cacheReadTokens ?? 0) + (d.cacheWriteTokens ?? 0)
       }
       return { label, input, output, cache }
+    })
+}
+
+/** 小时标签：YYYY-MM-DD-HH → 单日 "HH:00" / 跨日 "MM-DD HH:00"。 */
+function hourLabel(hour: string, multiDay: boolean): string {
+  const hh = hour.slice(11, 13)
+  const mmdd = hour.slice(5, 10)
+  return multiDay ? `${mmdd} ${hh}:00` : `${hh}:00`
+}
+
+/** 按小时聚合（短范围趋势）：过滤区间内的小时数据。 */
+export function aggregateHourSeries(hours: UsageHour[], r: DateRange): SeriesPoint[] {
+  const multiDay = r.start !== r.end
+  const buckets = new Map<string, UsageHour[]>()
+  for (const h of hours) {
+    const day = h.hour.slice(0, 10)
+    if (day < r.start || day > r.end) continue
+    const arr = buckets.get(h.hour)
+    if (arr) arr.push(h)
+    else buckets.set(h.hour, [h])
+  }
+  return [...buckets.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([hour, group]) => {
+      let input = 0, output = 0, cache = 0
+      for (const h of group) {
+        input += h.inputTokens ?? 0
+        output += h.outputTokens ?? 0
+        cache += (h.cacheReadTokens ?? 0) + (h.cacheWriteTokens ?? 0)
+      }
+      return { label: hourLabel(hour, multiDay), input, output, cache }
     })
 }
 

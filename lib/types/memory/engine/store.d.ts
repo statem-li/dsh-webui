@@ -3,7 +3,7 @@
  * 各层 md 产物。所有写入走「tmp + rename」原子写，防止半写损坏。
  * 数据根：${DSH_HOME:-~/.dsh}/memories/dsh-memory/（与 memory-evolve 遗留数据同根目录、不同前缀，互不读写）。
  */
-import type { ChangeRecord, MemoryEntry, ProjectMeta, StoreState } from '../types.js';
+import type { ChangeRecord, MemoryEntry, ProjectMeta, RevisionMeta, StoreState } from '../types.js';
 /** 数据根目录。 */
 export declare function memoryHome(): string;
 /** workspace 路径 → 项目目录 hash（sha1 前 12 位）。 */
@@ -113,6 +113,24 @@ export declare class MemoryStore {
         path: string;
         title: string;
     }>>;
+    revisionsDir(): string;
+    /**
+     * 写入一个修订快照（整理前调用），返回修订 id。
+     * 保存 meta + 全量 entries，回滚时直接整体恢复。
+     */
+    writeRevision(input: {
+        entries: MemoryEntry[];
+        scope: string;
+        trigger: 'daily' | 'manual';
+    }): Promise<string>;
+    /** 列出修订版本（新 → 旧）。 */
+    listRevisions(): Promise<RevisionMeta[]>;
+    /** 读修订快照的全部条目；不存在返回 null。 */
+    readRevisionEntries(id: string): Promise<MemoryEntry[] | null>;
+    /** 回滚到某修订（整体恢复 entries，走写串行队列）。返回是否成功。 */
+    restoreRevision(id: string): Promise<boolean>;
+    /** 滚动清理：只保留最近 keep 个修订。 */
+    pruneRevisions(keep: number): Promise<void>;
     /** 写任意 md 产物（原子）。 */
     writeArtifact(path: string, content: string): Promise<void>;
     /** 写项目层产物。 */

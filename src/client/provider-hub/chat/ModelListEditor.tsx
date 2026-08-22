@@ -42,6 +42,13 @@ export const chatCopy = {
   contextWindow: '上下文窗口',
   maxTokens: '最大输出 token',
   modelAdvanced: '容量',
+  supportsImage: '支持识图',
+  supportsImageHint: '聊天中发送的图片直接交给该模型识别（多模态），不再降级为辅助视觉文字描述。对应模型配置 input: [text, image]。',
+  supportsImageGen: '支持生图',
+  supportsImageGenHint: '声明该模型可生成图片，生图候选列表将标注「生图」。',
+  supportsVideoGen: '支持生视频',
+  supportsVideoGenHint: '声明该模型可生成视频，生视频候选列表将标注「生视频」。',
+  capabilityHint: '模型能力声明：识图走模型配置 input 字段；生图/生视频存入 model-router.json 的 capabilities（供生成候选标注）。',
   addModel: '添加模型',
   removeModel: '删除模型',
   modelIdRequired: '模型 ID 不能为空。',
@@ -119,6 +126,17 @@ function textOf(model: ModelDraft, key: string): string {
 function numberOf(model: ModelDraft, key: string): number | undefined {
   const value = model[key]
   return typeof value === 'number' ? value : undefined
+}
+
+/** 模型声明的 input 模态数组；未声明（继承路由默认 text）时为 `undefined`。 */
+function inputOf(model: ModelDraft): string[] | undefined {
+  const input = model['input']
+  return Array.isArray(input) ? input.filter((x): x is string => typeof x === 'string') : undefined
+}
+
+/** 该模型是否声明支持图像输入（识图）。 */
+function supportsImage(model: ModelDraft): boolean {
+  return inputOf(model)?.includes('image') === true
 }
 
 /** 接受的后缀拼写：十进制数 + 可选 K/M 后缀。 */
@@ -316,6 +334,98 @@ function IconTrash(): ReactNode {
   )
 }
 
+/**
+ * 官方风格开关（toggle/switch），替代 checkbox。iOS 风格——明显的轨道底色
+ * 变化 + 圆钮滑动：关闭态 = bg-module-platform 灰底 + 白钮；
+ * 开启态 = state-business-primary 蓝底 + 白钮（见 dsh-ui-style 技能）。
+ * 不要把关闭态做成透明+小灰点——视觉上像未勾选的 radio，违反用户的「开关不是勾选」反馈。
+ */
+function ToggleSwitch({ checked, disabled, ariaLabel, onChange }: {
+  checked: boolean
+  disabled?: boolean
+  ariaLabel: string
+  onChange: (on: boolean) => void
+}): ReactNode {
+  const W = 40
+  const H = 22
+  const KNOB = 18
+  const track: CSSProperties = {
+    position: 'relative',
+    boxSizing: 'border-box',
+    width: W,
+    height: H,
+    padding: 0,
+    borderRadius: H / 2,
+    background: checked
+      ? 'var(--dsw-alias-state-business-primary, #4176e6)'
+      : 'var(--dsw-alias-bg-module-platform, rgba(0,0,0,0.08))',
+    cursor: disabled ? 'default' : 'pointer',
+    opacity: disabled ? 0.5 : 1,
+    transition: 'background 160ms ease',
+    flex: 'none',
+  }
+  const knob: CSSProperties = {
+    position: 'absolute',
+    top: (H - KNOB) / 2,
+    left: checked ? W - KNOB - 2 : 2,
+    width: KNOB,
+    height: KNOB,
+    borderRadius: '50%',
+    background: '#fff',
+    boxShadow: '0 1px 2px rgba(0,0,0,0.2)',
+    transition: 'left 160ms cubic-bezier(0.4, 0, 0.2, 1)',
+    pointerEvents: 'none',
+  }
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={ariaLabel}
+      disabled={disabled}
+      style={track}
+      onClick={() => { onChange(!checked) }}
+    >
+      <span style={knob} />
+    </button>
+  )
+}
+
+/**
+ * 一行能力：开关 + 名称 + 「测试」按钮 + 测试结果反馈。
+ * 测试按钮实际调用一次该能力（host /api/test-capability），验证模型真支持。
+ */
+function CapabilityRow({ checked, disabled, label, ariaLabel, onChange, onTest, testing, result }: {
+  checked: boolean
+  disabled?: boolean
+  label: string
+  ariaLabel: string
+  onChange: (on: boolean) => void
+  onTest: () => void
+  testing: boolean
+  result?: string
+}): ReactNode {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <ToggleSwitch checked={checked} disabled={disabled} ariaLabel={ariaLabel} onChange={onChange} />
+        <span style={{ fontSize: 13, color: 'var(--dsw-alias-label-primary, #1f2329)' }}>{label}</span>
+        <button
+          type="button"
+          style={capabilityTestButtonStyle}
+          disabled={disabled || testing}
+          onClick={(event) => { event.stopPropagation(); onTest() }}
+        >
+          {testing ? '测试中…' : '测试'}
+        </button>
+      </div>
+      {result !== undefined
+        ? <p style={{ margin: 0, fontSize: 12, lineHeight: '16px', wordBreak: 'break-all', color: result.startsWith('测试失败') ? 'var(--dsw-alias-state-error-primary, #d54941)' : 'var(--dsw-alias-label-tertiary, #8f959e)' }}>{result}</p>
+        : null}
+    </div>
+  )
+}
+
 /** 作为文本编辑的两个 token 数，位于一行模型的 disclosure 之后。 */
 type CapacityField = 'contextWindow' | 'maxTokens'
 
@@ -358,6 +468,61 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
   // 至多一个面板展开。自绘面板而非原生 datalist：后者的弹出层由浏览器绘制，
   // 在部分环境里点击无响应，且无法与主题同步。
   const [capacityMenu, setCapacityMenu] = useState<string | undefined>(undefined)
+
+  // 模型能力声明（生图/生视频；识图走模型 input 字段）。挂载时加载一次，
+  // 开关变更即时 POST 到 /api/model-capabilities（model-router.json 持久化）。
+  const [capabilities, setCapabilities] = useState<Record<string, string[]>>({})
+  useEffect(() => {
+    let alive = true
+    fetch('/api/model-capabilities', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((d: any) => {
+        if (!alive) return
+        if (d && typeof d.capabilities === 'object' && d.capabilities !== null) {
+          setCapabilities(d.capabilities as Record<string, string[]>)
+        }
+      })
+      .catch(() => { /* 接口不可用则全部 off */ })
+    return () => { alive = false }
+  }, [])
+
+  // 能力测试（「测试」按钮）：key = `${index}:${capability}` → 测试中/结果。
+  const [testing, setTesting] = useState<ReadonlySet<string>>(new Set())
+  const [testResult, setTestResult] = useState<ReadonlyMap<string, string>>(new Map())
+  const testKey = (index: number, capability: string): string => `${String(index)}:${capability}`
+
+  /** 点「测试」：实际调用一次该能力，反馈成功/失败结果。 */
+  const runCapabilityTest = (index: number, capability: 'vision' | 'image' | 'video'): void => {
+    const provider = probe.provider
+    const modelId = textOf(models[index]!, 'id')
+    if (!provider || !modelId) return
+    const key = testKey(index, capability)
+    if (testing.has(key)) return
+    setTesting(current => new Set(current).add(key))
+    setTestResult(current => new Map(current).set(key, '测试中…'))
+    fetch('/api/test-capability', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ provider, model: modelId, capability }),
+    })
+      .then((r) => r.json())
+      .then((d: any) => {
+        const msg = d && d.ok
+          ? (typeof d.result === 'string' ? d.result : '测试通过 ✓')
+          : `测试失败：${(d && d.error) || '未知错误'}`
+        setTestResult(current => new Map(current).set(key, msg))
+      })
+      .catch((error) => {
+        setTestResult(current => new Map(current).set(key, `测试失败：${String(error?.message ?? error)}`))
+      })
+      .finally(() => {
+        setTesting(current => {
+          const next = new Set(current)
+          next.delete(key)
+          return next
+        })
+      })
+  }
 
   // 预设项的悬停高亮无法用内联样式表达 :hover；随编辑器挂载注入一次规则。
   useEffect(() => {
@@ -417,6 +582,65 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
     const next: Record<string, string | null> = { ...current }
     next[level] = text.length === 0 ? (level === 'off' ? null : '') : text
     patch(index, { reasoningEfforts: next })
+  }
+
+  /**
+   * 勾选/取消「支持识图」：勾选时确保模型 input 声明含 image（未声明则从
+   * `['text', 'image']` 起步）；取消时移除 image——若只剩默认的 text（或空）
+   * 则整个字段离开 profile，回到「未声明/继承路由默认」语义。
+   */
+  const toggleSupportsImage = (index: number, on: boolean): void => {
+    const current = inputOf(models[index]!)
+    if (on) {
+      const next = current === undefined
+        ? ['text', 'image']
+        : Array.from(new Set([...current, 'image']))
+      patch(index, { input: next })
+      return
+    }
+    if (current === undefined) return
+    const rest = current.filter(x => x !== 'image')
+    if (rest.length === 0 || (rest.length === 1 && rest[0] === 'text')) {
+      patch(index, { input: undefined })
+    } else {
+      patch(index, { input: rest })
+    }
+  }
+
+  /** 一个模型的能力 key：provider 已知时才可声明（自定义添加草稿 provider 未定）。 */
+  const capabilityKey = (index: number): string | undefined => {
+    if (!probe.provider) return undefined
+    const modelId = textOf(models[index]!, 'id')
+    if (!modelId) return undefined
+    return `${probe.provider}/${modelId}`
+  }
+
+  /** 该模型是否声明了指定生成能力。 */
+  const hasCapability = (index: number, cap: 'image' | 'video'): boolean => {
+    const key = capabilityKey(index)
+    return key !== undefined && (capabilities[key]?.includes(cap) ?? false)
+  }
+
+  /** 勾选/取消生成能力：立即 POST 持久化到 model-router.json（生图/生视频候选标注用）。 */
+  const toggleCapability = (index: number, cap: 'image' | 'video', on: boolean): void => {
+    const key = capabilityKey(index)
+    if (key === undefined) return
+    const next: Record<string, string[]> = { ...capabilities }
+    const current = next[key] ? [...next[key]] : []
+    if (on) {
+      if (!current.includes(cap)) current.push(cap)
+    } else {
+      const at = current.indexOf(cap)
+      if (at >= 0) current.splice(at, 1)
+    }
+    if (current.length === 0) delete next[key]
+    else next[key] = current
+    setCapabilities(next)
+    fetch('/api/model-capabilities', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ capabilities: next }),
+    }).catch(() => { /* 保存失败时 UI 状态保留，下次加载回读 */ })
   }
 
   /** 键入或选取一个容量拼写，即时解析进草稿。 */
@@ -672,6 +896,39 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
                     )
                   })}
                 </div>
+                <div style={capabilityBlockStyle}>
+                  <span style={fieldLabelStyle}>{chatCopy.capabilityHint}</span>
+                  <CapabilityRow
+                    checked={supportsImage(model)}
+                    disabled={disabled}
+                    label={chatCopy.supportsImage}
+                    ariaLabel={`${chatCopy.supportsImage} ${index + 1}`}
+                    onChange={(on) => { toggleSupportsImage(index, on) }}
+                    onTest={() => { runCapabilityTest(index, 'vision') }}
+                    testing={testing.has(testKey(index, 'vision'))}
+                    result={testResult.get(testKey(index, 'vision'))}
+                  />
+                  <CapabilityRow
+                    checked={hasCapability(index, 'image')}
+                    disabled={disabled || probe.provider === undefined}
+                    label={chatCopy.supportsImageGen}
+                    ariaLabel={`${chatCopy.supportsImageGen} ${index + 1}`}
+                    onChange={(on) => { toggleCapability(index, 'image', on) }}
+                    onTest={() => { runCapabilityTest(index, 'image') }}
+                    testing={testing.has(testKey(index, 'image'))}
+                    result={testResult.get(testKey(index, 'image'))}
+                  />
+                  <CapabilityRow
+                    checked={hasCapability(index, 'video')}
+                    disabled={disabled || probe.provider === undefined}
+                    label={chatCopy.supportsVideoGen}
+                    ariaLabel={`${chatCopy.supportsVideoGen} ${index + 1}`}
+                    onChange={(on) => { toggleCapability(index, 'video', on) }}
+                    onTest={() => { runCapabilityTest(index, 'video') }}
+                    testing={testing.has(testKey(index, 'video'))}
+                    result={testResult.get(testKey(index, 'video'))}
+                  />
+                </div>
                 <div style={effortBlockStyle}>
                   <span style={fieldLabelStyle}>{chatCopy.reasoningEfforts}</span>
                   <p style={hintStyle}>{chatCopy.effortHint}</p>
@@ -876,6 +1133,31 @@ const effortBlockStyle: CSSProperties = {
   paddingTop: 10,
   marginTop: 2,
   borderTop: '1px solid var(--dsw-alias-border-l2, #dcdfe6)',
+}
+
+/* 能力区块（识图/生图/生视频开关 + 测试按钮）：容量之下、推理等级之上，带顶部分隔线。 */
+const capabilityBlockStyle: CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 6,
+  paddingTop: 10,
+  marginTop: 2,
+  borderTop: '1px solid var(--dsw-alias-border-l2, #dcdfe6)',
+}
+
+/* 能力「测试」按钮：行内小按钮。 */
+const capabilityTestButtonStyle: CSSProperties = {
+  boxSizing: 'border-box',
+  height: 22,
+  padding: '0 8px',
+  border: '1px solid var(--dsw-alias-border-l2, #dcdfe6)',
+  borderRadius: 11,
+  background: 'transparent',
+  color: 'var(--dsw-alias-label-secondary, #4e5969)',
+  fontSize: 11,
+  lineHeight: '20px',
+  cursor: 'pointer',
+  flex: 'none',
 }
 
 /* 等级名：wire 标识，等宽字体，与候选 id 一致。 */

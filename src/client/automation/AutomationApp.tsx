@@ -15,18 +15,19 @@ import { createPortal } from 'react-dom'
 import { useModalClose } from '../modal-animation.js'
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import { AutomationCard } from './AutomationCard.tsx'
-import { TaskEditorDrawer } from './TaskEditorDrawer.tsx'
+import { TaskEditorModal } from './TaskEditorModal.tsx'
 import { createModelSource, type ModelSource } from './models.ts'
 import { AutomationIcon } from './icons.tsx'
 import { makeT } from './locales.ts'
 import { ensureStyles } from './styles.ts'
 import {
-  loadCatalog, loadLogs, saveCatalog, saveLogs,
+  defaultSteps, loadCatalog, loadLogs, recordRun, saveCatalog, saveLogs,
 } from './storage.ts'
 import { startScheduler } from './scheduler.ts'
 import type {
   AutomationCatalog,
   AutomationLogEntry,
+  AutomationRunResult,
   AutomationTask,
   ModelOption,
 } from './types.ts'
@@ -48,6 +49,8 @@ export function AutomationApp({ ctx }: { ctx: ClientContext }): JSX.Element {
   // ---- 数据：localStorage 初始化，commit 阶段即时落盘 ---------------------
   const [catalog, setCatalog] = useState<AutomationCatalog>(loadCatalog)
   const [logs, setLogs] = useState<AutomationLogEntry[]>(loadLogs)
+  const [running, setRunning] = useState<ReadonlySet<string>>(new Set<string>())
+  const runningRef = useRef<Set<string>>(new Set())
 
   // refs：调度器闭包经它们读取最新值（避免每 tick 重挂 interval）。
   const catalogRef = useRef(catalog)
@@ -60,11 +63,60 @@ export function AutomationApp({ ctx }: { ctx: ClientContext }): JSX.Element {
   useEffect(() => { saveCatalog(catalog) }, [catalog])
   useEffect(() => { saveLogs(logs) }, [logs])
 
-  // ---- 定时调度检查器：挂载启动一次；按每任务执行计划触发并落记录 ----------
+  // ---- 真实执行：把任务步骤交给 host 执行引擎，结果落执行日志 --------------
+  const executeTask = useCallback((task: AutomationTask): void => {
+    if (runningRef.current.has(task.id)) return
+    runningRef.current.add(task.id)
+    setRunning(new Set(runningRef.current))
+    void (async () => {
+      try {
+        const response = await fetch('/api/webui-automation/run', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            provider: task.provider ?? '',
+            model: task.model ?? '',
+            retry: task.retry ?? 0,
+            steps: task.steps ?? defaultSteps(),
+          }),
+        })
+        const result = await response.json() as AutomationRunResult
+        const detailParts: string[] = []
+        if (task.model !== undefined && task.model !== '') detailParts.push(task.model)
+        if (task.effort !== undefined && task.effort !== '') detailParts.push(task.effort)
+        const entry = recordRun(task, result.status, detailParts.length > 0 ? detailParts.join(' · ') : undefined, {
+          error: result.error,
+          steps: result.steps,
+          files: result.files,
+        })
+        setLogs(prev => [...prev, entry])
+      } catch (error) {
+        const entry = recordRun(task, 'failed', undefined, {
+          error: error instanceof Error ? error.message : String(error),
+        })
+        setLogs(prev => [...prev, entry])
+      } finally {
+        runningRef.current.delete(task.id)
+        setRunning(new Set(runningRef.current))
+      }
+    })()
+  }, [])
+
+  /** 按任务 id 立即执行（任务行「立即执行」与日志行「重跑」共用）。 */
+  const runTaskById = useCallback((taskId: string): void => {
+    const task = catalogRef.current.tasks.find(candidate => candidate.id === taskId)
+    if (task !== undefined) executeTask(task)
+  }, [executeTask])
+
+  /** 任务是否正在执行（调度器防重）。 */
+  const isRunning = useCallback((taskId: string): boolean => runningRef.current.has(taskId), [])
+
+  // ---- 定时调度检查器：挂载启动一次；按每任务执行计划触发并真实执行 --------
   useEffect(() => startScheduler({
     getCatalog: () => catalogRef.current,
-    onLogsChanged: setLogs,
-  }), [])
+    executeTask,
+    isRunning,
+  }), [executeTask, isRunning])
 
   // ---- 模型目录（任务绑定模型 + 推理强度） ---------------------------------
   const [models, setModels] = useState<ModelOption[]>([])
@@ -184,9 +236,12 @@ export function AutomationApp({ ctx }: { ctx: ClientContext }): JSX.Element {
         onClearLogs={() => { setLogs([]) }}
         onNewTask={openNewTask}
         onEditTask={openEditTask}
+        onRunTask={runTaskById}
+        onRerunTask={runTaskById}
+        running={running}
         anchor={cardAnchor}
       />
-      <TaskEditorDrawer
+      <TaskEditorModal
         open={drawer.open}
         closing={drawerAnim.closing}
         onClose={drawerAnim.requestClose}

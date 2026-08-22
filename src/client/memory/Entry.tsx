@@ -75,6 +75,9 @@ export function MemoryNavApp(): JSX.Element | null {
         remember={api.remember}
         getInjectState={api.getInjectState}
         setInjectState={api.setInjectState}
+        consolidate={api.consolidate}
+        revisions={api.revisions}
+        rollback={api.rollback}
       />
     </NavPortal>
   )

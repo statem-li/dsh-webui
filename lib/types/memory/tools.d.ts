@@ -7,4 +7,4 @@ import type { Context } from '@deepseek-ai/cordis';
 import type { MemoryConfig } from './types.js';
 import { type MemoryStore } from './engine/store.js';
 /** 注册全部记忆工具，返回合并 disposer。 */
-export declare function registerMemoryTools(ctx: Context, store: MemoryStore, _config: MemoryConfig): () => void;
+export declare function registerMemoryTools(ctx: Context, store: MemoryStore, config: MemoryConfig): () => void;

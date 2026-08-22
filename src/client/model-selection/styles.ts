@@ -95,6 +95,8 @@ const SHEET = `
 .webui-eff-trigger:disabled{opacity:.5;cursor:default}
 .webui-eff-label{max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .webui-eff-panel{position:absolute;right:0;bottom:calc(100% + 10px);z-index:20;width:min(320px,calc(100vw - 32px));padding:14px 16px 12px;border:1px solid var(--dsw-alias-border-inverted);border-radius:16px;background:var(--dsw-specific-menu,var(--dsw-alias-bg-layer-2,#16181d));box-shadow:var(--dsw-shadow-lv3);color:var(--dsw-alias-label-primary);animation:webui-eff-slide-in 180ms cubic-bezier(.2,.8,.2,1)}
+/* 透明桥接：覆盖面板与按钮之间的间隙，鼠标从按钮移入面板时不中断 hover。 */
+.webui-eff-panel::before{content:'';position:absolute;left:0;right:0;bottom:-10px;height:10px}
 @keyframes webui-eff-slide-in{from{opacity:0;transform:translateY(8px) scale(.98)}to{opacity:1;transform:none}}
 .webui-eff-panel-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:12px}
 .webui-eff-panel-title{font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary,#ddd)}

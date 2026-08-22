@@ -8,7 +8,7 @@
  * （事件按帧坐标缩放后经 /api/dsh-browser/input 回传到 CDP Input 域）。
  * 抽屉不全宽——左侧留一条空隙，点击空隙区域抽屉从左往右滑出收回。
  */
-import { memo, useCallback, useEffect, useReducer, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SessionId } from '@deepseek-ai/dsh-client-runtime/client'
@@ -21,6 +21,31 @@ function BrowserIcon({ size = 14 }: { size?: number }) {
       <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.6" />
       <ellipse cx="12" cy="12" rx="4.2" ry="9" stroke="currentColor" strokeWidth="1.6" />
       <path d="M3.2 9h17.6M3.2 15h17.6" stroke="currentColor" strokeWidth="1.5" />
+    </svg>
+  )
+}
+
+/** 星环加载动画：星球 + 倾斜环绕行（画面加载中的视觉反馈）。 */
+function LoadingOrbit() {
+  return (
+    <svg className="dsh-browser-loading__orbit" width="60" height="60" viewBox="0 0 80 80" aria-hidden>
+      <defs>
+        <radialGradient id="dsh-orbit-planet" cx="0.35" cy="0.3" r="0.9">
+          <stop offset="0" stopColor="#8ec5ff" />
+          <stop offset="0.55" stopColor="#4a9eff" />
+          <stop offset="1" stopColor="#2456b8" />
+        </radialGradient>
+        <linearGradient id="dsh-orbit-ring" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stopColor="#7cb8ff" stopOpacity="0.95" />
+          <stop offset="0.5" stopColor="#4a9eff" stopOpacity="0.4" />
+          <stop offset="1" stopColor="#4a9eff" stopOpacity="0.05" />
+        </linearGradient>
+      </defs>
+      <circle cx="40" cy="40" r="14" fill="url(#dsh-orbit-planet)" />
+      <g className="dsh-browser-loading__ring">
+        <ellipse cx="40" cy="40" rx="31" ry="10" fill="none" stroke="url(#dsh-orbit-ring)" strokeWidth="2.6" />
+        <circle className="dsh-browser-loading__sat" cx="71" cy="40" r="2.6" fill="#cfe6ff" />
+      </g>
     </svg>
   )
 }
@@ -366,6 +391,13 @@ function BrowserDrawer({ sessionId, onClose, onPickElement }: {
     setPicking(v)
   }, [])
 
+  // hover 范围提示：选取模式下鼠标移动实时采集命中元素的范围（页面视口
+  // CSS 坐标），叠加半透明高亮框，像浏览器 DevTools 一样「先看到范围再点」。
+  const [hover, setHover] = useState<{ tag: string; left: number; top: number; width: number; height: number } | null>(null)
+  const hoverPendingRef = useRef<{ x: number; y: number } | null>(null)
+  const hoverInFlightRef = useRef(false)
+  const hoverSeqRef = useRef(0)
+
   /** 时间线占用的画面高度：收起=细条 32px；展开=min(300, 45%)。原生视图需让位。 */
   const timelineReserveH = useCallback((frameH: number): number => {
     return timelineOpen ? Math.min(300, Math.round(frameH * 0.45)) : 32
@@ -480,29 +512,75 @@ function BrowserDrawer({ sessionId, onClose, onPickElement }: {
     }
   }, [])
 
+  // 清除 hover 高亮，并使在途的 hover 请求失效（返回后不再落地）。
+  const clearHover = useCallback((): void => {
+    hoverSeqRef.current++
+    hoverPendingRef.current = null
+    setHover(null)
+  }, [])
+
+  // hover 预览：合并发送（一次在途只保留最新坐标），返回命中元素范围后画框。
+  const queryHover = useCallback((): void => {
+    if (!pickingRef.current) return
+    const next = hoverPendingRef.current
+    if (next === null || hoverInFlightRef.current) return
+    hoverInFlightRef.current = true
+    const seq = ++hoverSeqRef.current
+    fetch('/api/dsh-browser/element', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId, x: next.x, y: next.y }),
+    })
+      .then((r) => r.json())
+      .then((data: any) => {
+        if (seq !== hoverSeqRef.current) return
+        const r = data?.rect
+        if (data && data.ok === true && data.found === true && r && Number(r.width) > 0) {
+          setHover({
+            tag: String(data.tag || ''),
+            left: Number(r.left) || 0,
+            top: Number(r.top) || 0,
+            width: Number(r.width) || 0,
+            height: Number(r.height) || 0,
+          })
+        } else {
+          setHover(null)
+        }
+      })
+      .catch(() => { if (seq === hoverSeqRef.current) setHover(null) })
+      .finally(() => {
+        hoverInFlightRef.current = false
+        const cur = hoverPendingRef.current
+        if (cur !== null && (cur.x !== next.x || cur.y !== next.y)) queryHover()
+      })
+  }, [sessionId])
+
   // 进入选取模式：隐藏原生视图（detach），让画面回到 img 帧流——这样点击才
   // 落在 React 的 img 上而不是被原生视图吃掉；detach 完成后恢复帧轮询刷新画面。
   const enterPickMode = useCallback((): void => {
     setPickingBoth(true)
+    clearHover()
     fetch('/api/dsh-browser/view-bounds', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ sessionId }),
+      body: JSON.stringify({ sessionId, keepViewport: true }),
     })
       .then(() => { attachedRef.current = false })
       .catch(() => {})
-  }, [sessionId, setPickingBoth])
+  }, [sessionId, setPickingBoth, clearHover])
 
   // 退出选取模式（未采集）：重新贴合原生视图，恢复原生渲染/输入。
   const exitPickMode = useCallback((): void => {
     setPickingBoth(false)
+    clearHover()
     syncViewBounds()
-  }, [setPickingBoth, syncViewBounds])
+  }, [setPickingBoth, clearHover, syncViewBounds])
 
   // 选取模式下点击画面：坐标换算到页面视口 → CDP 采集元素 → 回填对话框。
   const pickAt = useCallback(async (clientX: number, clientY: number): Promise<void> => {
     const { x, y } = toPage(clientX, clientY)
     setPickingBoth(false)
+    clearHover()
     try {
       const res = await fetch('/api/dsh-browser/element', {
         method: 'POST',
@@ -521,7 +599,7 @@ function BrowserDrawer({ sessionId, onClose, onPickElement }: {
     } catch {
       syncViewBounds()
     }
-  }, [toPage, sessionId, setPickingBoth, onPickElement, requestClose, syncViewBounds])
+  }, [toPage, sessionId, setPickingBoth, clearHover, onPickElement, requestClose, syncViewBounds])
 
   // Esc 关闭；选取模式下 Esc 只退出选取模式、不关抽屉。
   useEffect(() => {
@@ -637,13 +715,21 @@ function BrowserDrawer({ sessionId, onClose, onPickElement }: {
   }, [sessionId])
 
   const onMouseMove = useCallback((e: React.MouseEvent) => {
-    if (pickingRef.current) return
+    if (pickingRef.current) {
+      // 选取模式：不转发到页面，改为采集 hover 元素范围画高亮框。
+      const { x, y } = toPage(e.clientX, e.clientY)
+      const last = hoverPendingRef.current
+      if (last !== null && last.x === x && last.y === y) return
+      hoverPendingRef.current = { x, y }
+      queryHover()
+      return
+    }
     const { x, y } = toPage(e.clientX, e.clientY)
     const last = movePending.current
     if (last !== null && last.x === x && last.y === y) return
     movePending.current = { x, y }
     sendMove()
-  }, [toPage, sendMove])
+  }, [toPage, sendMove, queryHover])
 
   const buttonOf = (b: number): string => (b === 2 ? 'right' : b === 1 ? 'middle' : 'left')
 
@@ -700,6 +786,26 @@ function BrowserDrawer({ sessionId, onClose, onPickElement }: {
   const steps = (detail?.steps ?? []).slice().reverse()
   const running = detail?.active === true || steps.some(s => s.status === 'running')
 
+  // hover 高亮框：把页面视口坐标范围换算成 img 显示坐标（相对 frame 容器），
+  // 在 hover/画面尺寸变化时重算。
+  const pickBoxStyle = useMemo(() => {
+    if (!hover) return null
+    const img = frameElRef.current
+    const box = frameBoxRef.current
+    const size = frameSizeRef.current
+    if (!img || !box || size.width <= 0 || size.height <= 0) return null
+    const imgRect = img.getBoundingClientRect()
+    const boxRect = box.getBoundingClientRect()
+    const sx = imgRect.width / size.width
+    const sy = imgRect.height / size.height
+    return {
+      left: (imgRect.left - boxRect.left) + hover.left * sx,
+      top: (imgRect.top - boxRect.top) + hover.top * sy,
+      width: hover.width * sx,
+      height: hover.height * sy,
+    }
+  }, [hover, frameUrl])
+
   return createPortal(
     <>
       {/* 左侧留白点击区：覆盖整屏但被抽屉盖住右侧，实际可点的就是左边那条空隙 */}
@@ -739,7 +845,12 @@ function BrowserDrawer({ sessionId, onClose, onPickElement }: {
             {frameError
               ? <span className="dsh-browser-drawer__empty">浏览器画面不可用</span>
               : frameUrl === ''
-                ? <span className="dsh-browser-drawer__empty">画面连接中…</span>
+                ? (
+                  <div className="dsh-browser-loading">
+                    <LoadingOrbit />
+                    <span className="dsh-browser-loading__text">正在加载</span>
+                  </div>
+                )
                 : (
                   <img
                     ref={frameElRef}
@@ -758,6 +869,21 @@ function BrowserDrawer({ sessionId, onClose, onPickElement }: {
                     onKeyDown={onKeyDown}
                   />
                 )}
+            {picking && pickBoxStyle && hover && (
+              <div
+                className="dsh-browser-drawer__pickbox"
+                style={{
+                  left: pickBoxStyle.left,
+                  top: pickBoxStyle.top,
+                  width: pickBoxStyle.width,
+                  height: pickBoxStyle.height,
+                }}
+              >
+                {hover.tag !== '' && (
+                  <span className="dsh-browser-drawer__pickbox-tag">{`<${hover.tag}>`}</span>
+                )}
+              </div>
+            )}
             {picking && (
               <div className="dsh-browser-drawer__pickhint">点击要选取的元素 · Esc 退出</div>
             )}

@@ -26,8 +26,10 @@ const btn = (active: boolean): React.CSSProperties => ({
   borderRadius: 999,
   border: `1px solid ${active ? 'var(--dsw-alias-state-business-primary)' : 'var(--dsw-alias-border-l1)'}`,
   cursor: 'pointer',
-  background: active ? 'var(--dsw-alias-button-ghost-active-fill)' : 'transparent',
+  background: active ? 'color-mix(in srgb, var(--dsw-alias-state-business-primary) 12%, transparent)' : 'transparent',
   color: active ? 'var(--dsw-alias-state-business-primary)' : 'var(--dsw-alias-label-secondary)',
+  boxShadow: active ? '0 0 10px color-mix(in srgb, var(--dsw-alias-state-business-primary) 45%, transparent)' : 'none',
+  transition: 'background .22s cubic-bezier(.2,.8,.2,1), color .22s cubic-bezier(.2,.8,.2,1), box-shadow .22s cubic-bezier(.2,.8,.2,1), border-color .22s cubic-bezier(.2,.8,.2,1)',
 })
 
 const inputStyle: React.CSSProperties = {

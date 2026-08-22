@@ -37,6 +37,8 @@ export function ModelSeat({ available, directory, load, select }: ModelSeatProps
   const [providerId, setProviderId] = useState<string | null>(null)
   const [toast, setToast] = useState<{ seq: number; text: string } | null>(null)
   const toastSeq = useRef(0)
+  // hover 移出后的延迟关闭定时器（悬停交互，与提示词优化/推理等级一致）
+  const hoverLeaveTimer = useRef<number | null>(null)
   const rootRef = useRef<HTMLDivElement | null>(null)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const id = useId()
@@ -59,33 +61,40 @@ export function ModelSeat({ available, directory, load, select }: ModelSeatProps
 
   const reload = (): void => { load() }
 
-  // 挂载即加载，打开时刷新。
+  // 挂载即加载（悬停打开不重复刷新，避免频繁请求）。
   useEffect(() => {
     if (available) load()
   }, [available, load])
 
-  useEffect(() => {
-    if (!open) return
-    const closeOutside = (event: MouseEvent): void => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false)
-    }
-    const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') setOpen(false)
-    }
-    document.addEventListener('mousedown', closeOutside)
-    document.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('mousedown', closeOutside)
-      document.removeEventListener('keydown', onKey)
-    }
-  }, [open])
+  // 卸载清理 hover 延迟关闭定时器。
+  useEffect(() => () => {
+    if (hoverLeaveTimer.current !== null) window.clearTimeout(hoverLeaveTimer.current)
+  }, [])
 
   if (!available) return null
 
-  const show = (): void => {
+  /** 取消「移出后延迟关闭」的定时器。 */
+  const cancelHoverHide = (): void => {
+    if (hoverLeaveTimer.current !== null) {
+      window.clearTimeout(hoverLeaveTimer.current)
+      hoverLeaveTimer.current = null
+    }
+  }
+
+  /** hover 进入按钮/菜单：立即显示并取消延迟关闭。 */
+  const showPanel = (): void => {
+    cancelHoverHide()
     setProviderId(null)
     setOpen(true)
-    reload()
+  }
+
+  /** hover 移出：延迟 0.08 秒再关闭，给用户时间从按钮移入菜单点选。 */
+  const scheduleHide = (): void => {
+    cancelHoverHide()
+    hoverLeaveTimer.current = window.setTimeout(() => {
+      hoverLeaveTimer.current = null
+      setOpen(false)
+    }, 80)
   }
 
   const choose = (selection: ModelSelection): void => {
@@ -119,7 +128,8 @@ export function ModelSeat({ available, directory, load, select }: ModelSeatProps
         aria-expanded={open}
         aria-controls={open ? `${id}-menu` : undefined}
         title={modelLabel}
-        onClick={() => { open ? setOpen(false) : show() }}
+        onMouseEnter={showPanel}
+        onMouseLeave={scheduleHide}
       >
         <span className={css.msTriggerLabel}>{modelLabel}</span>
         <IconChevronDownOutline14 className={clsx(css.msChevron, open && css.msChevronOpen)} />
@@ -132,6 +142,8 @@ export function ModelSeat({ available, directory, load, select }: ModelSeatProps
           role="menu"
           aria-label="选择模型"
           aria-busy={state.status === 'loading' || busy}
+          onMouseEnter={showPanel}
+          onMouseLeave={scheduleHide}
         >
           {state.status === 'loading' && (
             <div className={css.msStatus}>正在刷新模型列表…</div>

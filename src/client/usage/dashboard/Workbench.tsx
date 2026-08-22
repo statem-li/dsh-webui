@@ -30,8 +30,10 @@ const css = {
   tabItem: (active: boolean): React.CSSProperties => ({
     height: 28, display: 'flex', alignItems: 'center', padding: '0 12px', borderRadius: 14, cursor: 'pointer',
     border: `1px solid ${active ? 'var(--dsw-alias-state-business-primary)' : 'var(--dsw-alias-border-l2)'}`,
-    background: active ? 'var(--dsw-alias-button-ghost-active-fill)' : 'transparent',
+    background: active ? 'color-mix(in srgb, var(--dsw-alias-state-business-primary) 12%, transparent)' : 'transparent',
     color: active ? 'var(--dsw-alias-state-business-primary)' : 'var(--dsw-alias-label-secondary)',
+    boxShadow: active ? '0 0 10px color-mix(in srgb, var(--dsw-alias-state-business-primary) 45%, transparent)' : 'none',
+    transition: 'background .22s cubic-bezier(.2,.8,.2,1), color .22s cubic-bezier(.2,.8,.2,1), box-shadow .22s cubic-bezier(.2,.8,.2,1), border-color .22s cubic-bezier(.2,.8,.2,1)',
     fontSize: 12, lineHeight: '18px', fontWeight: active ? 500 : 400,
   }),
   content: { flex: 1, overflowY: 'auto', padding: '14px 16px 32px', width: '100%', boxSizing: 'border-box' } as React.CSSProperties,

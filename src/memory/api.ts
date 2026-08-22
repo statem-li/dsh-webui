@@ -7,8 +7,9 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { URL } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
-import type { MemoryConfig, MemoryEntry } from './types.js'
+import type { ConsolidateResult, MemoryConfig, MemoryEntry } from './types.js'
 import { compileAll } from './engine/compile.js'
+import { consolidateAll, consolidateScope } from './engine/consolidate.js'
 import { localDate, mergeTags, nowIso, projectHashOf, entryIdOf, summarize, type MemoryStore } from './engine/store.js'
 
 /** Minimal service-shaped view of the webserver route register. */
@@ -340,6 +341,37 @@ async function handle(
       })
       await compileAll(store, config)
       json(res, 200, { ok: true, created, entry: toView(entry) })
+      return
+    }
+
+    // ── 记忆整理（Memory Dream）与修订回滚 ─────────────────────────────
+    if (method === 'POST' && rest === '/consolidate') {
+      const body = await readBody(req) as Record<string, unknown>
+      const scopeRaw = typeof body.scope === 'string' ? body.scope : 'all'
+      let results: ConsolidateResult[]
+      if (scopeRaw === 'global') {
+        results = [await consolidateScope(ctx, store, config, 'global', 'manual')]
+      } else if (scopeRaw === 'project') {
+        const projectHash = requireString(body.projectHash, 'projectHash')
+        results = [await consolidateScope(ctx, store, config, { projectHash }, 'manual')]
+      } else {
+        results = await consolidateAll(ctx, store, config, 'manual')
+      }
+      json(res, 200, { ok: true, results })
+      return
+    }
+    if (method === 'GET' && rest === '/revisions') {
+      json(res, 200, { revisions: await store.listRevisions() })
+      return
+    }
+    if (method === 'POST' && rest === '/rollback') {
+      const body = await readBody(req) as Record<string, unknown>
+      const revisionId = requireString(body.revisionId, 'revisionId')
+      const ok = await store.restoreRevision(revisionId)
+      if (!ok) throw new Error(`修订不存在：${revisionId}`)
+      await compileAll(store, config)
+      ctx.logger?.info?.(`[dsh-memory] rolled back to revision ${revisionId}`)
+      json(res, 200, { ok: true })
       return
     }
 

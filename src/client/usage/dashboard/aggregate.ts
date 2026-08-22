@@ -6,9 +6,27 @@ export interface UsageDay {
   cacheWriteTokens: number
   tokens: number
   cacheHitRate: number
+  /** 当天模型调用次数（assistant/message 计数）。 */
+  requests?: number
+  /** 当天累计工作时长（step 耗时，毫秒）。 */
+  workMs?: number
   models?: Array<{ model: string; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; tokens: number; cacheHitRate: number }>
 }
-export interface UsagePayload { ok: boolean; days: UsageDay[]; updatedAt?: number }
+
+/** 小时级用量（用于短范围按小时趋势）。 */
+export interface UsageHour {
+  hour: string
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
+  tokens: number
+  cacheHitRate: number
+  requests?: number
+  workMs?: number
+}
+
+export interface UsagePayload { ok: boolean; days: UsageDay[]; hours?: UsageHour[]; updatedAt?: number }
 
 export function sumTokens(days: UsageDay[]): { input: number; output: number; cache: number; total: number } {
   let input = 0, output = 0, cache = 0
@@ -41,4 +59,15 @@ export function averageCacheHitRate(days: UsageDay[]): number {
   const sum = days.reduce((acc, d) => acc + (d.cacheHitRate ?? 0), 0)
   // 保留小数精度（两位由 formatHitRate 统一格式化），不再取整。
   return sum / days.length
+}
+
+/** 范围内累计调用次数与工作时长（毫秒）。 */
+export function sumActivity(days: UsageDay[]): { requests: number; workMs: number } {
+  let requests = 0
+  let workMs = 0
+  for (const d of days) {
+    requests += d.requests ?? 0
+    workMs += d.workMs ?? 0
+  }
+  return { requests, workMs }
 }

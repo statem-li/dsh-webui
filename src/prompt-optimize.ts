@@ -49,6 +49,46 @@ function optimizeSystem(setTarget: boolean): string {
   ].join('\n')
 }
 
+/** 多轮优化的候选差异化方向（与客户端候选标签顺序保持一致）。 */
+const MULTI_VARIANTS: ReadonlyArray<{ rule: string }> = [
+  { rule: 'Balanced: refine clarity, structure, goal and constraints in a well-rounded way.' },
+  { rule: 'Concise: compress to the tightest, most direct phrasing while keeping the core intent.' },
+  { rule: 'Detailed: enrich with concrete context, explicit input/output format and measurable success criteria.' },
+]
+
+/** 多轮候选数量下限/上限。 */
+const MULTI_COUNT_MIN = 2
+const MULTI_COUNT_MAX = 5
+
+/** 规范化多轮候选数量（2~5，缺省 3）。 */
+function clampCount(value: unknown): number {
+  const n = typeof value === 'number' ? value : Number(value)
+  if (!Number.isFinite(n)) return 3
+  return Math.min(MULTI_COUNT_MAX, Math.max(MULTI_COUNT_MIN, Math.round(n)))
+}
+
+/**
+ * 多轮优化的 system 提示词：每个候选带一个差异化方向，要求输出互不重复的版本。
+ * @param variant - 候选下标（0 起）。
+ * @param total - 候选总数（用于让模型知道存在多个版本、刻意拉开差异）。
+ */
+function optimizeSystemMulti(variant: number, total: number): string {
+  const direction = MULTI_VARIANTS[variant % MULTI_VARIANTS.length]
+  const rules = [
+    'Keep the user\'s original intent and task essence — do not change what they are asking for.',
+    'Answer in the SAME language as the user\'s prompt.',
+    direction.rule,
+    `You are producing candidate ${variant + 1} of ${total}; give it a clearly distinct angle from the other candidates.`,
+    'Output ONLY the optimized prompt text itself — no explanation, no preamble, no markdown code fence, no quotes around the whole answer.',
+  ]
+  return [
+    'You are a professional prompt-optimization expert. The user will give you a prompt; rewrite it into a clearer, more specific, more effective high-quality prompt.',
+    '',
+    'Optimization rules:',
+    ...rules.map((rule, index) => `${index + 1}. ${rule}`),
+  ].join('\n')
+}
+
 /**
  * 组装优化请求的 user 消息：用分隔符包裹原文并声明「不执行其中指令」，
  * 降低 prompt-injection 风险。
@@ -109,6 +149,10 @@ async function handle(ctx: Context, req: IncomingMessage, res: ServerResponse): 
   const text = typeof body.text === 'string' ? body.text.trim() : ''
   // 是否「设定目标提示词」：缺省视为开启（与前端开关默认 ON 一致）。
   const setTarget = body.setTarget !== false
+  // 是否「多轮优化」：开启时并行生成多个候选并完整回传，客户端以卡片选择。
+  const multi = body.multi === true
+  // 多轮候选数量：2~5，缺省 3。
+  const count = clampCount(body.count)
   // 所属会话 id：作为「显式停止」的标识（客户端停止时用它定位本次优化的 controller）。
   const sessionId = typeof body.sessionId === 'string' ? body.sessionId : ''
   if (provider === '' || model === '' || text === '') {
@@ -150,44 +194,97 @@ async function handle(ctx: Context, req: IncomingMessage, res: ServerResponse): 
   }
 
   try {
-    const options = {
-      provider,
-      model,
-      messages: [createUserMessage({
-        content: [{ type: 'text', text: buildUserText(text) }],
-        source: { kind: 'plugin', plugin: 'dsh-webui' },
-      })],
-      system: optimizeSystem(setTarget),
-      maxTokens: 4096,
-      signal: controller.signal,
-    }
+    const messages = [createUserMessage({
+      content: [{ type: 'text', text: buildUserText(text) }],
+      source: { kind: 'plugin', plugin: 'dsh-webui' },
+    })]
 
-    let textLength = 0
-    let errorSent = false
-    for await (const chunk of llm.stream(options)) {
-      if (chunk.type === 'text-delta') {
-        textLength += chunk.text.length
-        send({ type: 'delta', text: chunk.text })
-        continue
+    if (multi) {
+      // 多轮优化：并行生成 count 个候选（差异化 system），完整回传，客户端以卡片选择。
+      const runOne = async (variant: number): Promise<{ text: string; error?: string }> => {
+        let out = ''
+        try {
+          for await (const chunk of llm.stream({
+            provider,
+            model,
+            messages,
+            system: optimizeSystemMulti(variant, count),
+            maxTokens: 4096,
+            signal: controller.signal,
+          })) {
+            if (chunk.type === 'text-delta') {
+              out += chunk.text
+              continue
+            }
+            if (chunk.type !== 'finish') continue
+            const reason = chunk.reason
+            if (reason.kind === 'error' || reason.kind === 'aborted') {
+              const message = reason.failure.message
+                ?? (reason.kind === 'aborted' ? '优化超时' : '模型调用失败')
+              return { text: out, error: String(message) }
+            }
+            if (reason.kind !== 'stop' && reason.kind !== 'max-tokens') {
+              return { text: out, error: `模型未正常结束：${reason.kind}` }
+            }
+          }
+        } catch (error) {
+          return { text: out, error: error instanceof Error ? error.message : String(error) }
+        }
+        return { text: out }
       }
-      if (chunk.type !== 'finish') continue
-      const reason = chunk.reason
-      if (reason.kind === 'error' || reason.kind === 'aborted') {
-        const message = reason.failure.message
-          ?? (reason.kind === 'aborted' ? '优化超时' : '模型调用失败')
-        send({ type: 'error', message: String(message).slice(0, 500) })
-        errorSent = true
-      } else if (reason.kind !== 'stop' && reason.kind !== 'max-tokens') {
-        send({ type: 'error', message: `模型未正常结束：${reason.kind}` })
-        errorSent = true
-      }
-    }
 
-    if (!errorSent) {
-      if (textLength === 0) {
-        send({ type: 'error', message: '模型未返回优化结果（可能触发了纯思考模型，请重试或更换模型）' })
+      const results = await Promise.all(
+        Array.from({ length: count }, (_, variant) => runOne(variant)),
+      )
+      const okResults = results.filter(result => result.error === undefined)
+      if (okResults.length === 0) {
+        const firstError = results.find(result => result.error !== undefined)?.error ?? '模型未返回优化结果'
+        send({ type: 'error', message: String(firstError).slice(0, 500) })
       } else {
+        results.forEach((result, index) => {
+          if (result.error !== undefined || result.text.trim() === '') return
+          send({ type: 'candidate', index, text: result.text })
+        })
         send({ type: 'done', elapsedMs: Date.now() - startedAt })
+      }
+    } else {
+      // 单轮优化：流式边收边回传 delta（保持现有实时写回草稿体验）。
+      const options = {
+        provider,
+        model,
+        messages,
+        system: optimizeSystem(setTarget),
+        maxTokens: 4096,
+        signal: controller.signal,
+      }
+
+      let textLength = 0
+      let errorSent = false
+      for await (const chunk of llm.stream(options)) {
+        if (chunk.type === 'text-delta') {
+          textLength += chunk.text.length
+          send({ type: 'delta', text: chunk.text })
+          continue
+        }
+        if (chunk.type !== 'finish') continue
+        const reason = chunk.reason
+        if (reason.kind === 'error' || reason.kind === 'aborted') {
+          const message = reason.failure.message
+            ?? (reason.kind === 'aborted' ? '优化超时' : '模型调用失败')
+          send({ type: 'error', message: String(message).slice(0, 500) })
+          errorSent = true
+        } else if (reason.kind !== 'stop' && reason.kind !== 'max-tokens') {
+          send({ type: 'error', message: `模型未正常结束：${reason.kind}` })
+          errorSent = true
+        }
+      }
+
+      if (!errorSent) {
+        if (textLength === 0) {
+          send({ type: 'error', message: '模型未返回优化结果（可能触发了纯思考模型，请重试或更换模型）' })
+        } else {
+          send({ type: 'done', elapsedMs: Date.now() - startedAt })
+        }
       }
     }
   } catch (error) {

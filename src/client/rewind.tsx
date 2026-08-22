@@ -20,7 +20,7 @@ import type { ChatNodeViewProps } from '@deepseek-ai/dsh-client-ui-conversation/
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import {
   Button, IconCheckOutline16, IconCopyOutline16,
-  JsonBlock, MessageText, Modal, RiskConfirmation, Tooltip, writeClipboard,
+  JsonBlock, MessageText, Modal, Tooltip, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 
 // ── 回退图标（图标库无 undo 语义，内联 Material undo：逆时针回退箭头）─────
@@ -30,6 +30,30 @@ function IconUndoOutline16({ size = 16, className }: { size?: number; className?
     <svg width={size} height={size} className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden>
       <path
         d="M12.5 8c-2.65 0-5.05.99-6.9 2.6L2 7v9h9l-3.62-3.62c1.39-1.16 3.16-1.88 5.12-1.88 3.54 0 6.55 2.31 7.6 5.5l2.37-.78C21.08 11.03 17.15 8 12.5 8z"
+        fill="currentColor"
+      />
+    </svg>
+  )
+}
+
+/** 编辑图标（Material edit：铅笔）。 */
+function IconEditOutline16({ size = 16, className }: { size?: number; className?: string }) {
+  return (
+    <svg width={size} height={size} className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden>
+      <path
+        d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34a.9959.9959 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"
+        fill="currentColor"
+      />
+    </svg>
+  )
+}
+
+/** 刷新图标（Material refresh：重试/重新生成）。 */
+function IconRefreshOutline16({ size = 16, className }: { size?: number; className?: string }) {
+  return (
+    <svg width={size} height={size} className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden>
+      <path
+        d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"
         fill="currentColor"
       />
     </svg>
@@ -53,6 +77,16 @@ const SHEET = `
 .dsh-rewind-action:disabled:hover{background:transparent;color:var(--dsw-alias-label-tertiary,#888)}
 .dsh-rewind-action-busy{color:var(--dsw-alias-state-business-primary,#4a9eff)}
 .dsh-rewind-error{font-size:14px;line-height:22px;color:var(--dsw-alias-label-secondary,#bbb);overflow-wrap:anywhere}
+.dsh-rewind-diffList{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px;max-height:220px;overflow:auto;font-size:13px;line-height:18px}
+.dsh-rewind-diffItem{display:flex;align-items:baseline;gap:8px;color:var(--dsw-alias-label-secondary,#bbb);overflow-wrap:anywhere;font-family:var(--dsw-font-mono,ui-monospace,SFMono-Regular,Menlo,monospace)}
+.dsh-rewind-diffItem .dsh-rewind-diffPath{min-width:0}
+.dsh-rewind-diffTag{flex:0 0 auto;align-self:center;width:18px;height:18px;border-radius:4px;display:inline-flex;align-items:center;justify-content:center;font-size:11px;line-height:1;font-family:var(--dsw-font-sans,system-ui)}
+.dsh-rewind-diffMod{background:rgba(74,158,255,.16);color:#4a9eff}
+.dsh-rewind-diffAdd{background:rgba(52,199,123,.16);color:#34c77b}
+.dsh-rewind-diffDel{background:rgba(255,90,95,.16);color:#ff5a5f}
+.dsh-rewind-diffMore{color:var(--dsw-alias-label-tertiary,#888);font-size:12px;line-height:18px}
+.dsh-rewind-edit{width:100%;min-height:120px;resize:vertical;box-sizing:border-box;padding:10px 12px;border:1px solid var(--dsw-alias-line-divider,rgba(255,255,255,.12));border-radius:12px;background:var(--dsw-alias-bg-layer-2,transparent);color:var(--dsw-alias-label-primary,#ddd);font-size:14px;line-height:22px;font-family:inherit;outline:none}
+.dsh-rewind-edit:focus{border-color:var(--dsw-alias-state-business-primary,#4a9eff)}
 @media (hover:hover){
   [data-time-hover-root] .dsh-rewind-time{opacity:0;transition:opacity 80ms ease}
   [data-time-hover-root]:hover .dsh-rewind-time,[data-time-hover-root]:focus-within .dsh-rewind-time{opacity:1}
@@ -113,7 +147,7 @@ function formatTime(ts: number): string {
 
 /** 组件注入的业务面（由 applyRewindClient 经 slot inject 提供）。 */
 export interface RewindInjected {
-  sessions: Pick<ISessions, 'fork' | 'open'>
+  sessions: Pick<ISessions, 'fork' | 'open' | 'binding'>
   workspaces: Pick<IWorkspaces, 'startSession' | 'archiveSession'>
 }
 
@@ -131,6 +165,56 @@ async function archiveBestEffort(
   } catch (err) {
     console.warn('[dsh-webui-rewind] archive original session failed:', err)
   }
+}
+
+// ── 退回前的差异查询（host /api/webui-rewind/diff）───────────────
+
+/** host /diff 响应：当前工作区相对「这条消息发送前」快照的差异。 */
+interface RewindDiffResult {
+  ok: boolean
+  changed: boolean
+  summary: { modified: number; added: number; deleted: number }
+  modified: string[]
+  added: string[]
+  deleted: string[]
+  error?: string
+}
+
+/** 取路径的第一个顶层段；含 `/` 时返回「目录名/」，否则返回文件名本身。 */
+function topSegment(path: string): string {
+  const idx = path.indexOf('/')
+  return idx === -1 ? path : `${path.slice(0, idx)}/`
+}
+
+/** 把文件路径列表按顶层目录聚合为 { 目录/: 数量, 文件名: 数量 }。 */
+function groupByTopDir(paths: string[]): Record<string, number> {
+  const groups: Record<string, number> = {}
+  for (const p of paths) {
+    const key = topSegment(p)
+    groups[key] = (groups[key] ?? 0) + 1
+  }
+  return groups
+}
+
+/** 用差异结果拼一句给用户看的话：本次会回退哪些文件。 */
+function describeDiff(diff: RewindDiffResult): string {
+  const { modified, added, deleted } = diff.summary
+  const parts: string[] = []
+  if (modified > 0) parts.push(`恢复 ${modified} 个已修改文件`)
+  if (deleted > 0) parts.push(`恢复 ${deleted} 个已删除文件`)
+  if (added > 0) {
+    // 新增文件全部落在同一个顶层目录时，聚合为「删除 xx/ 目录」，比「删除 N 个文件」更直观、不吓人。
+    const groups = groupByTopDir(diff.added)
+    const entries = Object.entries(groups)
+    if (entries.length === 1) {
+      const [dir, count] = entries[0] as [string, number]
+      parts.push(dir.endsWith('/') ? `删除 ${dir} 目录（${count} 个文件）` : `删除 ${count} 个新增文件`)
+    } else {
+      parts.push(`删除 ${added} 个新增文件（${entries.length} 处）`)
+    }
+  }
+  const changes = parts.length > 0 ? `本次将${parts.join('、')}` : '工作区文件无变化'
+  return `将回退工作区文件到这条消息发送前的状态，并消除这条消息及之后的上下文。${changes}，此操作不可撤销。`
 }
 
 // ── 组件 ────────────────────────────────────────────────────────────────────
@@ -156,12 +240,26 @@ export const UserRewindNodeView = memo(function UserRewindNodeView({
   // 退回只对 turn-opening 的 user 消息开放；steering 打断消息不显示退回。
   const isUser = node.kind === 'user'
 
+  // 会话运行态（决定「修改 / 刷新重载」可用性）。
+  const running = useSession(snapshot => snapshot.running)
+  // 仅纯文本消息支持「编辑重发 / 重新生成」（图片与附加块无法通过 prompt 原样重发）。
+  const textEditable = isUser && images.length === 0 && rest.length === 0 && text.trim() !== ''
+  // 第一条消息之前没有可 fork 的 turn 边界；编辑/重发需要 fork 到该边界，故仅对非首条开放。
+  const canForkBack = prevTurnEnd !== undefined
+  // 修改该对话：纯文本、非运行中、非首条。
+  const canEdit = textEditable && !running && canForkBack
+  // 刷新重载（重新生成）：纯文本、非运行中、非首条。中断/停止后可重试，
+  // 正常完成的对话也可点它重新生成这条消息的回复。
+  const canRetry = textEditable && !running && canForkBack
+
   const [copied, setCopied] = useState(false)
   const copyPending = useRef(false)
   const copyTimer = useRef<number | null>(null)
   const [busy, setBusy] = useState(false)
   const [confirmOpen, setConfirmOpen] = useState(false)
-  const [acknowledged, setAcknowledged] = useState(false)
+  const [diffInfo, setDiffInfo] = useState<RewindDiffResult | null>(null)
+  const [editing, setEditing] = useState(false)
+  const [editText, setEditText] = useState('')
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => () => {
@@ -183,54 +281,131 @@ export const UserRewindNodeView = memo(function UserRewindNodeView({
     })
   }, [copied, text])
 
+  /**
+   * 执行退回闭环：先（可选）回退文件，成功后 fork 上下文。
+   * @param skipRestore 无文件修改时为 true，跳过文件回退直接切上下文。
+   */
+  const doRewind = useCallback((skipRestore: boolean) => {
+    setBusy(true)
+    const seq = node.anchorSeq
+    void (async () => {
+      let errorMsg: string | null = null
+      try {
+        if (!skipRestore) {
+          const res = await fetch('/api/webui-rewind/restore', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ sessionId, seq }),
+          })
+          const result = await res.json() as { ok?: boolean; error?: string }
+          if (result.ok !== true) errorMsg = result.error ?? '未知错误'
+        }
+        if (errorMsg === null) {
+          // 文件回退成功后，才「原地回退」：
+          //   - 有上一条已完成 turn：fork 到该边界 → 打开子会话 → 归档原会话。
+          //   - 第一条消息：归档原会话 → 回到空白会话。
+          if (prevTurnEnd !== undefined) {
+            const childId = await sessions.fork({ sessionId, atSeq: prevTurnEnd })
+            // 先 open 后 archive：归档「当前会话」会触发会话列表把 current 清成
+            // no-session 空态。若 archive 在前，界面会先闪一下空白再切到子会话；
+            // 先 open 让 current 一步从原会话切到子会话，再归档原会话，无空白帧。
+            sessions.open(childId)
+            await archiveBestEffort(workspaces, sessionId)
+          } else {
+            await archiveBestEffort(workspaces, sessionId)
+            workspaces.startSession()
+          }
+        }
+      } catch (err: unknown) {
+        errorMsg = err instanceof Error ? err.message : String(err)
+      } finally {
+        if (errorMsg !== null) setError(errorMsg)
+        setConfirmOpen(false)
+        setBusy(false)
+      }
+    })()
+  }, [node.anchorSeq, sessionId, sessions, prevTurnEnd, workspaces])
+
   const onRewind = useCallback(() => {
     if (busy) return
-    setAcknowledged(false)
-    setConfirmOpen(true)
-  }, [busy])
+    setError(null)
+    setBusy(true)
+    const seq = node.anchorSeq
+    // 先查差异：无文件修改直接退回（不弹窗），有修改再弹确认框。
+    void fetch(`/api/webui-rewind/diff?sessionId=${encodeURIComponent(sessionId)}&seq=${seq}`)
+      .then((res) => res.json())
+      .then((result: RewindDiffResult) => {
+        if (result.ok !== true) {
+          setError(result.error ?? '未知错误')
+          setBusy(false)
+          return
+        }
+        if (result.changed) {
+          setDiffInfo(result)
+          setConfirmOpen(true)
+          setBusy(false)
+        } else {
+          void doRewind(true)
+        }
+      })
+      .catch((err: unknown) => {
+        setError(err instanceof Error ? err.message : String(err))
+        setBusy(false)
+      })
+  }, [busy, node.anchorSeq, sessionId, doRewind])
 
   const onConfirmRewind = useCallback(() => {
     if (busy) return
+    void doRewind(false)
+  }, [busy, doRewind])
+
+  /**
+   * 重新发送：fork 到这条消息之前的 turn 边界 → 打开子会话 → 发送文本 →
+   * 归档原会话。prompt 失败时保留原会话（可切回重试），只告警不归档。
+   */
+  const forkAndResend = useCallback(async (textToSend: string): Promise<void> => {
+    if (prevTurnEnd === undefined) return
+    const childId = await sessions.fork({ sessionId, atSeq: prevTurnEnd })
+    sessions.open(childId)
+    const child = sessions.binding(childId)?.session
+    let sent = child === undefined
+    if (child !== undefined) {
+      const res = await child.prompt([{ type: 'text', text: textToSend }], 'queue')
+      sent = res.ok
+      if (!res.ok) console.warn('[dsh-webui-rewind] resend prompt failed:', res.error)
+    }
+    if (sent) await archiveBestEffort(workspaces, sessionId)
+  }, [prevTurnEnd, sessionId, sessions, workspaces])
+
+  /** 修改该对话：打开编辑框（预填当前文本）。 */
+  const onOpenEditor = useCallback(() => {
+    if (busy || !canEdit) return
+    setError(null)
+    setEditText(text)
+    setEditing(true)
+  }, [busy, canEdit, text])
+
+  /** 修改后重新发送：关闭编辑框 → fork 回到消息之前 → 发送新文本。 */
+  const onResendEdited = useCallback(() => {
+    if (busy) return
+    const trimmed = editText.trim()
+    if (trimmed === '') return
+    setEditing(false)
     setBusy(true)
-    const seq = node.anchorSeq
-    void fetch('/api/webui-rewind/restore', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ sessionId, seq }),
-    }).then((res) => res.json()).then(async (result: { ok?: boolean; error?: string }) => {
-      if (result.ok !== true) {
-        setError(result.error ?? '未知错误')
-        setConfirmOpen(false)
-        setBusy(false)
-        return
-      }
-      // 文件回退成功后，才「原地回退」：
-      //   - 有上一条已完成 turn：fork 到该边界 → 打开子会话 → 归档原会话。
-      //   - 第一条消息：归档原会话 → 回到空白会话。
-      try {
-        if (prevTurnEnd !== undefined) {
-          const childId = await sessions.fork({ sessionId, atSeq: prevTurnEnd })
-          // 先 open 后 archive：归档「当前会话」会触发会话列表把 current 清成
-          // no-session 空态。若 archive 在前，界面会先闪一下空白再切到子会话；
-          // 先 open 让 current 一步从原会话切到子会话，再归档原会话，无空白帧。
-          sessions.open(childId)
-          await archiveBestEffort(workspaces, sessionId)
-        } else {
-          await archiveBestEffort(workspaces, sessionId)
-          workspaces.startSession()
-        }
-      } catch (err: unknown) {
-        setError(err instanceof Error ? err.message : String(err))
-      } finally {
-        setConfirmOpen(false)
-        setBusy(false)
-      }
-    }).catch((err: unknown) => {
-      setError(err instanceof Error ? err.message : String(err))
-      setConfirmOpen(false)
-      setBusy(false)
-    })
-  }, [busy, node.anchorSeq, sessionId, sessions, prevTurnEnd, workspaces])
+    void forkAndResend(trimmed)
+      .catch((err: unknown) => { setError(err instanceof Error ? err.message : String(err)) })
+      .finally(() => { setBusy(false) })
+  }, [busy, editText, forkAndResend])
+
+  /** 刷新重载：直接以原文本重新发起这次对话（重新生成回复）。 */
+  const onRetry = useCallback(() => {
+    if (busy || !canRetry) return
+    setError(null)
+    setBusy(true)
+    void forkAndResend(text.trim())
+      .catch((err: unknown) => { setError(err instanceof Error ? err.message : String(err)) })
+      .finally(() => { setBusy(false) })
+  }, [busy, canRetry, text, forkAndResend])
 
   const showBubble = text !== '' || rest.length > 0
 
@@ -263,6 +438,32 @@ export const UserRewindNodeView = memo(function UserRewindNodeView({
               {copied ? <IconCheckOutline16 /> : <IconCopyOutline16 />}
             </button>
           </Tooltip>
+          {isUser && canEdit && (
+            <Tooltip label="修改并重新发送这条消息" side="bottom">
+              <button
+                type="button"
+                className="dsh-rewind-action"
+                aria-label="修改该对话"
+                disabled={busy}
+                onClick={onOpenEditor}
+              >
+                <IconEditOutline16 />
+              </button>
+            </Tooltip>
+          )}
+          {isUser && canRetry && (
+            <Tooltip label="重新生成这条消息的回复" side="bottom">
+              <button
+                type="button"
+                className="dsh-rewind-action"
+                aria-label="重新生成回复"
+                disabled={busy}
+                onClick={onRetry}
+              >
+                <IconRefreshOutline16 />
+              </button>
+            </Tooltip>
+          )}
           {isUser && (
             <Tooltip label={prevTurnEnd !== undefined ? '退回到这条消息之前' : '退回并回到空白会话'} side="bottom">
               <button
@@ -278,19 +479,75 @@ export const UserRewindNodeView = memo(function UserRewindNodeView({
           )}
         </div>
       </div>
-      <RiskConfirmation
+      <Modal
         open={confirmOpen}
+        onClose={() => { if (!busy) setConfirmOpen(false) }}
         title="退回确认"
-        description="将回退工作区文件到这条消息发送前的状态，并消除这条消息及之后的上下文。此操作会覆盖当前工作区文件。"
-        acknowledgeLabel="我确认要覆盖当前工作区文件"
-        cancelLabel="取消"
-        confirmLabel="退回"
-        acknowledged={acknowledged}
-        disabled={busy}
-        onAcknowledgedChange={setAcknowledged}
-        onCancel={() => { if (!busy) setConfirmOpen(false) }}
-        onConfirm={onConfirmRewind}
-      />
+        description={diffInfo !== null ? describeDiff(diffInfo) : '将回退工作区文件到这条消息发送前的状态，并消除这条消息及之后的上下文。'}
+        footer={(
+          <>
+            <Button variant="outline" disabled={busy} onClick={() => { if (!busy) setConfirmOpen(false) }}>取消</Button>
+            <Button variant="primary" disabled={busy} onClick={onConfirmRewind}>退回</Button>
+          </>
+        )}
+      >
+        {diffInfo !== null && (() => {
+          const addedGroups = Object.entries(groupByTopDir(diffInfo.added))
+          const addedCollapsed = addedGroups.length === 1 && (addedGroups[0]?.[0].endsWith('/') ?? false)
+          const shownAdded = addedCollapsed ? [] : diffInfo.added.slice(0, 6)
+          const addedMore = addedCollapsed ? 0 : Math.max(0, diffInfo.added.length - shownAdded.length)
+          const modMore = Math.max(0, diffInfo.modified.length - 4)
+          const delMore = Math.max(0, diffInfo.deleted.length - 4)
+          return (
+            <ul className="dsh-rewind-diffList">
+              {diffInfo.modified.slice(0, 4).map((f) => (
+                <li key={`m-${f}`} className="dsh-rewind-diffItem"><span className="dsh-rewind-diffTag dsh-rewind-diffMod">改</span><span className="dsh-rewind-diffPath">{f}</span></li>
+              ))}
+              {modMore > 0 && <li className="dsh-rewind-diffMore">… 另有 {modMore} 个已修改文件</li>}
+              {addedCollapsed
+                ? (
+                  <li key="a-dir" className="dsh-rewind-diffItem">
+                    <span className="dsh-rewind-diffTag dsh-rewind-diffAdd">增</span>
+                    <span className="dsh-rewind-diffPath">{addedGroups[0]?.[0]}（{addedGroups[0]?.[1]} 个文件）</span>
+                  </li>
+                )
+                : (
+                  <>
+                    {shownAdded.map((f) => (
+                      <li key={`a-${f}`} className="dsh-rewind-diffItem"><span className="dsh-rewind-diffTag dsh-rewind-diffAdd">增</span><span className="dsh-rewind-diffPath">{f}</span></li>
+                    ))}
+                    {addedMore > 0 && <li className="dsh-rewind-diffMore">… 另有 {addedMore} 个新增文件</li>}
+                  </>
+                )}
+              {diffInfo.deleted.slice(0, 4).map((f) => (
+                <li key={`d-${f}`} className="dsh-rewind-diffItem"><span className="dsh-rewind-diffTag dsh-rewind-diffDel">删</span><span className="dsh-rewind-diffPath">{f}</span></li>
+              ))}
+              {delMore > 0 && <li className="dsh-rewind-diffMore">… 另有 {delMore} 个已删除文件</li>}
+            </ul>
+          )
+        })()}
+      </Modal>
+      <Modal
+        open={editing}
+        onClose={() => { if (!busy) setEditing(false) }}
+        title="修改该对话"
+        description="修改后将回到这条消息之前重新发送，这条消息及之后的回复会被新的对话替换。"
+        footer={(
+          <>
+            <Button variant="outline" disabled={busy} onClick={() => { if (!busy) setEditing(false) }}>取消</Button>
+            <Button variant="primary" disabled={busy || editText.trim() === ''} onClick={onResendEdited}>重新发送</Button>
+          </>
+        )}
+      >
+        <textarea
+          className="dsh-rewind-edit"
+          value={editText}
+          disabled={busy}
+          autoFocus
+          placeholder="输入新的消息内容…"
+          onChange={(event) => { setEditText(event.currentTarget.value) }}
+        />
+      </Modal>
       {error !== null && (
         <Modal
           open

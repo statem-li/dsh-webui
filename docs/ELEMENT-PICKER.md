@@ -50,6 +50,21 @@
   回填帧尺寸——`toPage` 坐标换算依赖它，缺失会导致选取坐标错位。
 - 选取模式下拦截全部 input 回传（move/down/up/click/wheel/key），只保留
   「点击采集」，避免 detach 后仍经 Input 域误点页面。
+- hover 范围提示（2026-08-22 追加）：选取模式下鼠标移动不再直接 return，而是
+  经 `/api/dsh-browser/element` 实时采集命中元素的 `getBoundingClientRect`
+  （页面视口 CSS 坐标）；前端按截图缩放比换算后在画面叠加半透明高亮框 +
+  左上角 `<tag>` 标签，像浏览器 DevTools 一样「先看到范围再点」。hover 请求
+  用「合并发送」（一次在途只保留最新坐标）避免 mousemove 堆积；Esc/退出/采集
+  成功时用递增序号使在途请求失效并清除高亮框。
+- 关键修复（2026-08-22）：选取模式的 detach 方案有个致命坑——detach 后
+  WebContentsView 不再合成，`captureScreenshot`（fromSurface 无论 true/false）
+  和 `Page.startScreencast` 都会超时/零帧，画面退回 img 后是空的，且
+  `document.elementFromPoint` 因视口归零（innerWidth=0）返回 null → 采集
+  found:false → 「选中后不进对话框」。解决：detach 前（attach 状态，视图参与
+  合成）先 `captureScreenshot(fromSurface=true)` 截一张「冻结帧」写入 st.frame，
+  detach 后 img 帧流靠这张冻结帧兜底；同时 detach 后用
+  `Emulation.setDeviceMetricsOverride` 按最近一次 attach 的尺寸固定视口，保证
+  elementFromPoint 命中。attach 前 `clearDeviceMetricsOverride` 恢复真实视口。
 
 ### 经验教训（来自玻璃质感迭代）
 

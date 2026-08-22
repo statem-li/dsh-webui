@@ -448,6 +448,138 @@ export function applyVisionHelper(ctx: PluginContext, configInput: Partial<Confi
     }
   }
 
+  // ═══ 生视频能力（videoActive；OpenAI /videos 异步任务 + 轮询）═══
+  let videoActive = ''
+  async function loadVideoConfig(): Promise<void> {
+    try {
+      const target = await ctx.fs.resolve(config.modelRouterPath || '.dsh/model-router.json')
+      const parsed = JSON.parse(await ctx.fs.readText(target))
+      if (parsed && typeof parsed.videoActive === 'string') videoActive = parsed.videoActive
+      if (!videoActive && Array.isArray(parsed?.video) && parsed.video.length > 0) {
+        videoActive = parsed.video[0].provider + '/' + parsed.video[0].model
+      }
+    } catch { /* 无配置 */ }
+  }
+  async function saveVideoActive(key: string): Promise<void> {
+    const target = await ctx.fs.resolve(config.modelRouterPath || '.dsh/model-router.json')
+    let parsed: any = {}
+    try { parsed = JSON.parse(await ctx.fs.readText(target)) } catch { /* 无文件则新建 */ }
+    const list: Array<{ provider: string; model: string }> = Array.isArray(parsed.video) ? parsed.video : []
+    const parts = splitKey(key)
+    if (parts && !list.some((item) => item.provider === parts.provider && item.model === parts.model)) {
+      list.push({ provider: parts.provider, model: parts.model })
+    }
+    const next = { ...parsed, video: list, videoActive: key }
+    await ctx.fs.writeText(target, JSON.stringify(next, null, 2))
+    videoActive = key
+  }
+
+  /**
+   * 生视频：POST {base}/videos 创建异步任务 → 轮询 GET {base}/videos/{id}
+   * 直到 completed/succeeded（返回 url）或 failed。遵循 OpenAI /videos 规范
+   * （兼容 Sora 网关 / 商汤等 OpenAI 兼容端点）。
+   */
+  async function generateVideoViaHttp(
+    active: { provider: string; model: string },
+    prompt: string,
+    signal?: AbortSignal,
+  ): Promise<any> {
+    const profile = providerConfig(ctx, active.provider)
+    if (!profile || typeof profile.baseURL !== 'string' || !profile.baseURL) {
+      return { ok: false, error: `provider "${active.provider}" 未配置 baseURL` }
+    }
+    const apiKey = await resolveApiKey(ctx, profile)
+    if (!apiKey) {
+      return { ok: false, error: `未找到生视频 API 凭据（${profile.apiKeyEnv || '未知 env'}）：请在凭据设置中配置。` }
+    }
+    const base = String(profile.baseURL).replace(/[\\/]+$/, '')
+    const safePrompt = String(prompt).replace(/'/g, "''")
+    const command = [
+      "$ErrorActionPreference = 'Stop'",
+      "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12",
+      'try {',
+      `  $b = @{ model = '${psEscape(active.model)}'; prompt = '${safePrompt}' } | ConvertTo-Json -Compress`,
+      `  $c = Invoke-RestMethod -UseBasicParsing -Uri '${psEscape(base)}/videos' -Method Post -Headers @{ Authorization = 'Bearer ${psEscape(apiKey)}'; 'Content-Type' = 'application/json' } -Body $b -TimeoutSec 120`,
+      '  $id = $c.id',
+      "  if (-not $id) { @{ ok = $false; error = '视频任务创建失败：响应无 id' } | ConvertTo-Json -Compress; exit }",
+      '  for ($i = 0; $i -lt 100; $i++) {',
+      '    Start-Sleep -Seconds 5',
+      `    $s = Invoke-RestMethod -UseBasicParsing -Uri '${psEscape(base)}/videos/$id' -Method Get -Headers @{ Authorization = 'Bearer ${psEscape(apiKey)}' } -TimeoutSec 120`,
+      '    $st = $s.status',
+      "    if ($st -eq 'completed' -or $st -eq 'succeeded') {",
+      '      $url = $null',
+      '      if ($s.data -and $s.data[0]) { $url = $s.data[0].url }',
+      '      if (-not $url -and $s.output -and $s.output[0]) { $url = $s.output[0].url }',
+      "      if ($url) { @{ ok = $true; id = $id; url = $url } | ConvertTo-Json -Depth 4 -Compress; exit }",
+      "      @{ ok = $false; id = $id; error = '视频已完成但响应无 url' } | ConvertTo-Json -Compress; exit",
+      '    }',
+      "    if ($st -eq 'failed' -or $st -eq 'error' -or $st -eq 'cancelled') {",
+      "      @{ ok = $false; id = $id; error = \"视频生成失败：$st\" } | ConvertTo-Json -Compress; exit",
+      '    }',
+      '  }',
+      "  @{ ok = $false; id = $id; error = '视频生成超时（约 500s 未完成）' } | ConvertTo-Json -Compress",
+      '} catch {',
+      "  $detail = ''",
+      "  if ($_.ErrorDetails.Message) { $detail = $_.ErrorDetails.Message }",
+      "  @{ ok = $false; error = $_.Exception.Message; detail = $detail } | ConvertTo-Json -Depth 4 -Compress",
+      '}',
+    ].join('; ')
+    try {
+      const policy = ctx.sandboxPolicy.resolve({ mode: 'danger-full-access' })
+      const spec = ctx.shell.resolve({ command, timeoutMs: 700000, signal, sandboxPolicy: policy })
+      const result = await ctx.shell.run(spec)
+      const stdout = result.stdout && result.stdout.text ? result.stdout.text : ''
+      const stderr = result.stderr && result.stderr.text ? result.stderr.text : ''
+      if (result.exitCode !== 0) {
+        return { ok: false, error: `生视频 API 调用失败 (exit ${result.exitCode}): ${(stderr || stdout || '未知错误').slice(0, 500)}` }
+      }
+      let parsed: any = null
+      try { parsed = JSON.parse(stdout) } catch {
+        return { ok: false, error: '生视频 API 响应解析失败: ' + stdout.slice(0, 400) }
+      }
+      if (!parsed || parsed.ok !== true) {
+        return { ok: false, error: '生视频 API 错误: ' + JSON.stringify(parsed).slice(0, 500) }
+      }
+      return {
+        ok: true,
+        model: `${active.provider}/${active.model}`,
+        taskId: parsed.id,
+        videoUrl: parsed.url ?? null,
+        videoUrls: parsed.url ? [parsed.url] : [],
+      }
+    } catch (error: any) {
+      return { ok: false, error: '生视频 API 调用异常: ' + String(error?.message ?? error) }
+    }
+  }
+
+  // ═══ 模型能力声明（生图/生视频；识图走模型 input 字段）═══
+  // 存 model-router.json 的 capabilities：{ "provider/model": ["image", "video"] }
+  async function readCapabilities(): Promise<Record<string, string[]>> {
+    try {
+      const target = await ctx.fs.resolve(config.modelRouterPath || '.dsh/model-router.json')
+      const parsed = JSON.parse(await ctx.fs.readText(target))
+      const caps = parsed && typeof parsed.capabilities === 'object' && parsed.capabilities !== null
+        ? parsed.capabilities
+        : {}
+      const out: Record<string, string[]> = {}
+      for (const [key, value] of Object.entries(caps)) {
+        if (Array.isArray(value)) {
+          const clean = value.filter((x): x is string =>
+            typeof x === 'string' && (x === 'image' || x === 'video'))
+          if (clean.length > 0) out[key] = clean
+        }
+      }
+      return out
+    } catch { return {} }
+  }
+  async function saveCapabilities(caps: Record<string, string[]>): Promise<void> {
+    const target = await ctx.fs.resolve(config.modelRouterPath || '.dsh/model-router.json')
+    let parsed: any = {}
+    try { parsed = JSON.parse(await ctx.fs.readText(target)) } catch { /* 无文件则新建 */ }
+    const next = { ...parsed, capabilities: caps }
+    await ctx.fs.writeText(target, JSON.stringify(next, null, 2))
+  }
+
   async function describe(
     imageArg: string,
     promptArg: string | undefined,
@@ -577,6 +709,31 @@ export function applyVisionHelper(ctx: PluginContext, configInput: Partial<Confi
       return generateViaHttp(active, String(args.prompt), exec?.signal, args.count)
     },
   })), '@dsh-external/dsh-vision-helper: generate_image')
+
+  // generate_video：生视频工具（OpenAI /videos 异步任务 + 轮询）
+  ctx.effect(() => ctx.tools.register(defineTool({
+    name: 'generate_video',
+    description:
+      '调用已配置的生视频模型生成一段视频。当用户要求生成、创建视频时使用本工具，提示词越详细越好（画面内容、镜头运动、时长、风格）。生视频是异步任务，本工具会等待任务完成（最长约 8 分钟）。若返回 ok=false，请把 error 信息转告用户（生视频模型在「设置 → AI 模型」中配置）。',
+    parameters: {
+      prompt: {
+        type: 'string',
+        required: true,
+        description: '详细的视频生成提示词，建议包含画面主体、镜头运动、时长、风格、光线等细节。',
+      },
+    },
+    output: {
+      schema: { type: 'json' },
+      render: (_args: unknown, value: unknown) => [{ type: 'text', text: JSON.stringify(value, null, 2) }],
+    },
+    async execute(args: { prompt: string }, exec: any): Promise<any> {
+      const active = splitKey(videoActive)
+      if (!active) {
+        return { ok: false, error: '尚未配置生视频模型：请在「设置 → AI 模型」中选择生视频模型。' }
+      }
+      return generateVideoViaHttp(active, String(args.prompt), exec?.signal)
+    },
+  })), '@dsh-external/dsh-vision-helper: generate_video')
 
   // ═══ 非多模态主模型图片降级（纯插件，不动核心）═══
   // 原理：llm/stream 是 LlmRuntime 的 waterfall 事件，监听器可以短路——
@@ -795,6 +952,7 @@ export function applyVisionHelper(ctx: PluginContext, configInput: Partial<Confi
       path: '/api/vision-helper/providers',
       handler: async (_req: any, res: any) => {
         try {
+          const caps = await readCapabilities()
           const providers: any[] = []
           for (const info of ctx.llm.listProviders()) {
             let models: any[] = []
@@ -806,6 +964,7 @@ export function applyVisionHelper(ctx: PluginContext, configInput: Partial<Confi
                 id: m.id,
                 name: m.name || m.id,
                 input: Array.isArray(m.input) ? m.input : null,
+                outputs: caps[`${info.id}/${m.id}`] ?? [],
               })),
             })
           }
@@ -866,6 +1025,7 @@ export function applyVisionHelper(ctx: PluginContext, configInput: Partial<Confi
       path: '/api/image-gen/snapshot',
       handler: async (_req: any, res: any) => {
         try {
+          const caps = await readCapabilities()
           const providers: any[] = []
           for (const info of ctx.llm.listProviders()) {
             let models: any[] = []
@@ -873,10 +1033,238 @@ export function applyVisionHelper(ctx: PluginContext, configInput: Partial<Confi
             providers.push({
               id: info.id,
               name: info.name,
-              models: models.map((m: any) => ({ id: m.id, name: m.name || m.id })),
+              models: models.map((m: any) => ({
+                id: m.id,
+                name: m.name || m.id,
+                input: Array.isArray(m.input) ? m.input : null,
+                outputs: caps[`${info.id}/${m.id}`] ?? [],
+              })),
             })
           }
           jsonResponse(res, 200, { ok: true, providers, imageActive })
+        } catch (error: any) {
+          jsonResponse(res, 500, { ok: false, error: String(error?.message ?? error) })
+        }
+      },
+    })
+  })
+
+  // ── 生视频接口（AI 模型页生视频区块依赖）──
+
+  ctx.effect(() => {
+    const webServer = ctx.webServer
+    if (!webServer) return () => {}
+    return webServer.register({
+      kind: 'exact',
+      path: '/api/video-gen/snapshot',
+      handler: async (_req: any, res: any) => {
+        try {
+          const caps = await readCapabilities()
+          const providers: any[] = []
+          for (const info of ctx.llm.listProviders()) {
+            let models: any[] = []
+            try { models = await ctx.llm.listModels(info.id) } catch { /* 无发现 */ }
+            providers.push({
+              id: info.id,
+              name: info.name,
+              models: models.map((m: any) => ({
+                id: m.id,
+                name: m.name || m.id,
+                input: Array.isArray(m.input) ? m.input : null,
+                outputs: caps[`${info.id}/${m.id}`] ?? [],
+              })),
+            })
+          }
+          jsonResponse(res, 200, { ok: true, providers, videoActive })
+        } catch (error: any) {
+          jsonResponse(res, 500, { ok: false, error: String(error?.message ?? error) })
+        }
+      },
+    })
+  })
+
+  ctx.effect(() => {
+    const webServer = ctx.webServer
+    if (!webServer) return () => {}
+    return webServer.register({
+      kind: 'exact',
+      path: '/api/video-gen/config',
+      handler: async (req: any, res: any) => {
+        try {
+          if (req.method !== 'POST') return jsonResponse(res, 405, { ok: false, error: 'method not allowed' })
+          const body = await readBody(req)
+          const key = body && typeof body.videoActive === 'string' ? body.videoActive : ''
+          if (!splitKey(key)) return jsonResponse(res, 400, { ok: false, error: 'videoActive 须为 provider/model 格式' })
+          await saveVideoActive(key)
+          jsonResponse(res, 200, { ok: true, videoActive: key })
+        } catch (error: any) {
+          jsonResponse(res, 500, { ok: false, error: String(error?.message ?? error) })
+        }
+      },
+    })
+  })
+
+  // ── 模型能力声明接口（生图/生视频；ModelListEditor 三开关读写）──
+
+  ctx.effect(() => {
+    const webServer = ctx.webServer
+    if (!webServer) return () => {}
+    return webServer.register({
+      kind: 'exact',
+      path: '/api/model-capabilities',
+      handler: async (req: any, res: any) => {
+        try {
+          if (req.method === 'POST') {
+            const body = await readBody(req)
+            const caps = body && typeof body.capabilities === 'object' && body.capabilities !== null
+              ? body.capabilities
+              : {}
+            const clean: Record<string, string[]> = {}
+            for (const [key, value] of Object.entries(caps)) {
+              if (splitKey(key) && Array.isArray(value)) {
+                const mods = value.filter((x): x is string =>
+                  typeof x === 'string' && (x === 'image' || x === 'video'))
+                if (mods.length > 0) clean[key] = mods
+              }
+            }
+            await saveCapabilities(clean)
+            return jsonResponse(res, 200, { ok: true, capabilities: clean })
+          }
+          const caps = await readCapabilities()
+          jsonResponse(res, 200, { ok: true, capabilities: caps })
+        } catch (error: any) {
+          jsonResponse(res, 500, { ok: false, error: String(error?.message ?? error) })
+        }
+      },
+    })
+  })
+
+  // ── 模型能力验证接口（「测试」按钮：实际调用一次对应能力）──
+  // capability: vision(识图) / image(生图) / video(生视频)
+  // vision/image 同步验证；video 只验证任务能否创建成功（不等待生成完成）。
+
+  /** 1×1 红色像素 PNG（识图测试用，能返回描述即说明模型支持图片输入）。 */
+  const TEST_IMAGE_PNG =
+    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
+
+  async function createVideoTask(
+    provider: string,
+    model: string,
+    prompt: string,
+    signal?: AbortSignal,
+  ): Promise<{ ok: true; taskId: string } | { ok: false; error: string }> {
+    const profile = providerConfig(ctx, provider)
+    if (!profile || typeof profile.baseURL !== 'string' || !profile.baseURL) {
+      return { ok: false, error: `provider "${provider}" 未配置 baseURL` }
+    }
+    const apiKey = await resolveApiKey(ctx, profile)
+    if (!apiKey) return { ok: false, error: `未找到 API 凭据（${profile.apiKeyEnv || '未知 env'}）` }
+    const base = String(profile.baseURL).replace(/[\\/]+$/, '')
+    const safePrompt = String(prompt).replace(/'/g, "''")
+    const command = [
+      "$ErrorActionPreference = 'Stop'",
+      "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12",
+      'try {',
+      `  $b = @{ model = '${psEscape(model)}'; prompt = '${safePrompt}' } | ConvertTo-Json -Compress`,
+      `  $c = Invoke-RestMethod -UseBasicParsing -Uri '${psEscape(base)}/videos' -Method Post -Headers @{ Authorization = 'Bearer ${psEscape(apiKey)}'; 'Content-Type' = 'application/json' } -Body $b -TimeoutSec 120`,
+      '  $id = $c.id',
+      "  if ($id) { @{ ok = $true; id = $id } | ConvertTo-Json -Compress } else { @{ ok = $false; error = '响应无 id' } | ConvertTo-Json -Compress }",
+      '} catch {',
+      "  $detail = ''",
+      "  if ($_.ErrorDetails.Message) { $detail = $_.ErrorDetails.Message }",
+      "  @{ ok = $false; error = $_.Exception.Message; detail = $detail } | ConvertTo-Json -Depth 4 -Compress",
+      '}',
+    ].join('; ')
+    try {
+      const policy = ctx.sandboxPolicy.resolve({ mode: 'danger-full-access' })
+      const spec = ctx.shell.resolve({ command, timeoutMs: 150000, signal, sandboxPolicy: policy })
+      const result = await ctx.shell.run(spec)
+      const stdout = result.stdout && result.stdout.text ? result.stdout.text : ''
+      const stderr = result.stderr && result.stderr.text ? result.stderr.text : ''
+      if (result.exitCode !== 0) {
+        return { ok: false, error: `生视频 API 调用失败 (exit ${result.exitCode}): ${(stderr || stdout || '未知错误').slice(0, 400)}` }
+      }
+      let parsed: any = null
+      try { parsed = JSON.parse(stdout) } catch {
+        return { ok: false, error: '生视频 API 响应解析失败: ' + stdout.slice(0, 300) }
+      }
+      if (!parsed || parsed.ok !== true) {
+        return { ok: false, error: '生视频 API 错误: ' + JSON.stringify(parsed).slice(0, 400) }
+      }
+      return { ok: true, taskId: String(parsed.id ?? '') }
+    } catch (error: any) {
+      return { ok: false, error: '生视频 API 调用异常: ' + String(error?.message ?? error) }
+    }
+  }
+
+  async function testCapability(
+    provider: string,
+    model: string,
+    capability: string,
+    signal?: AbortSignal,
+  ): Promise<any> {
+    if (capability === 'vision') {
+      // 直接对指定 provider/model 发测试图，验证「该模型」是否支持识图，
+      // 而不是复用全局视觉模型列表（那样测的是辅助视觉模型，不是被测模型）。
+      const profile = providerConfig(ctx, provider)
+      if (!profile || typeof profile.baseURL !== 'string' || !profile.baseURL) {
+        return { ok: false, capability, error: `provider "${provider}" 未配置 baseURL` }
+      }
+      const apiKey = await resolveApiKey(ctx, profile)
+      if (!apiKey) return { ok: false, capability, error: `未找到 API 凭据（${profile.apiKeyEnv || '未知 env'}）` }
+      try {
+        const res = await callVisionChat(
+          ctx, profile.baseURL, apiKey, model, TEST_IMAGE_PNG,
+          '这张图是什么颜色？用一句话回答。', config.timeoutMs, signal,
+          { flatImage: false, reasoningOff: null, maxTokens: config.maxTokens },
+        )
+        if (res.ok && typeof res.content === 'string' && res.content.trim().length > 0) {
+          return { ok: true, capability, result: res.content.trim() }
+        }
+        return { ok: false, capability, error: (res.error || res.detail || '未返回描述').slice(0, 400) }
+      } catch (error: any) {
+        return { ok: false, capability, error: String(error?.message ?? error).slice(0, 400) }
+      }
+    }
+    if (capability === 'image') {
+      const profile = providerConfig(ctx, provider)
+      if (!profile || typeof profile.baseURL !== 'string' || !profile.baseURL) {
+        return { ok: false, capability, error: `provider "${provider}" 未配置 baseURL` }
+      }
+      const apiKey = await resolveApiKey(ctx, profile)
+      if (!apiKey) return { ok: false, capability, error: `未找到 API 凭据（${profile.apiKeyEnv || '未知 env'}）` }
+      const base = String(profile.baseURL).replace(/[\\/]+$/, '')
+      const one = await generateOne(base, apiKey, model, 'a single red dot on white background', signal)
+      if (!one.ok) return { ok: false, capability, error: one.error }
+      return { ok: true, capability, result: one.url }
+    }
+    if (capability === 'video') {
+      const created = await createVideoTask(provider, model, 'a slowly moving red dot', signal)
+      if (!created.ok) return { ok: false, capability, error: created.error }
+      return { ok: true, capability, result: `任务已创建（id: ${created.taskId}），生成中…` }
+    }
+    return { ok: false, capability, error: `未知能力：${capability}` }
+  }
+
+  ctx.effect(() => {
+    const webServer = ctx.webServer
+    if (!webServer) return () => {}
+    return webServer.register({
+      kind: 'exact',
+      path: '/api/test-capability',
+      handler: async (req: any, res: any) => {
+        try {
+          if (req.method !== 'POST') return jsonResponse(res, 405, { ok: false, error: 'method not allowed' })
+          const body = await readBody(req)
+          const provider = body && typeof body.provider === 'string' ? body.provider : ''
+          const model = body && typeof body.model === 'string' ? body.model : ''
+          const capability = body && typeof body.capability === 'string' ? body.capability : ''
+          if (!provider || !model) return jsonResponse(res, 400, { ok: false, error: 'provider/model 不能为空' })
+          if (!['vision', 'image', 'video'].includes(capability)) {
+            return jsonResponse(res, 400, { ok: false, error: 'capability 须为 vision/image/video' })
+          }
+          const result = await testCapability(provider, model, capability)
+          jsonResponse(res, 200, result)
         } catch (error: any) {
           jsonResponse(res, 500, { ok: false, error: String(error?.message ?? error) })
         }
@@ -906,4 +1294,5 @@ export function applyVisionHelper(ctx: PluginContext, configInput: Partial<Confi
   })
 
   void loadImageConfig()
+  void loadVideoConfig()
 }

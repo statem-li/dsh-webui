@@ -5,13 +5,14 @@
  */
 
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type {
   ChangeRecord,
   MemoryEntry,
   ProjectMeta,
+  RevisionMeta,
   StoreState,
 } from '../types.js'
 
@@ -94,6 +95,9 @@ export async function readJsonl<T>(file: string): Promise<T[]> {
   }
   return out
 }
+
+/** 修订版本保留上限（滚动清理，超过只保留最近 N 个）。 */
+const REVISION_KEEP = 20
 
 /**
  * MemoryStore：所有记忆数据的读写入口。
@@ -439,6 +443,76 @@ export class MemoryStore {
       }
     }
     return out
+  }
+
+  // ── 修订版本（consolidate 回滚锚点） ────────────────────────────────
+
+  revisionsDir(): string {
+    return join(this.root, 'revisions')
+  }
+
+  /**
+   * 写入一个修订快照（整理前调用），返回修订 id。
+   * 保存 meta + 全量 entries，回滚时直接整体恢复。
+   */
+  async writeRevision(input: { entries: MemoryEntry[]; scope: string; trigger: 'daily' | 'manual' }): Promise<string> {
+    const id = `rev_${Date.now().toString(36)}_${randomUUID().slice(0, 8)}`
+    const meta: RevisionMeta = {
+      id,
+      at: nowIso(),
+      entryCount: input.entries.length,
+      scope: input.scope,
+      trigger: input.trigger,
+    }
+    await atomicWriteJson(join(this.revisionsDir(), `${id}.json`), { version: 1, meta, entries: input.entries })
+    await this.pruneRevisions(REVISION_KEEP)
+    return id
+  }
+
+  /** 列出修订版本（新 → 旧）。 */
+  async listRevisions(): Promise<RevisionMeta[]> {
+    const dir = this.revisionsDir()
+    let files: string[]
+    try {
+      files = await readdir(dir)
+    } catch {
+      return []
+    }
+    const metas: RevisionMeta[] = []
+    for (const file of files) {
+      if (!/^rev_[0-9a-z]+_[0-9a-z]+\.json$/.test(file)) continue
+      const data = await readJson<{ meta?: RevisionMeta }>(join(dir, file), {})
+      if (data.meta !== undefined && typeof data.meta.id === 'string') metas.push(data.meta)
+    }
+    return metas.sort((a, b) => b.at.localeCompare(a.at))
+  }
+
+  /** 读修订快照的全部条目；不存在返回 null。 */
+  async readRevisionEntries(id: string): Promise<MemoryEntry[] | null> {
+    const data = await readJson<{ entries?: MemoryEntry[] } | null>(join(this.revisionsDir(), `${id}.json`), null)
+    if (data === null || !Array.isArray(data.entries)) return null
+    return data.entries
+  }
+
+  /** 回滚到某修订（整体恢复 entries，走写串行队列）。返回是否成功。 */
+  async restoreRevision(id: string): Promise<boolean> {
+    const entries = await this.readRevisionEntries(id)
+    if (entries === null) return false
+    await this.replaceEntries(() => entries)
+    return true
+  }
+
+  /** 滚动清理：只保留最近 keep 个修订。 */
+  async pruneRevisions(keep: number): Promise<void> {
+    const metas = await this.listRevisions()
+    if (metas.length <= keep) return
+    for (const meta of metas.slice(keep)) {
+      try {
+        await unlink(join(this.revisionsDir(), `${meta.id}.json`))
+      } catch {
+        // 已不存在则忽略。
+      }
+    }
   }
 
   // ── md 产物（compile.ts 调用） ─────────────────────────────────────

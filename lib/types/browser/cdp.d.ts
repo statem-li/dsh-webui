@@ -70,6 +70,8 @@ export declare function navigateHistory(session: CdpSession, delta: number): Pro
  * AI 浏览器主流程为有头模式，视口跟随真实窗口，不做覆写（避免画面跳动）。
  */
 export declare function setViewport(session: CdpSession, width: number, height: number, deviceScaleFactor?: number): Promise<void>;
+/** 清除视口覆写，恢复跟随真实窗口/视图（选取模式结束后调用）。 */
+export declare function clearViewport(session: CdpSession): Promise<void>;
 /** 页面截图（默认 jpeg；format 可传 png 无损，适合文字/卡片）。
  *  fromSurface=true 截合成器表面（视图可见时画质最佳）；detached/不可见视图
  *  可能等不到合成帧（命令会超时），调用方应降级重试 fromSurface=false
@@ -98,7 +100,7 @@ export declare function getViewportSize(session: CdpSession): Promise<{
     width: number;
     height: number;
 }>;
-/** 元素选取结果（供 client 面板回填对话框）。 */
+/** 元素选取结果（供 client 面板回填对话框 + hover 高亮范围框）。 */
 export interface InspectedElement {
     found: boolean;
     selector: string;
@@ -108,8 +110,17 @@ export interface InspectedElement {
     role: string;
     text: string;
     label: string;
+    /** 元素在页面视口（CSS 像素）内的范围，供 client hover 时叠加范围提示框。 */
+    rect: {
+        left: number;
+        top: number;
+        width: number;
+        height: number;
+    } | null;
+    vw: number;
+    vh: number;
 }
-/** 在目标页按视口坐标采集元素定位信息（唯一选择器 + 摘要字段）。 */
+/** 在目标页按视口坐标采集元素定位信息（唯一选择器 + 摘要字段 + 范围）。 */
 export declare function inspectElementAt(session: CdpSession, x: number, y: number): Promise<InspectedElement>;
 /**
  * 真实坐标鼠标点击（CDP Input 域）。

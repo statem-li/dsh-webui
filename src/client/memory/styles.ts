@@ -77,6 +77,8 @@ export const css = {
   detailBody: 'dsh-memory-detail-body',
   detailTags: 'dsh-memory-detail-tags',
   detailForm: 'dsh-memory-detail-form',
+  revActions: 'dsh-memory-rev-actions',
+  consolidate: 'dsh-memory-consolidate',
 } as const
 
 const STYLE_ID = 'dsh-memory-styles'
@@ -88,9 +90,9 @@ const SHEET = `
 
 /* ── Tab：ghost 按钮组（与用量工作台 tabNav 同款）── */
 .dsh-memory-tabs{flex:none;display:flex;align-items:center;gap:4px}
-.dsh-memory-tab{appearance:none;border:none;background:transparent;border-radius:8px;height:32px;padding:0 14px;font-size:13px;line-height:22px;color:var(--dsw-alias-label-secondary,#999);cursor:pointer;font-family:inherit}
+.dsh-memory-tab{appearance:none;border:none;background:transparent;border-radius:8px;height:32px;padding:0 14px;font-size:13px;line-height:22px;color:var(--dsw-alias-label-secondary,#999);cursor:pointer;font-family:inherit;transition:background .22s cubic-bezier(.2,.8,.2,1),color .22s cubic-bezier(.2,.8,.2,1),box-shadow .22s cubic-bezier(.2,.8,.2,1)}
 .dsh-memory-tab:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.06));color:var(--dsw-alias-label-primary,#eee)}
-.dsh-memory-tab-active,.dsh-memory-tab-active:hover{background:var(--dsw-alias-button-ghost-active-fill,rgba(255,255,255,.08));color:var(--dsw-alias-label-primary,#eee);font-weight:600}
+.dsh-memory-tab-active,.dsh-memory-tab-active:hover{background:color-mix(in srgb,var(--dsw-alias-state-business-primary,#4a9eff) 12%,transparent);color:var(--dsw-alias-state-business-primary,#4a9eff);font-weight:600;box-shadow:0 0 10px color-mix(in srgb,var(--dsw-alias-state-business-primary,#4a9eff) 45%,transparent)}
 
 /* ── 区块标题（caption：12/18/500）── */
 .dsh-memory-section-title{margin:2px 2px 0;font-size:12px;font-weight:500;line-height:18px;color:var(--dsw-alias-label-secondary,#bbb)}
@@ -98,9 +100,9 @@ const SHEET = `
 /* ── 项目筛选：密集胶囊（h28 r14，border-l2）── */
 .dsh-memory-top-row{flex:none;display:flex;flex-wrap:wrap;align-items:center;gap:6px}
 .dsh-memory-project-chips{display:flex;flex-wrap:wrap;gap:6px;min-width:0}
-.dsh-memory-project-chip{flex:none;display:inline-flex;align-items:center;gap:4px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;appearance:none;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.12));border-radius:14px;height:28px;padding:0 10px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-primary,#eee);background:transparent;cursor:pointer;font-family:inherit;box-sizing:border-box}
+.dsh-memory-project-chip{flex:none;display:inline-flex;align-items:center;gap:4px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;appearance:none;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.12));border-radius:14px;height:28px;padding:0 10px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-primary,#eee);background:transparent;cursor:pointer;font-family:inherit;box-sizing:border-box;transition:background .22s cubic-bezier(.2,.8,.2,1),color .22s cubic-bezier(.2,.8,.2,1),box-shadow .22s cubic-bezier(.2,.8,.2,1),border-color .22s cubic-bezier(.2,.8,.2,1)}
 .dsh-memory-project-chip:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.06))}
-.dsh-memory-project-chip-active,.dsh-memory-project-chip-active:hover{border-color:var(--dsw-alias-state-business-primary,#4a9eff);color:var(--dsw-alias-state-business-primary,#4a9eff);background:var(--dsw-alias-button-ghost-active-fill,rgba(255,255,255,.06))}
+.dsh-memory-project-chip-active,.dsh-memory-project-chip-active:hover{border-color:var(--dsw-alias-state-business-primary,#4a9eff);color:var(--dsw-alias-state-business-primary,#4a9eff);background:color-mix(in srgb,var(--dsw-alias-state-business-primary,#4a9eff) 12%,transparent);box-shadow:0 0 10px color-mix(in srgb,var(--dsw-alias-state-business-primary,#4a9eff) 45%,transparent)}
 
 /* ── 搜索行 ── */
 .dsh-memory-search-row{flex:none;display:flex;align-items:center;gap:6px}
@@ -184,6 +186,19 @@ const SHEET = `
 .dsh-memory-batch-count{font-size:12px;line-height:18px;color:var(--dsw-alias-label-primary,#eee)}
 .dsh-memory-edit-buttons{display:flex;align-items:center;justify-content:flex-end;gap:8px}
 
+/* ── 整理按钮：光感（对齐右上角「对话/轨迹」图块选中态的辉光）── */
+.dsh-memory-consolidate{
+  color:var(--dsw-alias-state-business-primary,#4a9eff);
+  background:color-mix(in srgb,var(--dsw-alias-state-business-primary,#4a9eff) 12%,transparent);
+  box-shadow:0 0 10px color-mix(in srgb,var(--dsw-alias-state-business-primary,#4a9eff) 45%,transparent);
+  transition:color .12s,background .12s,box-shadow .12s;
+}
+.dsh-memory-consolidate:hover:not(:disabled){
+  color:var(--dsw-alias-state-business-primary,#4a9eff);
+  background:color-mix(in srgb,var(--dsw-alias-state-business-primary,#4a9eff) 18%,transparent);
+  box-shadow:0 0 14px color-mix(in srgb,var(--dsw-alias-state-business-primary,#4a9eff) 60%,transparent);
+}
+
 /* ── 注入开关（composer 工具行）：iconButton 规格 ── */
 .dsh-memory-toggle{flex:none;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border:none;border-radius:6px;padding:0;background:transparent;cursor:pointer;color:var(--dsw-alias-label-tertiary,#888);box-sizing:border-box}
 .dsh-memory-toggle:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.06))}
@@ -191,6 +206,9 @@ const SHEET = `
 .dsh-memory-toggle-off{color:var(--dsw-alias-label-tertiary,#888);opacity:.55}
 
 .dsh-memory-error{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-state-error-primary,#e0434b)}
+
+/* ── 修订版本（回滚按钮行）── */
+.dsh-memory-rev-actions{display:flex;align-items:center;gap:8px}
 .dsh-memory-visually-hidden{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
 
 /* ── focus 规范 ── */

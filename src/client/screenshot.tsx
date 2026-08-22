@@ -35,6 +35,14 @@ function SpinnerIcon({ size = 16 }: { size?: number }) {
   )
 }
 
+/** 当前截图主题：跟随主界面深浅色 + 玻璃质感开关（与 glass.ts 的 GLASS_STORAGE_KEY 一致）。 */
+function shotTheme(): 'light' | 'dark' | 'glass' | 'glass-dark' {
+  const dark = document.body.hasAttribute('data-ds-dark-theme')
+  let glass = false
+  try { glass = localStorage.getItem('dsh-webui.appearance.glass') === '1' } catch { /* 忽略 */ }
+  return glass ? (dark ? 'glass-dark' : 'glass') : (dark ? 'dark' : 'light')
+}
+
 interface ShotResult {
   path: string
   imageUrl: string
@@ -60,7 +68,7 @@ export function MessageScreenshotButton({ role, text, sessionId }: { role: 'user
     fetch('/api/webui-screenshot', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ role, text, sessionId }),
+      body: JSON.stringify({ role, text, sessionId, theme: shotTheme() }),
     }).then((res) => res.json()).then((r: { ok?: boolean; error?: string; path?: string; imageUrl?: string }) => {
       if (r.ok === true && typeof r.path === 'string') {
         setResult({ path: r.path, imageUrl: r.imageUrl ?? '' })
@@ -110,7 +118,7 @@ export function MessageScreenshotButton({ role, text, sessionId }: { role: 'user
                 <div className={css.shotPath}>{result.path}</div>
                 <div className={css.shotActions}>
                   <button type="button" className={css.shotAction} onClick={copyPath}>复制路径</button>
-                  <a className={css.shotAction} href={result.imageUrl} download target="_blank" rel="noreferrer">下载</a>
+                  <a className={css.shotPrimary} href={result.imageUrl} download target="_blank" rel="noreferrer">下载 PNG</a>
                   <button type="button" className={css.shotAction} onClick={() => { setOpen(false) }}>关闭</button>
                 </div>
               </>

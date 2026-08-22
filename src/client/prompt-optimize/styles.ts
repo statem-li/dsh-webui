@@ -27,6 +27,19 @@ export const css = {
   knob: 'webui-po-switch-knob',
   knobOn: 'webui-po-switch-knob-on',
   stop: 'webui-po-stop',
+  panelMulti: 'webui-po-panel-multi',
+  panelClosing: 'webui-po-panel-closing',
+  multiBody: 'webui-po-multi-body',
+  sourceBlock: 'webui-po-source',
+  sourceLabel: 'webui-po-source-label',
+  sourceText: 'webui-po-source-text',
+  candidates: 'webui-po-candidates',
+  candidate: 'webui-po-candidate',
+  candidateHead: 'webui-po-candidate-head',
+  candidateLabel: 'webui-po-candidate-label',
+  candidateText: 'webui-po-candidate-text',
+  recommendBadge: 'webui-po-recommend',
+  closeCard: 'webui-po-close',
 } as const
 
 const STYLE_ID = 'dsh-webui-prompt-optimize-styles'
@@ -58,6 +71,24 @@ const SHEET = `
 .webui-po-status-error{color:var(--dsw-alias-state-error-primary)}
 .webui-po-stop{display:flex;align-items:center;justify-content:center;width:100%;height:28px;margin-top:10px;border:1px solid var(--dsw-alias-state-error-primary);border-radius:8px;background:var(--dsw-alias-interactive-bg-hover-danger);color:var(--dsw-alias-state-error-primary);font-size:12px;font-weight:600;cursor:pointer;transition:background .15s,color .15s}
 .webui-po-stop:hover{background:var(--dsw-alias-state-error-primary);color:#fff}
+/* 多轮候选卡片：滑出动画（滑入沿用 .webui-po-panel 的 slide-in / glass rise）。
+ * important 覆盖玻璃模式 html[data-dsh-glass] 的 rise 强制 animation。 */
+.webui-po-panel-closing{animation:webui-po-slide-out 140ms cubic-bezier(.4,0,.6,1) forwards!important}
+@keyframes webui-po-slide-out{from{opacity:1;transform:translateY(0)}to{opacity:0;transform:translateY(6px)}}
+.webui-po-panel-multi{position:fixed;left:0;right:0;top:0;bottom:0;margin:auto;width:800px;max-width:calc(100vw - 32px);height:fit-content;max-height:82vh;padding:20px 24px;overflow-y:auto;z-index:1000}
+.webui-po-multi-body{display:flex;flex-direction:column;gap:14px;min-width:0}
+.webui-po-source{margin-top:2px;padding:14px 16px;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;background:var(--dsw-alias-bg-layer-1)}
+.webui-po-source-label{font-size:13px;font-weight:600;line-height:20px;color:var(--dsw-alias-label-secondary);margin-bottom:6px}
+.webui-po-source-text{font-size:15px;line-height:24px;color:var(--dsw-alias-label-primary);white-space:pre-wrap;word-break:break-word}
+.webui-po-candidates{display:flex;flex-direction:column;gap:12px;min-width:0}
+.webui-po-candidate{display:flex;flex-direction:column;gap:8px;padding:14px 16px;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;background:transparent;text-align:left;cursor:pointer;transition:border-color .15s,background .15s}
+.webui-po-candidate:hover{border-color:var(--dsw-alias-state-business-primary);background:var(--dsw-alias-interactive-bg-hover)}
+.webui-po-candidate-head{display:flex;align-items:center;gap:10px}
+.webui-po-candidate-label{font-size:14px;font-weight:600;line-height:20px;color:var(--dsw-alias-label-primary)}
+.webui-po-recommend{font-size:13px;line-height:18px;font-weight:600;padding:0 8px;border-radius:6px;background:var(--dsw-alias-state-business-primary);color:#fff}
+.webui-po-candidate-text{font-size:15px;line-height:24px;color:var(--dsw-alias-label-secondary);white-space:pre-wrap;word-break:break-word}
+.webui-po-close{display:flex;align-items:center;justify-content:center;width:100%;height:36px;margin-top:4px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:transparent;color:var(--dsw-alias-label-secondary);font-size:14px;font-weight:600;cursor:pointer;transition:background .15s,color .15s}
+.webui-po-close:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
 `
 
 let injected = false

@@ -19,7 +19,7 @@ import {
   Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { MarkstreamMarkdown } from '../markdown/renderer.js'
-import type { ChangeView, MemoryApi, MemoryEntryView, MemoryListResponse, ProjectView } from './api.js'
+import type { ChangeView, MemoryApi, MemoryEntryView, MemoryListResponse, ProjectView, RevisionView } from './api.js'
 import { css, ensureStyles } from './styles.js'
 import { changeActionLabel } from './Notify.tsx'
 import { makeT, type MemoryT } from './locales.js'
@@ -27,7 +27,7 @@ import { modalStaggerClass } from '../modal-animation.js'
 import { PshBody, PshHead, PopoverShell, type PopoverAnchor } from '../popover-shell.js'
 
 /** 面板 Tab。 */
-export type MemoryTab = 'all' | 'changes'
+export type MemoryTab = 'all' | 'changes' | 'revisions'
 
 /** 时间分组。 */
 type GroupKey = 'today' | 'week' | 'earlier' | 'longterm'
@@ -209,6 +209,8 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
   const [state, setState] = useState<ViewState>({ status: 'loading' })
   const [allTags, setAllTags] = useState<Array<{ tag: string; count: number }>>([])
   const [changes, setChanges] = useState<ChangeView[]>([])
+  const [revisions, setRevisions] = useState<RevisionView[]>([])
+  const [consolidating, setConsolidating] = useState(false)
   const [editing, setEditing] = useState<EditState | null>(null)
   const [moving, setMoving] = useState<MoveState | null>(null)
   const [busy, setBusy] = useState(false)
@@ -233,14 +235,16 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
     try {
       const scopeParam = scope === 'all' ? undefined : scope === 'global' ? 'global' : 'project'
       const projectParam = scope.startsWith('project:') ? scope.slice('project:'.length) : undefined
-      const [list, tagsRes, changesRes] = await Promise.all([
+      const [list, tagsRes, changesRes, revisionsRes] = await Promise.all([
         current.list({ scope: scopeParam, project: projectParam, q: q !== '' ? q : undefined, tag: tag !== '' ? tag : undefined }),
         current.tags(),
         current.changes(),
+        current.revisions(),
       ])
       setState({ status: 'ready', snapshot: list })
       setAllTags(tagsRes.tags)
       setChanges(changesRes.changes)
+      setRevisions(revisionsRes.revisions)
     } catch (loadError) {
       setState({ status: 'error' })
       setError(loadError instanceof Error ? loadError.message : String(loadError))
@@ -340,6 +344,30 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
     const name = project?.alias ?? project?.path.split(/[\\/]/).filter(Boolean).at(-1) ?? hash
     if (!window.confirm(t('clearProjectConfirm', { name, count: project?.entryCount ?? 0 }))) return
     void run(() => api.deleteProject(hash))
+  }
+
+  /** 立即整理当前范围（Memory Dream）。 */
+  const handleConsolidate = (): void => {
+    setConsolidating(true)
+    setError('')
+    void (async () => {
+      try {
+        if (scope === 'global') await api.consolidate('global')
+        else if (scope.startsWith('project:')) await api.consolidate('project', scope.slice('project:'.length))
+        else await api.consolidate('all')
+        await load()
+      } catch (consolidateError) {
+        setError(consolidateError instanceof Error ? consolidateError.message : String(consolidateError))
+      } finally {
+        setConsolidating(false)
+      }
+    })()
+  }
+
+  /** 回滚到某修订版本。 */
+  const handleRollback = (revision: RevisionView): void => {
+    if (!window.confirm(t('rollbackConfirm', { id: revision.id, time: relativeTime(revision.at) }))) return
+    void run(() => api.rollback(revision.id))
   }
 
   const startEdit = (entry: MemoryEntryView): void => {
@@ -569,7 +597,7 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
       <div className={`${css.panel} ${modalStaggerClass}`} aria-busy={state.status === 'loading'}>
         {/* Tab：全部 / 变更 */}
         <div className={css.tabs} role="tablist">
-          {(['all', 'changes'] as const).map(key => (
+          {(['all', 'changes', 'revisions'] as const).map(key => (
             <button
               key={key}
               type="button"
@@ -578,7 +606,7 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
               className={tab === key ? `${css.tab} ${css.tabActive}` : css.tab}
               onClick={() => { setTab(key); closeForms() }}
             >
-              {key === 'all' ? t('tabAll') : `${t('tabChanges')}${changes.length > 0 ? ` (${changes.length})` : ''}`}
+              {key === 'all' ? t('tabAll') : key === 'changes' ? `${t('tabChanges')}${changes.length > 0 ? ` (${changes.length})` : ''}` : t('tabRevisions')}
             </button>
           ))}
         </div>
@@ -639,6 +667,17 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
               </>
             )
           })()}
+          <Button
+            variant="ghost"
+            size="sm"
+            className={css.consolidate}
+            disabled={busy || consolidating}
+            onClick={handleConsolidate}
+            style={{ marginLeft: 'auto' }}
+            title={t('consolidateHint')}
+          >
+            {consolidating ? t('consolidating') : t('consolidate')}
+          </Button>
         </div>
 
         {/* 搜索 + 标签筛选 + 新建/多选（全部 Tab） */}
@@ -856,10 +895,38 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
             ? renderEmpty(t('changesEmpty'))
             : <ul className={css.cardList}>{visibleChanges.map(renderChange)}</ul>
         )}
+
+        {/* 修订版本（整理前快照，可一键回滚） */}
+        {state.status === 'ready' && tab === 'revisions' && (
+          revisions.length === 0
+            ? renderEmpty(t('revisionsEmpty'))
+            : <ul className={css.cardList}>{revisions.map(renderRevision)}</ul>
+        )}
       </div>
       </PshBody>
     </PopoverShell>
   )
+
+  /** 渲染一条修订版本（快照信息 + 回滚按钮）。 */
+  function renderRevision(revision: RevisionView): JSX.Element {
+    return (
+      <li key={revision.id} className={css.changeRow}>
+        <span className={css.changeBadge}>{revision.trigger === 'manual' ? t('revManual') : t('revDaily')}</span>
+        <div className={css.changeMain}>
+          <div className={css.cardMeta}>
+            <span>{revision.scope}</span>
+            <span>{t('revEntries', { n: revision.entryCount })}</span>
+            <span>{relativeTime(revision.at)}</span>
+          </div>
+          <div className={css.revActions}>
+            <Button variant="outline" size="sm" disabled={busy} onClick={() => { handleRollback(revision) }}>
+              {t('rollback')}
+            </Button>
+          </div>
+        </div>
+      </li>
+    )
+  }
 
   /** 渲染一条变更（含前后内容对比，无删除按钮）。 */
   function renderChange(change: ChangeView): JSX.Element {

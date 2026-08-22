@@ -85,8 +85,8 @@ const CSS = `
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 10px 12px;
-  background: var(--dsw-alias-bg-layer-2, rgba(127,127,127,.05));
+  padding: 0;
+  background: none;
 }
 
 .dts__summary-title {
@@ -393,11 +393,11 @@ const CSS = `
   gap: 4px;
   max-height: 320px;
   overflow-y: auto;
-  margin: 0 8px 6px 24px;
-  padding: 6px 8px;
-  border-left: 2px solid var(--dsw-alias-border-base, rgba(127,127,127,.25));
-  background: var(--dsw-alias-bg-layer-2, rgba(127,127,127,.04));
-  border-radius: 0 6px 6px 0;
+  margin: 2px 0 6px 24px;
+  padding: 2px 0 2px 10px;
+  border-left: 1px solid var(--dsw-alias-border-base, rgba(127,127,127,.18));
+  background: none;
+  border-radius: 0;
 }
 
 .dts__row-args,
@@ -679,14 +679,16 @@ const CSS = `
   display: flex;
   flex-direction: column;
   gap: 10px;
-  border: 1px solid var(--dsw-alias-border-base, rgba(127,127,127,.22));
-  border-radius: 10px;
-  background: var(--dsw-alias-bg-layer-2, rgba(127,127,127,.04));
-  padding: 12px 12px 14px;
+  border: none;
+  border-radius: 0;
+  background: none;
+  padding: 0;
 }
 
 .dts__modal-panel + .dts__modal-panel {
-  margin-top: 18px;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--dsw-alias-border-base, rgba(127,127,127,.16));
 }
 
 .dts__modal-panel-head {
@@ -736,15 +738,16 @@ const CSS = `
 .dts__reasoning-nav-item {
   flex: none;
   margin: 0;
-  border: 1px solid var(--dsw-alias-border-base, rgba(127,127,127,.25));
+  border: 1px solid transparent;
   border-radius: 8px;
-  padding: 1px 9px;
-  background: var(--dsw-alias-bg-layer-1, rgba(127,127,127,.06));
+  padding: 1px 8px;
+  background: none;
   color: var(--dsw-alias-label-secondary);
   cursor: pointer;
   font-size: 11px;
   line-height: 20px;
   min-width: 24px;
+  text-align: center;
 }
 
 .dts__reasoning-nav-item:hover {
@@ -775,15 +778,15 @@ const CSS = `
   display: inline-flex;
   align-self: flex-start;
   align-items: center;
-  gap: 4px;
-  border-radius: 999px;
-  padding: 2px 12px;
-  background: var(--dsw-alias-bg-layer-2, rgba(127,127,127,.12));
-  border: 1px solid var(--dsw-alias-border-base, rgba(127,127,127,.25));
+  gap: 6px;
+  border-radius: 0;
+  padding: 0;
+  background: none;
+  border: none;
   color: var(--dsw-alias-label-primary);
   font-size: 12px;
   font-weight: 600;
-  line-height: 22px;
+  line-height: 20px;
 }
 
 .dts__modal-reasoning-item {
@@ -814,10 +817,11 @@ const CSS = `
   align-items: center;
   justify-content: center;
   border-radius: 6px;
-  background: var(--dsw-alias-interactive-bg-hover, rgba(127,127,127,.1));
+  background: none;
   color: var(--dsw-alias-label-tertiary);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
+  font-variant-numeric: tabular-nums;
   line-height: 20px;
   margin-top: 2px;
 }
