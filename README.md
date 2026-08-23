@@ -1,6 +1,6 @@
 # dsh-webui — DeepSeek Harness 会话增强全家桶
 
-一个插件融合视图切换、消息导航、技能管理、供应商管理、辅助视觉、生图/生视频、记忆、AI 浏览器、文件浏览器、Markdown 渲染与图表、工具聚合、用量统计、网页搜索、自动化、PlanWeave 计划项目、提示音、壳管理更新、网络代理、对话退回、消息截图、中文思考等能力。纯插件实现，不改动 DSH 源码。
+一个插件融合视图切换、消息导航、技能管理、供应商管理、辅助视觉、生图/生视频、记忆（hybrid 检索）、AI 浏览器、文件浏览器、Markdown 渲染、工具聚合、用量统计、网页搜索、定时自动化任务引擎、PlanWeave 计划项目、会话产物清单、对话退回与文件回退/修改历史对比、提示音、壳管理更新、网络代理、消息截图、中文思考等能力。纯插件实现，不改动 DSH 源码。
 
 ## 一句话安装（DSH）
 
@@ -97,7 +97,8 @@ curl -X POST http://127.0.0.1:3080/api/webui-modules \
 |---|---|
 | 右上角视图图块 + 消息导航 | 对话/轨迹切换图块、消息徽标/弹窗列表、右侧消息横条、弹窗内手动加载更早消息 |
 | 会话置顶 | 侧边栏会话右键菜单：置顶（置顶组排最前）/ 归档按钮 / 重命名；localStorage 持久化，跨标签页实时同步 |
-| 对话退回 | 每条用户消息加退回按钮，一键回退工作区文件到该消息发送前 + 原地回退上下文（fork 到该消息之前 turn 边界 → 归档原会话 → 打开子会话） |
+| 对话退回 | 每条用户消息加退回按钮，一键回退工作区文件到该消息发送前 + 原地回退上下文（fork 到该消息之前 turn 边界 → 归档原会话 → 打开子会话）。v2 git 式内容寻址存储：文件内容按 SHA-1 入全局 blob 库（gzip），快照只落「路径 → 指纹」纯索引，体积降两个数量级 |
+| 会话产物卡片 | host 端独立记账 agent 经 fs 服务的写入产物并落盘（jsonl），重启后消息操作栏「产物」入口仍可打开大卡片：左栏本会话产物清单、右栏应用内展示（图片内嵌 / markdown 渲染 / 代码高亮 / 二进制 hex 兜底），不经系统打开 |
 | 单条消息截图 | assistant 消息 actions 行截图按钮（渲染会话长图 / 单条樱花主题截图）；host 端 markdown-it + Shiki 渲染管线，支持代码高亮 / emoji 短码 / 任务清单 / 表格对齐 / 图片白名单，浅色 / 深色 / 玻璃 / 玻璃深色四主题 |
 | 对话完成胶囊 | 顶部悬浮胶囊（常驻、可拖拽、位置持久化）——完成提醒 + 点击直达最新会话 + 运行中任务实时时长；悬停滑出记录面板；健康提醒徽章（时段可配）；空闲轮播开心话术与 AI 小知识；内置文件浏览器入口；胶囊大小 / 字体 / 显隐可调 |
 | 提示音 + 完成卡片 | 回合结束提示音 + 对话完成卡片 |
@@ -119,6 +120,7 @@ curl -X POST http://127.0.0.1:3080/api/webui-modules \
 | 模型选择增强 | 接管模型座位（纯模型弹出）+ 推理等级滑动式弹出；供应商标签显示当前模型 |
 | 上下文窗口/最大输出预设 | 模型上下文窗口 / 最大输出 token 改为预设下拉选择（倒序档位，支持手输） |
 | 推理等级自动补全 | `webui_sync_reasoning` 工具按供应商模板补全 `reasoningEfforts` |
+| Developer Role 兼容检测 | 一键检测：对每个 openai-completions 供应商真实发 `developer`/`system` 角色对照请求，判定网关是否支持新式 developer 角色；不支持则自动写入路由级 `compat.supportsDeveloperRole: false` 热修复（解决中转网关推理模型一律 HTTP 400） |
 | 网页搜索 | AnySearch provider + 设置卡 |
 | 邮箱验证码 | `mail_get_code` 工具 + 设置卡（QQ 邮箱验证码提取，支持字母数字混合） |
 
@@ -188,14 +190,14 @@ dock 工具条「选取元素」按钮进入选取模式，点击预览画面任
 - 底部悬浮条显示最新一条 AI 操作（一句话），点击展开完整时间线
 - 左侧留白区点击或 Esc 收起抽屉；收起后浏览器视图卸下、不占任何资源
 
-### 自动化
+### 定时自动化任务引擎
 
-左侧导航「新会话」下方菜单项，点开从菜单右侧滑出 TAB 式卡片（窄屏回退底部 sheet），卡片宽高随 TAB 平滑过渡。
+左侧导航「新会话」下方菜单项，点开从菜单右侧滑出 TAB 式浮层卡片（窄屏回退底部 sheet），分「任务计划 / 运行记录」两个 Tab。
 
-- **执行任务**：按分类管理任务；居中模态框新建/编辑任务，可选模型与推理强度（数据来自 DSH 模型目录），为每个任务配置执行计划（间隔/每天/每周/每月/单次五种模式）+ **执行步骤**（有序动作序列，每步可设失败分支「停止/跳过」、保存到文件）+ 失败自动重试次数；任务行一键「立即执行」
-- **真实执行引擎**（host 半身 `/api/webui-automation`）：定时条件满足或手动触发时，host 用 `ctx.llm` **真实调用模型**逐步执行——按每步失败分支（stop/skip）与重试次数推进，可把输出写入工作区文件，最后返回结构化结果（每步成功/失败/跳过 + 输出摘要 + 文件清单）；同任务同日去重；文件下载 / 打开所在文件夹接口路径严格限制在工作区内
-- **执行日志**：大卡片按日期倒序展示每次执行记录，支持按任务/状态筛选、展开查看单次执行的步骤结果与生成的文件清单（文件名/完整路径/大小 + 下载/复制路径/打开所在文件夹），失败可重跑
-- 数据 localStorage 持久化（v1/v2/v3 配置自动迁移）；240ms 淡入淡出 + 内容错落渐显
+- **任务计划**：工具栏「＋ 新建」创建任务（调度类型：单次 at / 固定间隔 every / 5 字段 cron；执行 prompt；绑定模型与推理等级或留空用默认模型）+ **AI 待确认建议区**——Agent 通过 automation 工具发起的 create/update 先落为建议卡，用户二次确认后才生效
+- **真实执行引擎**（host 半身）：CronStore 持久化到 `${DSH_HOME}/automation/dsh-webui/`，服务进程内 60s tick 调度——**GUI 关闭照常触发**；到期任务经 `ctx.llm` 以绑定模型真实执行并记录运行历史；连续失败计数驱动退避，配置修订号乐观锁防运行中编辑错写
+- **运行记录**：每次执行落一条 jsonl 记录（success / error / skipped + 起止时间 + 输出摘要 + 完整产出全文回看）
+- **Agent 协作**：`automation` 工具供 Agent 列出全部任务、以自然语言建议新建/修改任务（经用户确认生效）
 
 ### PlanWeave 计划项目
 
@@ -214,6 +216,8 @@ dock 工具条「选取元素」按钮进入选取模式，点击预览画面任
 ### 记忆
 
 - **记忆引擎**：侧边栏记忆面板 + 会话记忆注入 + 注入开关 + 手动写入长期记忆
+- **本地 hybrid 检索引擎**（零外部依赖）：keyword 精确子串 AND 命中；hybrid（默认）= 字符 n-gram Jaccard 相似度 + 精确命中加成 + 元数据加权（verified / confidence / importance）；semantic 模式预留，待 embedding 接口可用时替换打分实现即可
+- **设置 Tab**：记忆面板内运行时配置（开关 + 数字输入），改动即时生效并持久化到 config.json
 - **Memory Dream 记忆巩固**：每天（或手动触发）用 LLM 对记忆做语义化整理——合并近重复/强相关条目、精炼重写、删除过时/低价值、提升长期；与每日规则化衰减/折叠（处理「分数」）正交叠加，本引擎处理「语义」
 - **安全设计**：输入排除 pinned 条目（保护用户明确标记的内容），apply 时按 id 锚定防误删；整理前写入 revisions 快照支持一键回滚；LLM 失败/超时/解析失败一律空结果，绝不阻塞每日编译
 
@@ -222,6 +226,7 @@ dock 工具条「选取元素」按钮进入选取模式，点击预览画面任
 | 功能 | 说明 |
 |---|---|
 | 用量工作台 | 「趋势」tab：概要统计 + 面积图 + 环图 + 模型/供应商消耗排行榜；时间范围预设选择器（今日/昨日/近7天/近30天/本月/上月/今年/全部/自定义），粒度自适应（≤31 天按日、≤120 天按周、更长按月） |
+| 信号 tab | Agent 效率与归因统计 + 用量异常日红色警示条（可下钻当日会话列表）+ 30 日 Token 预算（数值输入保存，超支进度条预警） |
 | 热力图 | 用量热力分布 |
 | 账户/订阅 | 账户余额与订阅状态展示 |
 | 对话统计条 | 会话流下方统计条（缓存命中率精确到小数点后两位） |
@@ -232,6 +237,8 @@ dock 工具条「选取元素」按钮进入选取模式，点击预览画面任
 | 功能 | 说明 |
 |---|---|
 | 文件浏览器 | 右上角入口 + 树形目录 + 双击编辑（CodeMirror 语法高亮）+ 保存 |
+| 文件修改历史 | 基于对话退回快照体系：时间线列出该文件在各次发消息前的内容变化点，选中后左右分栏 diff（LCS 行级双向对齐、天然同步滚动），对比历史版本与当前磁盘内容 |
+| 应用内文件预览卡 | 官方产物 chip / 正文文件提及的点击接管为应用内滑出预览——图片查看器 / markdown 渲染 / 高亮文本 / 二进制 hex 兜底，全程不经系统打开 |
 | 工作区目录选择器 | 自写弹窗（添加工作区时选文件夹，shadow 官方 native 选择器） |
 
 ### 外观与系统
@@ -260,9 +267,11 @@ src/
 ├── modules.ts                — 功能模块 key 清单与开关解析（host / client 共用）
 ├── modules-host.ts           — 模块开关 host（settings 命名空间 webui-modules + GET/POST /api/webui-modules）
 ├── planweave/                — PlanWeave 计划项目（engine / executor / host / workspace）
-├── automation-host.ts        — 自动化执行引擎 host（/api/webui-automation）
+├── automation/               — 定时自动化任务引擎（store / scheduler / executor / tool / suggestions / routes）
+├── deliverables.ts           — 会话产物记账 host（/api/webui-deliverables，按会话白名单授权）
+├── devrole-probe.ts          — 供应商 Developer Role 兼容性一键检测 + 自动修复
 ├── markdown-html.ts          — 截图用 Markdown 渲染管线（markdown-it + shiki，四主题）
-├── memory/                   — 记忆引擎（engine/consolidate.ts 为 Memory Dream 语义整理）
+├── memory/                   — 记忆引擎（engine/retrieval.ts 本地 hybrid 检索、engine/consolidate.ts 为 Memory Dream 语义整理）
 ├── vision-helper.ts          — 辅助视觉 + 生图 + 生视频能力与 HTTP 接口
 ├── skill-toggles.ts          — 技能开关路由（读写 SKILL.md frontmatter）
 ├── usage-host.ts             — 用量统计 + 技能管理 host
@@ -271,7 +280,7 @@ src/
 ├── prompt-optimize.ts        — 提示词优化 host 路由（loopback-only）
 ├── appearance.ts             — 玻璃质感设置（/api/webui-appearance）
 ├── done-pill.ts              — 对话完成胶囊 host
-├── rewind.ts / screenshot.ts — 对话退回 / 消息截图 host
+├── rewind.ts / rewind-diff.ts / screenshot.ts — 对话退回（git 式内容寻址快照）/ 行级 LCS 对齐 diff / 消息截图 host
 ├── workspace-dir-picker.ts   — 工作区目录选择器
 ├── browser/                  — AI 浏览器 host（壳内多标签对接 + CDP 原语）
 └── client/
@@ -280,10 +289,11 @@ src/
     ├── skill-source/         — 技能 slash 两级导航源 + 技能工具行
     ├── session-pin/          — 会话置顶 / 归档 / 右键菜单 / 重命名
     ├── provider-hub/         — 供应商设置页（chat / vision / image / video）
-    ├── automation/           — 自动化面板（scheduler / TaskEditorModal / 执行日志）
+    ├── automation/           — 自动化面板（Tab 浮层：任务计划 / 运行记录 + AI 建议确认卡）
     ├── markdown/             — markstream 渲染（Shiki 高亮 / stub 替换层）
-    ├── memory/ browser/ file-explorer/ image-gallery/ tool-summary/
-    ├── usage/                — 用量工作台（TrendTab / RangePicker / Heatmap / AreaChart）
+    ├── memory/ browser/ file-explorer/ image-gallery/ tool-summary/ message-deliverables/
+    │                         — 记忆面板（含 SettingsTab）/ 浏览器 dock / 文件浏览器（FileHistoryView 修改历史、预览总线）/ 图库 / 工具聚合 / 会话产物大卡片
+    ├── usage/                — 用量工作台（TrendTab / SignalTab / RangePicker / Heatmap / AreaChart）
     ├── done-pill.tsx         — 完成胶囊 client
     ├── glass.ts / glass-row.tsx — 玻璃质感 client
     ├── session-motion.ts     — 会话切换柔和过渡
@@ -291,7 +301,8 @@ src/
     ├── shell-titlebar.ts     — 壳子窗口控制按钮共存样式
     └── styles.ts             — 注入样式
 docs/
-└── ELEMENT-PICKER.md         — 浏览器元素选取设计文档
+├── ELEMENT-PICKER.md         — 浏览器元素选取设计文档
+└── TEAM-ORCHESTRA.md         — 多智能体团队编排插件设计文档（v0.1 设计稿）
 ```
 
 ## 许可
