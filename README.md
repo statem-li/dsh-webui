@@ -71,7 +71,6 @@ curl -X POST http://127.0.0.1:3080/api/webui-modules \
 | | `webSearch` | AnySearch 网页搜索 |
 | | `mail` | 邮箱验证码 |
 | 技能 | `skills` | 技能 slash 两级导航源 + 技能开关路由 |
-| Markdown | `markdownCharts` | Mermaid / ECharts 图表围栏（关闭后按普通代码块渲染） |
 | AI 浏览器 | `browser` | 浏览器工具 + dock UI + 设置开关 |
 | 自动化与计划 | `automation` | 自动化任务 + 真实执行引擎 |
 | | `planweave` | PlanWeave 计划项目 |
@@ -133,30 +132,8 @@ curl -X POST http://127.0.0.1:3080/api/webui-modules \
 
 ### Markdown 渲染
 
-markstream 流式渲染 + Shiki 代码高亮 + 悬浮目录（TOC）/ 标题锚点 + 提示块（admonition）/ 脚注 / 定义列表 / 任务列表 / 数学公式（KaTeX）+ 思考 chip，外加两种图表围栏（深浅主题自适应，失败时降级展示源码与错误）：
+markstream 流式渲染 + Shiki 代码高亮 + 悬浮目录（TOC）/ 标题锚点 + 提示块（admonition）/ 脚注 / 定义列表 / 任务列表 / 数学公式（KaTeX）+ 思考 chip。
 
-````markdown
-```mermaid
-graph TD
-  A[开始] --> B{判断}
-  B -->|是| C[执行]
-  B -->|否| D[结束]
-```
-````
-
-````markdown
-```echarts
-{
-  "title": { "text": "月度销量" },
-  "xAxis": { "type": "category", "data": ["1月", "2月", "3月"] },
-  "yAxis": { "type": "value" },
-  "series": [{ "type": "bar", "data": [120, 200, 150] }]
-}
-```
-````
-
-- **Mermaid**：流程图 / 时序图 / 甘特图 / 饼图 / 类图 / 状态图等全部内置图表类型。
-- **ECharts**：内容为 ECharts option 的 JSON（支持注释与尾逗号容错），可选 `$height` 字段指定高度（默认 360px，范围 120–1200）；折线/柱状/饼图/桑基/日历/关系图等全量图表与组件。
 - **提示块**：`:::note` / `:::tip` / `:::warning` / `:::danger` / `:::error` 围栏容器，支持自定义标题（`:::warning 注意`）。
 - **目录 / 锚点**：正文标题 ≥ 3 个时自动在顶部生成可折叠目录，点击平滑滚动。
 
@@ -304,7 +281,7 @@ src/
     ├── session-pin/          — 会话置顶 / 归档 / 右键菜单 / 重命名
     ├── provider-hub/         — 供应商设置页（chat / vision / image / video）
     ├── automation/           — 自动化面板（scheduler / TaskEditorModal / 执行日志）
-    ├── markdown/             — markstream 渲染（charts.tsx=ECharts / mermaid.tsx / shiki）
+    ├── markdown/             — markstream 渲染（Shiki 高亮 / stub 替换层）
     ├── memory/ browser/ file-explorer/ image-gallery/ tool-summary/
     ├── usage/                — 用量工作台（TrendTab / RangePicker / Heatmap / AreaChart）
     ├── done-pill.tsx         — 完成胶囊 client
@@ -314,8 +291,7 @@ src/
     ├── shell-titlebar.ts     — 壳子窗口控制按钮共存样式
     └── styles.ts             — 注入样式
 docs/
-├── ELEMENT-PICKER.md         — 浏览器元素选取设计文档
-└── MESSAGE-SCREENSHOT.md     — 消息截图设计文档
+└── ELEMENT-PICKER.md         — 浏览器元素选取设计文档
 ```
 
 ## 许可

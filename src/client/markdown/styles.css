@@ -322,7 +322,7 @@
 /* ---------------- 代码块去蓝化（覆盖 markstream 内置 slate-900 底） ----------------
    markstream 默认给 .code-block / .code-block-node 硬编码 #0f172a（蓝黑）底、
    亮蓝 hover（#3b82f6），且不分深浅主题。这里整体换成中性半透明灰 +
-   DSH 主题 token，深浅主题自适应，与 mermaid 图表的中性配色保持一致。 */
+   DSH 主题 token，深浅主题自适应。 */
 .dsh-better-markdown__markdown .code-block,
 .dsh-better-markdown__markdown .code-block-node {
   background: rgba(127, 127, 127, .07);
@@ -584,119 +584,6 @@
 .dsh-better-markdown__markdown .dsh-better-markdown__toc-item--l4 { padding-left: 44px; }
 .dsh-better-markdown__markdown .dsh-better-markdown__toc-item--l5 { padding-left: 56px; }
 .dsh-better-markdown__markdown .dsh-better-markdown__toc-item--l6 { padding-left: 68px; }
-
-/* ---------------- 图表（ECharts / Mermaid） ---------------- */
-.dsh-better-markdown__diagram {
-  margin: 4px 0;
-  border: 1px solid var(--dsw-alias-border-base, rgba(127, 127, 127, .22));
-  border-radius: 10px;
-  overflow: hidden;
-  background: var(--dsw-alias-bg-layer-1, rgba(127, 127, 127, .03));
-}
-
-.dsh-better-markdown__diagram-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 6px 10px;
-  border-bottom: 1px solid var(--dsw-alias-border-l3, rgba(127, 127, 127, .15));
-  background: var(--dsw-alias-bg-layer-2, rgba(127, 127, 127, .04));
-}
-
-.dsh-better-markdown__diagram-title {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--dsw-alias-label-secondary);
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.dsh-better-markdown__diagram-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--dsw-alias-state-business-primary, #4176e6);
-}
-
-.dsh-better-markdown__diagram-copy {
-  border: 0;
-  border-radius: 6px;
-  padding: 2px 8px;
-  background: none;
-  color: var(--dsw-alias-label-tertiary);
-  cursor: pointer;
-  font-size: 12px;
-}
-
-.dsh-better-markdown__diagram-copy:hover {
-  background: var(--dsw-alias-interactive-bg-hover, rgba(127, 127, 127, .12));
-  color: var(--dsw-alias-label-primary);
-}
-
-.dsh-better-markdown__diagram-loading {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 120px;
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 13px;
-}
-
-.dsh-better-markdown__diagram-canvas {
-  width: 100%;
-}
-
-.dsh-better-markdown__diagram-svg {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: auto;
-  padding: 12px;
-}
-
-.dsh-better-markdown__diagram-svg svg {
-  max-width: 100%;
-  height: auto;
-}
-
-.dsh-better-markdown__diagram-error {
-  padding: 12px;
-}
-
-.dsh-better-markdown__diagram-error-title {
-  margin: 0 0 8px;
-  color: var(--dsw-alias-state-error-primary, #e5484d);
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.dsh-better-markdown__diagram-error-message {
-  margin: 0;
-  border-radius: 6px;
-  padding: 8px 10px;
-  background: color-mix(in srgb, var(--dsw-alias-state-error-primary, #e5484d) 8%, transparent);
-  color: var(--dsw-alias-label-secondary);
-  font-family: var(--ds-font-family-code);
-  font-size: 12px;
-  line-height: 18px;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.dsh-better-markdown__diagram-error-source {
-  margin: 8px 0 0;
-  border-radius: 6px;
-  padding: 8px 10px;
-  overflow: auto;
-  background: var(--dsw-alias-bg-layer-2, rgba(127, 127, 127, .05));
-}
-
-.dsh-better-markdown__diagram-error-source code {
-  color: var(--dsw-alias-label-tertiary);
-  font-family: var(--ds-font-family-code);
-  font-size: 12px;
-}
 
 /* ---------------- 提示块（admonition / callout） ---------------- */
 .dsh-better-markdown__markdown .admonition {

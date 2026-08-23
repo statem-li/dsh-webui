@@ -8,7 +8,8 @@ const PLUGIN_ID = '@dsh-external/dsh-webui'
 
 /**
  * 平台模块（loader 模块表可应答）：react 全家桶 + 全部 @deepseek-ai/* 平台包。
- * 其余依赖（markstream-react / shiki / mermaid / katex 等）全部内联进 bundle。
+ * 其余依赖内联进 bundle，但 mermaid / katex / shiki-stream / stream-monaco
+ * 由下方 resolveId 挂钩替换为本地 stub —— 避免把未使用的大依赖拖进 client。
  */
 const CLIENT_EXTERNALS = [
   'react', 'react/jsx-runtime', 'react-dom', 'react-dom/client',
