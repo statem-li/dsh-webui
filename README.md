@@ -8,15 +8,9 @@
 dsh plugin --profile web add github:statem-li/dsh-webui
 ```
 
-然后在 `~/.dsh/profiles/web/cordis.patch.yml` 追加注册：
-
-```yaml
-- insert:
-    - id: dsh-webui
-      name: "@dsh-external/dsh-webui"
-```
-
 重启 DeepSeek Harness 即可。
+
+本包在 package.json 声明了 `dsh.bundle.patch`（DSH rc.2 起的 bundle 契约），`dsh plugin add` 安装完成后 reconcile 会自动把它加入 profile 的 `dsh.profile.bundles` 层，挂载声明由包内 `cordis.patch.yml` 自带——**无需再手动往 `~/.dsh/profiles/web/cordis.patch.yml` 追加 insert**。若你从旧版本升级且之前手动追加过同 id 条目，按 last-write-wins 合并，删除或保留均无害；已安装用户执行一次 `dsh plugin update` 即会自动激活。
 
 > 注：webui 接管了技能 slash 源（`/` 菜单），安装后需在 `~/.dsh/profiles/web/cordis.patch.yml` 禁用内核 ui-skill 插件以避免同名源冲突：
 

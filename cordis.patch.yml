@@ -1,4 +1,10 @@
-# webui 插件挂载声明(手动安装时追加到 profile 的 cordis.patch.yml)
+# dsh-webui bundle patch：由 profile composer 作为 bundle 层自动应用
+# （package.json 的 dsh.bundle.patch 指向本文件，DSH rc.2 起的 bundle 契约）。
+#
+# `dsh plugin --profile <name> add github:statem-li/dsh-webui` 安装后，
+# reconcile 检测到本声明即自动把本包加入 dsh.profile.bundles，无需再往
+# 用户层 cordis.patch.yml 手动追加 insert。老安装里遗留的同 id 手动条目
+# 按 last-write-wins 合并，删除或保留均无害。
 - insert:
-    - id: webui
-      name: "@dsh-external/webui"
+    - id: dsh-webui
+      name: "@dsh-external/dsh-webui"

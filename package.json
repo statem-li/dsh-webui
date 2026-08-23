@@ -1,6 +1,6 @@
 {
   "name": "@dsh-external/dsh-webui",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "webui：视图图块/消息导航 + 工具调用聚合 + Markdown 渲染 + 模型推理等级同步 + AnySearch 网页搜索（合并 dsh-tool-summary / dsh-better-markdown / dsh-web-search-anysearch）",
   "private": true,
   "type": "module",
@@ -19,6 +19,7 @@
   },
   "files": [
     "lib",
+    "cordis.patch.yml",
     "scripts/build.sh",
     "scripts/conversation-done-card.ps1",
     "assets/task-done.wav",
@@ -26,6 +27,9 @@
   ],
   "license": "BSD-3-Clause",
   "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
     "client": {
       "inject": [
         "@deepseek-ai/dsh-client-runtime",
