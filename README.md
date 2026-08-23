@@ -179,6 +179,8 @@ markstream 流式渲染 + Shiki 代码高亮 + 悬浮目录（TOC）/ 标题锚�
 
 任一步失败立即中止并报「第 N 步失败 + 原因」；全部成功返回最终快照。给 AI 的指令里写一句「用 browser_batch 批量完成」即可触发。
 
+> 提速策略已默认常驻：插件会把「batch / evaluate 优先」的提速策略作为系统提示词自动注入（settings 命名空间 `browser-speed`，默认开启、关闭时零 token 占用），无需每次在指令里点名；开关在 dock 工具条悬停权限卡片里。
+
 #### 元素选取
 
 dock 工具条「选取元素」按钮进入选取模式，点击预览画面任意元素，自动采集唯一 CSS 选择器 + 元素摘要并回填对话框草稿（再点一次或 Esc 退出）。详见 [docs/ELEMENT-PICKER.md](docs/ELEMENT-PICKER.md)。
