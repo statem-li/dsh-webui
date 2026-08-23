@@ -35,13 +35,15 @@ import { applyVisionHelper } from './vision-helper.js'
 import { applyMail } from './mail.js'
 import { applyRewind } from './rewind.js'
 import { applyScreenshot } from './screenshot.js'
+import { applyDeliverables } from './deliverables.js'
 import { apply as applySkillToggles } from './skill-toggles.js'
 import { applyPromptOptimize } from './prompt-optimize.js'
 import { applySidebarFloat } from './sidebar-float.js'
 import { applyAppearance } from './appearance.js'
-import { applyAutomationHost } from './automation-host.js'
+import { applyAutomationHost } from './automation/index.js'
 import { applyPlanweaveHost } from './planweave/host.js'
 import { applyPerfBench } from './perf-bench.js'
+import { applyDevRoleProbe } from './devrole-probe.js'
 import { applyModulesHost } from './modules-host.js'
 import {
   AnySearchSearchProvider,
@@ -243,7 +245,9 @@ export async function apply(ctx: Context, config: WebuiConfig = {}): Promise<voi
   if (modules.messageWidth) applyMessageWidth(ctx)
 
   // 4) 任务完成提示音 + 对话完成桌面卡片（自 dsh-task-done-sound 合并）。
-  if (modules.doneSound) applyTaskDoneSound(ctx)
+  // cardEnabled:false —— 桌面右下角完成卡片已按用户要求禁用（2026-08），
+  // 回合结束只播提示音（仍受设置页「插件任务完成提示音」开关控制）。
+  if (modules.doneSound) applyTaskDoneSound(ctx, { cardEnabled: false })
 
   // 4.5) 对话完成胶囊：全局监听 turn/end，/api/webui-done-pill 供顶部胶囊轮询。
   if (modules.donePill) applyDonePill(ctx)
@@ -301,7 +305,8 @@ export async function apply(ctx: Context, config: WebuiConfig = {}): Promise<voi
   // 18) 外观设置：玻璃质感（Glassmorphism）开关持久化 + /api/webui-appearance。
   if (modules.appearance) applyAppearance(ctx)
 
-  // 19) 自动化执行引擎（/api/webui-automation）：真实执行任务步骤 + 文件下载/打开所在文件夹。
+  // 19) 定时自动化（openhanako 式）：CronStore + 服务端调度器 + automation 工具
+  //     （/api/webui-automation：任务 CRUD / 建议确认 / 运行历史 / 完成事件）。
   if (modules.automation) applyAutomationHost(ctx)
 
   // 20) PlanWeave：本地计划任务图 + 认领/执行/评审/反馈循环（@planweave-ai/runtime 内核 + ctx.llm 执行器）。
@@ -309,4 +314,11 @@ export async function apply(ctx: Context, config: WebuiConfig = {}): Promise<voi
 
   // 21) 推理性能基准测试（/api/perf-bench）：TTFT / TPS / E2E / RPS / 预填充速度。
   applyPerfBench(ctx)
+
+  // 22) 供应商 Developer Role 兼容性一键检测 + 自动修复（/api/webui-devrole/probe）。
+  applyDevRoleProbe(ctx)
+
+  // 23) 会话产物清单（/api/webui-deliverables）：fs 写入事件按会话持久化
+  //     （跨重启存活），供消息操作栏「产物」大卡片回看（官方产物行重启即逝）。
+  applyDeliverables(ctx)
 }

@@ -63,6 +63,9 @@ import { applyRewindClient } from './rewind'
 import { applyCtrlEnterNewline } from './ctrl-enter-newline'
 // 单条消息截图（樱花主题）：assistant 消息 actions 行的截图按钮。
 import { applyMessageScreenshot } from './screenshot'
+// 会话产物大卡片：assistant 消息 actions 行「产物」按钮（左清单右预览，
+// 数据为 host 端 fs 写入记账，服务重启后仍可回看）。
+import { applyMessageDeliverables } from './message-deliverables'
 // 移动端响应式：手机断点识别 + DSH 设置面板单列化等全局覆盖。
 import { injectResponsiveStyles } from './responsive'
 // 壳子窗口控制按钮共存：详情面板头部为右上角「最小化/最大化/关闭」让位。
@@ -77,10 +80,10 @@ import { applySidebarFloatSetting } from './sidebar-float-row'
 // 外观主题：玻璃质感（Glassmorphism）——启动恢复 + 通用设置里的外观开关行。
 import { bootGlass, retractGlass } from './glass'
 import { registerGlassSetting } from './glass-row'
-// 自动化：侧边栏「新会话」下方菜单项 + 一级设置卡片 + 二级内容选择抽屉。
-import { applyAutomation } from './automation'
 // PlanWeave：侧边栏导航行 + 计划面板（进度/块列表/一键推进）。
 import { applyPlanweaveClient } from './planweave'
+// 自动化：侧边栏导航行 + 任务计划面板（openhanako 式 cron/at/every）+ 完成通知。
+import { applyAutomation } from './automation'
 // PlanWeave：插件配置页签的设置卡（项目名/执行模型/每轮步数）。
 import { registerPlanweaveSettingsCard } from './planweave/SettingsCard'
 // 会话切换柔和过渡：内容区淡入浮入 + 侧边栏行选中底色平滑渐变。
@@ -232,6 +235,9 @@ export function apply(ctx: ClientContext): void {
   // ---- 单条消息截图（樱花主题）：assistant 消息 actions 行截图按钮 -----------
   if (on('screenshot')) applyMessageScreenshot(ctx)
 
+  // ---- 会话产物大卡片：消息 actions 行「产物」按钮（重启后仍可回看）----------
+  applyMessageDeliverables(ctx)
+
   // ---- 技能 slash 源（替代内核 ui-skill）：输入 / 先选集合再选技能 ----------
   if (on('skills')) applySkillSource(ctx)
 
@@ -255,14 +261,14 @@ export function apply(ctx: ClientContext): void {
     }, 'webui: glass appearance')
   }
 
-  // ---- 自动化：菜单项（新会话下方）+ 一级设置卡片 + 二级内容选择抽屉 -------
-  if (on('automation')) applyAutomation(ctx)
-
   // ---- 会话切换柔和过渡：内容区淡入浮入 + 侧边栏行底色平滑 ----------------
   if (on('sessionMotion')) ctx.effect(() => applySessionSwitchMotion(), 'webui: session switch motion')
 
   // ---- 会话置顶：置顶排序 + 行内归档按钮 + 右键菜单 -------------------------
   if (on('sessionPin')) applySessionPin(ctx)
+
+  // ---- 自动化（openhanako 式）：侧边栏入口 + 任务计划面板 + 完成通知 --------
+  if (on('automation')) applyAutomation(ctx)
 
   // ---- PlanWeave：侧边栏入口 + 计划面板 ------------------------------------
   if (on('planweave')) applyPlanweaveClient(ctx)

@@ -6,7 +6,8 @@
 
 import { BlockAssembler, createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { Context } from '@deepseek-ai/cordis'
-import type { ExtractCandidate, MemoryConfig } from '../types.js'
+import type { ExtractCandidate, MemoryConfig, MemoryEntry } from '../types.js'
+import { semanticSimilarity } from './retrieval.js'
 import { summarize } from './store.js'
 
 /** 插件用最小 agent 面（避免深层类型依赖）。 */
@@ -218,4 +219,18 @@ export function textOfContent(content: unknown): string {
 /** 变更流摘要（供 change 记录）。 */
 export function candidateSummary(candidate: ExtractCandidate): string {
   return summarize(candidate.content)
+}
+
+/** 语义去重阈值：候选与已有条目 n-gram 相似度 ≥ 该值视为重复，跳过入库（降 churn）。 */
+const DUP_SIMILARITY_THRESHOLD = 0.75
+
+/** 候选内容是否与某条已有记忆高度重复（提取去重）。 */
+export function isDuplicateContent(content: string, existing: MemoryEntry[], threshold = DUP_SIMILARITY_THRESHOLD): boolean {
+  const trimmed = content.trim()
+  if (trimmed === '') return true
+  for (const entry of existing) {
+    if (entry.content.trim() === trimmed) return true
+    if (semanticSimilarity(trimmed, entry.content) >= threshold) return true
+  }
+  return false
 }

@@ -2,8 +2,8 @@
  * dsh-file-explorer — 抽屉主体：工作区切换 + 懒加载文件树 + 编辑器弹窗。
  */
 
-import { useEffect, useState } from 'react'
-import { listWorkspaces, type WorkspaceView } from './api.ts'
+import { useEffect, useMemo, useState } from 'react'
+import { deliverableSource, listWorkspaces, type WorkspaceView } from './api.ts'
 import { FileTree } from './FileTree.tsx'
 import { FileEditorModal } from './FileEditorModal.tsx'
 import type { FileExplorerLocaleKey } from './locales.ts'
@@ -16,6 +16,10 @@ interface FileExplorerDrawerProps {
   onClose: () => void
   /** 当前会话的工作区根（cwd）；有值时抽屉自动跟随到对应工作区。 */
   currentCwd?: string
+  /** 当前会话 id；传给文件弹窗的「修改历史」视图定位快照。 */
+  sessionId?: string
+  /** 外部请求打开的文件种子（产物卡「用文件浏览器打开」）；引用变化即触发。 */
+  openSeed?: { path: string } | null
   t: T
 }
 
@@ -44,7 +48,7 @@ function pickWorkspaceByCwd(workspaces: WorkspaceView[], cwd: string | undefined
   return best?.id
 }
 
-export function FileExplorerDrawer({ open, onClose, currentCwd, t }: FileExplorerDrawerProps): JSX.Element | null {
+export function FileExplorerDrawer({ open, onClose, currentCwd, sessionId, openSeed, t }: FileExplorerDrawerProps): JSX.Element | null {
   const [workspaces, setWorkspaces] = useState<WorkspaceView[]>([])
   const [wsState, setWsState] = useState<WorkspaceState>('loading')
   const [selected, setSelected] = useState('')
@@ -52,6 +56,17 @@ export function FileExplorerDrawer({ open, onClose, currentCwd, t }: FileExplore
   // 滑出动画：父级把 open 置 false 后仍渲染到动画播完再卸载。
   const [visible, setVisible] = useState(open)
   const closing = !open && visible
+
+  // 外部（产物大卡片等）请求直接打开某文件：弹出该文件的查看卡。
+  // seed 以对象引用区分每次请求，同一路径重复点击也能再次触发。
+  const [seedPath, setSeedPath] = useState<string | null>(null)
+  useEffect(() => {
+    if (openSeed === null || openSeed === undefined) return
+    setSeedPath(openSeed.path)
+  }, [openSeed])
+
+  // seed 文件可能落在注册工作区外：走产物记账源（按会话授权）。
+  const deliverables = useMemo(() => deliverableSource(sessionId), [sessionId])
 
   useEffect(() => {
     if (open) setVisible(true)
@@ -67,11 +82,11 @@ export function FileExplorerDrawer({ open, onClose, currentCwd, t }: FileExplore
   useEffect(() => {
     if (!open) return
     const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape' && openFile === null) onClose()
+      if (event.key === 'Escape' && openFile === null && seedPath === null) onClose()
     }
     document.addEventListener('keydown', onKey)
     return () => { document.removeEventListener('keydown', onKey) }
-  }, [onClose, open, openFile])
+  }, [onClose, open, openFile, seedPath])
 
   useEffect(() => {
     if (!open) return
@@ -140,9 +155,11 @@ export function FileExplorerDrawer({ open, onClose, currentCwd, t }: FileExplore
         </div>
       </div>
       <FileEditorModal
-        open={openFile !== null}
-        path={openFile ?? ''}
-        onClose={() => { setOpenFile(null) }}
+        open={openFile !== null || seedPath !== null}
+        path={seedPath ?? openFile ?? ''}
+        sessionId={sessionId}
+        source={seedPath !== null ? deliverables : undefined}
+        onClose={() => { setOpenFile(null); setSeedPath(null) }}
         t={t}
       />
     </>

@@ -920,7 +920,12 @@ export interface BrowserSeatProps {
   inputActions: { setDraft: (text: string) => void }
 }
 
-/** 会话内浏览器常驻按钮（conversation.input.left 条目，始终可见）。 */
+/**
+ * 会话内浏览器常驻按钮（conversation.input.left 条目，始终可见）。
+ * 悬停按钮时上方滑出「禁止 AI 使用浏览器」权限卡片：开关与设置页
+ * 「允许 AI 使用浏览器」同一数据源（/api/dsh-browser/allow），host 在
+ * tools/pre-execute 拦截 browser_* 调用；点击按钮本体仍开合预览抽屉。
+ */
 export const BrowserSeat = memo(function BrowserSeat({ sessionId, input, inputActions }: BrowserSeatProps) {
   const store = browserActivityStore()
   const [, forceUpdate] = useReducer((x: number) => x + 1, 0)
@@ -928,6 +933,55 @@ export const BrowserSeat = memo(function BrowserSeat({ sessionId, input, inputAc
   const info = store.active.get(String(sessionId))
   const engaged = info !== undefined
   const [open, setOpen] = useState(false)
+
+  // ---- 悬停权限卡片：「禁止 AI 使用浏览器」----------------------------
+  // allow=true 允许（host 默认）；false=禁止（host 拦截 browser_*）；null=加载中。
+  // 每次展开卡片时重新拉取，保证与设置页开关的最终一致。
+  const [allow, setAllow] = useState<boolean | null>(null)
+  const [gateOpen, setGateOpen] = useState(false)
+  const gateHideTimer = useRef<number | null>(null)
+
+  const refreshAllow = useCallback((): void => {
+    fetch('/api/dsh-browser/allow', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((r: any) => { if (r && typeof r.allow === 'boolean') setAllow(r.allow as boolean) })
+      .catch(() => {})
+  }, [])
+
+  /** hover 进入按钮/卡片：立即显示并取消延迟关闭，同时刷新最新开关状态。 */
+  const showGate = useCallback((): void => {
+    if (gateHideTimer.current !== null) {
+      window.clearTimeout(gateHideTimer.current)
+      gateHideTimer.current = null
+    }
+    setGateOpen(true)
+    refreshAllow()
+  }, [refreshAllow])
+
+  /** hover 移出：延迟 0.12 秒再收起，给鼠标跨过按钮↔卡片的间隙留时间。 */
+  const scheduleGateHide = useCallback((): void => {
+    if (gateHideTimer.current !== null) window.clearTimeout(gateHideTimer.current)
+    gateHideTimer.current = window.setTimeout(() => {
+      gateHideTimer.current = null
+      setGateOpen(false)
+    }, 120)
+  }, [])
+
+  useEffect(() => () => {
+    if (gateHideTimer.current !== null) window.clearTimeout(gateHideTimer.current)
+  }, [])
+
+  /** 切换「禁止」开关：写回 allow 取反值（与设置页同一 POST 接口）。 */
+  const toggleDeny = useCallback((): void => {
+    if (allow === null) return
+    const next = !allow
+    setAllow(next)
+    fetch('/api/dsh-browser/allow', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ allow: next }),
+    }).catch(() => {})
+  }, [allow])
 
   // 最新草稿：选取结果要追加到「当前」草稿尾部，用 ref 避免回调闭包旧值。
   const draftRef = useRef(input.draft)
@@ -941,23 +995,65 @@ export const BrowserSeat = memo(function BrowserSeat({ sessionId, input, inputAc
     inputActions.setDraft(next)
   }, [inputActions])
 
+  const denied = allow === false
   const tip = engaged
     ? `AI 浏览器${info.label !== '' ? `：${info.label}` : '操作中'}${info.detail !== '' ? ` · ${info.detail}` : ''}`
-    : 'AI 浏览器'
+    : denied ? 'AI 浏览器（已禁止 AI 使用）' : 'AI 浏览器'
+
+  const seatButton = (
+    <button
+      type="button"
+      className={engaged
+        ? 'dsh-browser-seat dsh-browser-seat--on'
+        : denied
+          ? 'dsh-browser-seat dsh-browser-seat--denied'
+          : 'dsh-browser-seat'}
+      aria-label={tip}
+      aria-pressed={engaged}
+      onClick={() => { setOpen(v => !v) }}
+    >
+      <BrowserIcon size={14} />
+    </button>
+  )
 
   return (
     <>
-      <Tooltip label={tip} side="top" delayMs={500}>
-        <button
-          type="button"
-          className={engaged ? 'dsh-browser-seat dsh-browser-seat--on' : 'dsh-browser-seat'}
-          aria-label={tip}
-          aria-pressed={engaged}
-          onClick={() => { setOpen(v => !v) }}
+      {/* 权限卡片展开期间不渲染 Tooltip：避免提示文字叠在卡片上（remount 无状态无感） */}
+      <div className="dsh-browser-seat-wrap" onMouseEnter={showGate} onMouseLeave={scheduleGateHide}>
+        {gateOpen
+          ? seatButton
+          : <Tooltip label={tip} side="top" delayMs={500}>{seatButton}</Tooltip>}
+        <div
+          className={gateOpen ? 'dsh-browser-gate dsh-browser-gate--on' : 'dsh-browser-gate'}
+          role="dialog"
+          aria-label="AI 浏览器权限"
+          aria-hidden={!gateOpen}
         >
-          <BrowserIcon size={14} />
-        </button>
-      </Tooltip>
+          <div className="dsh-browser-gate__head">
+            <span className="dsh-browser-gate__title"><BrowserIcon size={14} /> AI 浏览器</span>
+            <span className={denied ? 'dsh-browser-gate__state dsh-browser-gate__state--deny' : 'dsh-browser-gate__state'}>
+              {denied ? '已禁止' : '已允许'}
+            </span>
+          </div>
+          <div className="dsh-browser-gate__row">
+            <div className="dsh-browser-gate__copy">
+              <span className="dsh-browser-gate__label">禁止 AI 使用浏览器</span>
+              <span className="dsh-browser-gate__desc">开启后 AI 调用浏览器工具将被拒绝；与设置页「允许 AI 使用浏览器」同步。</span>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={denied}
+              aria-label="禁止 AI 使用浏览器"
+              className="dsh-browser-gate__switch"
+              disabled={allow === null}
+              onClick={toggleDeny}
+            >
+              <span className="dsh-browser-gate__knob" />
+            </button>
+          </div>
+        </div>
+      </div>
       {open && <BrowserDrawer sessionId={String(sessionId)} onPickElement={handlePickElement} onClose={() => { setOpen(false) }} />}
     </>
   )

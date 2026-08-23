@@ -11,7 +11,7 @@
     "forceConsistentCasingInFileNames": true,
     "noEmit": true,
     "allowImportingTsExtensions": true,
-    "ignoreDeprecations": "6.0",
+    "ignoreDeprecations": "5.0",
     "baseUrl": ".",
     "paths": {
       "@deepseek-ai/dsh-client-ui-tool/client": ["../../deepseek-harness/node_modules/.pnpm/node_modules/@deepseek-ai/dsh-client-ui-tool/lib/types/client/index.d.ts"],

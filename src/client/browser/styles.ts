@@ -20,6 +20,56 @@ const SHEET = `
 @keyframes dsh-browser-pulse{
   0%,100%{opacity:1}50%{opacity:.45}
 }
+/* 禁止态：AI 浏览器被用户禁用（图标转警示红，一眼可辨） */
+.dsh-browser-seat--denied,
+.dsh-browser-seat--denied:hover{color:var(--dsw-alias-state-danger-primary,#f56c6c)}
+
+/* ── 「禁止 AI 使用浏览器」悬停卡片（按钮上方滑出）──────────────────
+   常驻 DOM + visibility 过渡：hidden 时不参与命中，鼠标划过其区域无误触；
+   展开后按钮↔卡片间移动不丢 hover（卡片是容器的 DOM 后代）。 */
+.dsh-browser-seat-wrap{position:relative;display:inline-flex}
+.dsh-browser-gate{
+  position:absolute;left:-4px;bottom:calc(100% + 10px);z-index:60;
+  width:276px;box-sizing:border-box;padding:12px 14px;border-radius:12px;
+  border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.10));
+  background:var(--dsw-alias-bg-overlay,#1c1f26);
+  box-shadow:var(--dsw-shadow-lv3,0 16px 44px rgba(0,0,0,.35));
+  color:var(--dsw-alias-label-primary,#eee);
+  text-align:left;
+  opacity:0;visibility:hidden;transform:translateY(6px);pointer-events:none;
+  transition:opacity .16s ease,transform .16s ease,visibility 0s linear .16s;
+}
+.dsh-browser-gate--on{
+  opacity:1;visibility:visible;transform:translateY(0);pointer-events:auto;
+  transition:opacity .16s ease,transform .16s ease,visibility 0s;
+}
+.dsh-browser-gate__head{
+  display:flex;align-items:center;justify-content:space-between;gap:8px;
+}
+.dsh-browser-gate__title{display:flex;align-items:center;gap:7px;font-size:13px;font-weight:600}
+.dsh-browser-gate__state{font-size:11px;color:var(--dsw-alias-state-business-primary,#4a9eff)}
+.dsh-browser-gate__state--deny{color:var(--dsw-alias-state-danger-primary,#f56c6c)}
+.dsh-browser-gate__row{
+  display:flex;align-items:flex-start;justify-content:space-between;gap:12px;
+  margin-top:10px;padding-top:10px;
+  border-top:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.08));
+}
+.dsh-browser-gate__copy{display:flex;flex-direction:column;gap:3px;min-width:0}
+.dsh-browser-gate__label{font-size:13px;color:var(--dsw-alias-label-primary,#eee)}
+.dsh-browser-gate__desc{font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary,#999)}
+.dsh-browser-gate__switch{
+  position:relative;flex:none;width:40px;height:22px;border-radius:11px;border:none;
+  cursor:pointer;padding:0;background:var(--dsw-alias-border-l2,#555);
+  transition:background .15s;box-sizing:border-box;
+}
+.dsh-browser-gate__switch[aria-checked='true']{background:var(--dsw-alias-state-business-primary,#4176e6)}
+.dsh-browser-gate__switch:disabled{cursor:default;opacity:.6}
+.dsh-browser-gate__knob{
+  position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;
+  background:var(--dsw-alias-label-tertiary,#888);
+  transition:left .15s,background .15s;box-shadow:0 1px 2px rgba(0,0,0,.2);
+}
+.dsh-browser-gate__switch[aria-checked='true'] .dsh-browser-gate__knob{left:20px;background:#fff}
 
 /* ── 右侧滑出抽屉（portal 到 body）────────────────────────────────
    打开：从右往左滑入；关闭：从左往右滑出。

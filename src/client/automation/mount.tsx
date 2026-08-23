@@ -1,12 +1,11 @@
 /**
  * automation — DOM 注入挂载。
  *
- * 「自动化」菜单项必须出现在「新会话」按钮正下方。侧边栏的
- * `sidebar.workspaces` 是 single 插槽（ui-workspace 已占用，再注册会把它
- * shadow 掉），因此走 DOM 注入 + React portal：
- *  - 锚点 = `[data-slot="sidebar.workspaces"]`（slots 渲染器的稳定锚 div，
- *    display:contents）的父元素，即侧边栏的浏览区容器——它紧跟「新会话」按钮；
- *  - host div 插到该容器之前（insertBefore），portal 内容便落在按钮正下方；
+ * 「自动化」菜单项必须出现在「新会话」按钮正下方（sidebar.workspaces 是
+ * single 插槽，无法再注册条目），因此沿用 DOM 注入契约：
+ *  - 锚点 = `[data-slot="sidebar.workspaces"]`（slots 渲染器的稳定锚 div）；
+ *  - host div（#dsh-automation-menu-host）插到该容器之前——sidebar-nav 的
+ *    用量/技能/记忆入口会自动排到本模块之后；
  *  - 低频轮询兜底：侧边栏整体重挂（HMR/插件重载）后自动重新插入。
  */
 
@@ -18,9 +17,23 @@ const HOST_ID = 'dsh-automation-menu-host'
 /** slots 渲染器给每个插槽渲染的稳定锚点（scoped-slots.tsx 的 ANCHOR 契约）。 */
 const ANCHOR_SELECTOR = '[data-slot="sidebar.workspaces"]'
 
+/** 旧版自动化（localStorage 形态）遗留的存储键：彻底废除时顺手清掉。 */
+const LEGACY_STORAGE_KEYS = [
+  'dsh-webui.automation.tasks.v2',
+  'dsh-webui.automation.tasks.v3',
+  'dsh-webui.automation.logs.v2',
+]
+
 let root: Root | null = null
 let host: HTMLDivElement | null = null
 let pollTimer = 0
+
+/** 清理旧版 localStorage 遗留（幂等、静默）。 */
+function purgeLegacyStorage(): void {
+  try {
+    for (const key of LEGACY_STORAGE_KEYS) localStorage.removeItem(key)
+  } catch { /* ignore */ }
+}
 
 /** 确保 host 已创建并插到侧边栏浏览区之前（幂等）；返回是否已就位。 */
 function ensureHostPlaced(ctx: ClientContext): boolean {
@@ -49,6 +62,7 @@ export function mountAutomation(ctx: ClientContext): () => void {
   if (typeof document === 'undefined') return () => {}
   if (root !== null) return () => {}
 
+  purgeLegacyStorage()
   ensureHostPlaced(ctx)
   // 低频轮询兜底：侧边栏整体重挂（HMR / 插件热重载）导致 host 失联后自动补位。
   pollTimer = window.setInterval(() => {

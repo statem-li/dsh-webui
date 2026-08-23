@@ -11,13 +11,12 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { mountMemoryRoutes } from './api.js'
 import { compileAll, workspaceHashOf } from './engine/compile.js'
-import { extractCandidates, transcriptFromEvents } from './engine/extract.js'
+import { extractCandidates, isDuplicateContent, transcriptFromEvents } from './engine/extract.js'
 import { createMemoryInjector } from './engine/inject.js'
 import { MemoryStore, entryIdOf, summarize } from './engine/store.js'
 import { createTicker } from './engine/ticker.js'
 import { registerMemoryTools } from './tools.js'
-import type { MemoryConfig } from './types.js'
-import { DEFAULT_CONFIG } from './types.js'
+import { applyConfigOverrides, DEFAULT_CONFIG, type MemoryConfig } from './types.js'
 
 /** Stable Cordis plugin name。 */
 export const name = 'dsh-memory'
@@ -35,31 +34,19 @@ interface LiveAgent {
   }
 }
 
-/** 解析插件配置（cordis.patch.yml config 覆盖默认）。 */
-function resolveConfig(input: Partial<MemoryConfig> | undefined): MemoryConfig {
+/** 解析插件配置（config.json 运行时覆盖 + cordis.patch.yml，后者优先）。 */
+function resolveConfig(input: Partial<MemoryConfig> | undefined, persisted?: Partial<MemoryConfig>): MemoryConfig {
   const config: MemoryConfig = { ...DEFAULT_CONFIG }
-  if (input === undefined || typeof input !== 'object') return config
-  const candidate = input as Record<string, unknown>
-  const numbers = ['extractEveryTurns', 'compileEveryTurns', 'compileThreshold', 'decayLambda', 'hitBonus', 'injectTokenBudget', 'injectRefreshSteps', 'extractMaxChars', 'minImportance', 'consolidateMaxEntries', 'consolidateTimeoutMs'] as const
-  for (const key of numbers) {
-    const value = candidate[key]
-    if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
-      ;(config as unknown as Record<string, unknown>)[key] = value
-    }
-  }
-  if (typeof candidate.dailyCompileEnabled === 'boolean') {
-    config.dailyCompileEnabled = candidate.dailyCompileEnabled
-  }
-  if (typeof candidate.consolidateEnabled === 'boolean') {
-    config.consolidateEnabled = candidate.consolidateEnabled
-  }
+  // 先应用 config.json（用户运行时设置），再应用 cordis.patch.yml（代码级配置优先）。
+  if (persisted !== undefined) applyConfigOverrides(config, persisted)
+  applyConfigOverrides(config, input)
   return config
 }
 
 /** 应用入口。 */
 export function applyMemory(ctx: Context, input: Partial<MemoryConfig> | undefined): void {
-  const config = resolveConfig(input)
   const store = new MemoryStore()
+  const config = resolveConfig(input, store.readConfigSync())
   const logError = (stage: string, error: unknown): void => {
     const message = error instanceof Error ? error.stack ?? error.message : String(error)
     ctx.logger?.warn?.(`[dsh-memory] ${stage}: ${message}`)
@@ -67,17 +54,9 @@ export function applyMemory(ctx: Context, input: Partial<MemoryConfig> | undefin
     void store.appendErrorLog(stage, message).catch(() => undefined)
   }
 
-  // ── 全局错误捕获（诊断崩溃根因；无论错误来自哪个插件都记录） ─────────
-  // 注意：注册 unhandledRejection 监听后 Node 不再因未处理拒绝而默认崩溃，
-  // 这里只记录证据（含堆栈）供 errors.log 排查，随后交由 DSH 自身处理。
-  function uncaughtListener(error: Error): void { logError('uncaughtException', error) }
-  function unhandledListener(reason: unknown): void { logError('unhandledRejection', reason) }
-  process.on('uncaughtException', uncaughtListener)
-  process.on('unhandledRejection', unhandledListener)
-  ctx.effect(() => () => {
-    process.removeListener('uncaughtException', uncaughtListener)
-    process.removeListener('unhandledRejection', unhandledListener)
-  }, 'dsh-memory: process error hooks')
+  // 错误处理：所有 fire-and-forget 的 async 任务统一走 ticker.enqueueSafe / 显式 catch，
+  // 失败经 logError 记录到 errors.log。不再注册全局 uncaughtException/unhandledRejection
+  // （避免接管 Node 崩溃语义，也避免把其它插件的错误灌进本插件日志）。
 
   // ── ticker：轮数 / 会话结束 / 每日（内部串行队列） ──────────────────
   const ticker = createTicker(ctx, store, config)
@@ -133,6 +112,9 @@ export function applyMemory(ctx: Context, input: Partial<MemoryConfig> | undefin
     }
   })
 
+  // 退出前回刷内存态到磁盘（节流窗口内的写不丢）。
+  ctx.effect(() => () => { void store.flush() }, 'dsh-memory: flush on dispose')
+
   ctx.logger?.info?.('[dsh-memory] memory engine mounted')
 }
 
@@ -182,6 +164,9 @@ async function extractTurn(
 
   let added = 0
   let updated = 0
+  let deduped = 0
+  // 语义去重：读一次已有条目作快照；候选与已有高度重复则跳过（降 churn）。
+  const existingEntries = await store.readEntries()
   for (const candidate of candidates) {
     // 工作区判定失败 → 回退 global（design §8）。
     let scope: 'global' | 'project' = candidate.scope
@@ -189,6 +174,12 @@ async function extractTurn(
     if (scope === 'project') {
       hash = workspaceHashOf(agent.session.header)
       if (hash === null) scope = 'global'
+    }
+    // 语义去重：跳过与已有记忆高度重复的候选（不写 change，避免提取→consolidate 再删的浪费）。
+    const sameScope = existingEntries.filter(entry => entry.scope === scope && (scope === 'global' || entry.projectHash === hash))
+    if (isDuplicateContent(candidate.content, sameScope)) {
+      deduped += 1
+      continue
     }
     // 变更对比：update 时记录旧内容（before，必须在 upsert 前读取）。
     const beforeEntry = await store.getEntry(entryIdOf(candidate.content, scope, hash))
@@ -200,6 +191,7 @@ async function extractTurn(
       importance: candidate.importance,
       source: 'extract',
     })
+    existingEntries.push(entry)
     // 项目层首次落盘时确保 meta.json 存在（否则面板项目列表看不到该项目）。
     if (scope === 'project' && hash !== null) {
       const meta = await store.readProjectMeta(hash)
@@ -232,6 +224,6 @@ async function extractTurn(
   // 有新增/更新时刷新产物（增量编译）。
   if (added + updated > 0) {
     await compileAll(store, config)
-    ctx.logger?.debug?.(`[dsh-memory] extracted ${added} new, ${updated} updated`)
+    ctx.logger?.debug?.(`[dsh-memory] extracted ${added} new, ${updated} updated, ${deduped} deduped`)
   }
 }

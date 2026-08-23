@@ -262,39 +262,13 @@ interface RewindDiffResult {
   error?: string
 }
 
-/** 取路径的第一个顶层段；含 `/` 时返回「目录名/」，否则返回文件名本身。 */
-function topSegment(path: string): string {
-  const idx = path.indexOf('/')
-  return idx === -1 ? path : `${path.slice(0, idx)}/`
-}
-
-/** 把文件路径列表按顶层目录聚合为 { 目录/: 数量, 文件名: 数量 }。 */
-function groupByTopDir(paths: string[]): Record<string, number> {
-  const groups: Record<string, number> = {}
-  for (const p of paths) {
-    const key = topSegment(p)
-    groups[key] = (groups[key] ?? 0) + 1
-  }
-  return groups
-}
-
 /** 用差异结果拼一句给用户看的话：本次会回退哪些文件。 */
 function describeDiff(diff: RewindDiffResult): string {
   const { modified, added, deleted } = diff.summary
   const parts: string[] = []
   if (modified > 0) parts.push(`恢复 ${modified} 个已修改文件`)
   if (deleted > 0) parts.push(`恢复 ${deleted} 个已删除文件`)
-  if (added > 0) {
-    // 新增文件全部落在同一个顶层目录时，聚合为「删除 xx/ 目录」，比「删除 N 个文件」更直观、不吓人。
-    const groups = groupByTopDir(diff.added)
-    const entries = Object.entries(groups)
-    if (entries.length === 1) {
-      const [dir, count] = entries[0] as [string, number]
-      parts.push(dir.endsWith('/') ? `删除 ${dir} 目录（${count} 个文件）` : `删除 ${count} 个新增文件`)
-    } else {
-      parts.push(`删除 ${added} 个新增文件（${entries.length} 处）`)
-    }
-  }
+  if (added > 0) parts.push(`删除 ${added} 个新增文件`)
   const changes = parts.length > 0 ? `本次将${parts.join('、')}` : '工作区文件无变化'
   return `将回退工作区文件到这条消息发送前的状态，并消除这条消息及之后的上下文。${changes}，此操作不可撤销。`
 }
@@ -389,18 +363,20 @@ export const UserRewindNodeView = memo(function UserRewindNodeView({
         }
         if (errorMsg === null) {
           // 文件回退成功后，才「原地回退」：
-          //   - 有上一条已完成 turn：fork 到该边界 → 打开子会话 → 归档原会话。
-          //   - 第一条消息：归档原会话 → 回到空白会话。
+          //   - 有上一条已完成 turn：fork 到该边界 → 等子会话浮出列表 → 打开
+          //     子会话 → 归档原会话。不等浮出就 open 会把 current 打到不在
+          //     列表的 blank 会话上，UI 闪进「无会话空态」再恢复（用户看到的
+          //     「像刷新一样的闪屏」）。
+          //   - 第一条消息：先 startSession 切到新空白会话，再归档原会话。
+          //     顺序反了的话，归档瞬间 current 被清成 no-session，同样闪空态。
           if (prevTurnEnd !== undefined) {
             const childId = await sessions.fork({ sessionId, atSeq: prevTurnEnd })
-            // 先 open 后 archive：归档「当前会话」会触发会话列表把 current 清成
-            // no-session 空态。若 archive 在前，界面会先闪一下空白再切到子会话；
-            // 先 open 让 current 一步从原会话切到子会话，再归档原会话，无空白帧。
+            await waitSessionSurfaced(sessions.list, childId)
             sessions.open(childId)
             await archiveBestEffort(workspaces, sessionId)
           } else {
-            await archiveBestEffort(workspaces, sessionId)
             workspaces.startSession()
+            await archiveBestEffort(workspaces, sessionId)
           }
         }
       } catch (err: unknown) {
@@ -675,34 +651,25 @@ export const UserRewindNodeView = memo(function UserRewindNodeView({
         )}
       >
         {diffInfo !== null && (() => {
-          const addedGroups = Object.entries(groupByTopDir(diffInfo.added))
-          const addedCollapsed = addedGroups.length === 1 && (addedGroups[0]?.[0].endsWith('/') ?? false)
-          const shownAdded = addedCollapsed ? [] : diffInfo.added.slice(0, 6)
-          const addedMore = addedCollapsed ? 0 : Math.max(0, diffInfo.added.length - shownAdded.length)
-          const modMore = Math.max(0, diffInfo.modified.length - 4)
-          const delMore = Math.max(0, diffInfo.deleted.length - 4)
+          // 逐个列出具体文件路径（每类最多 8 条，超出折叠为计数）——用户需要
+          // 在确认前确切知道哪些文件会被动到，不做目录级聚合。
+          const shownMod = diffInfo.modified.slice(0, 8)
+          const shownAdded = diffInfo.added.slice(0, 8)
+          const shownDel = diffInfo.deleted.slice(0, 8)
+          const modMore = Math.max(0, diffInfo.modified.length - shownMod.length)
+          const addedMore = Math.max(0, diffInfo.added.length - shownAdded.length)
+          const delMore = Math.max(0, diffInfo.deleted.length - shownDel.length)
           return (
             <ul className="dsh-rewind-diffList">
-              {diffInfo.modified.slice(0, 4).map((f) => (
+              {shownMod.map((f) => (
                 <li key={`m-${f}`} className="dsh-rewind-diffItem"><span className="dsh-rewind-diffTag dsh-rewind-diffMod">改</span><span className="dsh-rewind-diffPath">{f}</span></li>
               ))}
               {modMore > 0 && <li className="dsh-rewind-diffMore">… 另有 {modMore} 个已修改文件</li>}
-              {addedCollapsed
-                ? (
-                  <li key="a-dir" className="dsh-rewind-diffItem">
-                    <span className="dsh-rewind-diffTag dsh-rewind-diffAdd">增</span>
-                    <span className="dsh-rewind-diffPath">{addedGroups[0]?.[0]}（{addedGroups[0]?.[1]} 个文件）</span>
-                  </li>
-                )
-                : (
-                  <>
-                    {shownAdded.map((f) => (
-                      <li key={`a-${f}`} className="dsh-rewind-diffItem"><span className="dsh-rewind-diffTag dsh-rewind-diffAdd">增</span><span className="dsh-rewind-diffPath">{f}</span></li>
-                    ))}
-                    {addedMore > 0 && <li className="dsh-rewind-diffMore">… 另有 {addedMore} 个新增文件</li>}
-                  </>
-                )}
-              {diffInfo.deleted.slice(0, 4).map((f) => (
+              {shownAdded.map((f) => (
+                <li key={`a-${f}`} className="dsh-rewind-diffItem"><span className="dsh-rewind-diffTag dsh-rewind-diffAdd">增</span><span className="dsh-rewind-diffPath">{f}</span></li>
+              ))}
+              {addedMore > 0 && <li className="dsh-rewind-diffMore">… 另有 {addedMore} 个新增文件</li>}
+              {shownDel.map((f) => (
                 <li key={`d-${f}`} className="dsh-rewind-diffItem"><span className="dsh-rewind-diffTag dsh-rewind-diffDel">删</span><span className="dsh-rewind-diffPath">{f}</span></li>
               ))}
               {delMore > 0 && <li className="dsh-rewind-diffMore">… 另有 {delMore} 个已删除文件</li>}

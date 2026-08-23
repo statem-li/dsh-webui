@@ -414,143 +414,9 @@ export function startBench(ctx: PluginContext, provider: string, model: string):
   return { ok: true }
 }
 
-// ── 一键检测的独立探测通道(自包含,不依赖 vision-helper 内部闭包)──
-
-/** 1×1 PNG(data URL):识图探测样本。 */
-const DETECT_TEST_IMAGE =
-  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
-
-interface ProbeOutcome { ok: boolean; note: string }
-
-/** 识图探测:chat/completions 带小图。判定口径:
- *  - 任一格式(标准 content 数组 / message 级平铺 image_url)返回描述 → 支持;
- *  - 推理模型的思考链可能吃满小 max_tokens 导致 200 空正文 → 自动加码重试;
- *  - 只要出现过 HTTP 200(网关接受了多模态请求)即判「支持」——不支持识图的
- *    模型会被网关直接 400 拒绝;全部 4xx 才判「不支持」。 */
-async function probeVision(baseURL: string, apiKey: string, model: string): Promise<ProbeOutcome> {
-  const ask = '这张图是什么颜色？一句话回答。'
-  let sawHttp200 = false
-  let lastRejectNote = ''
-  const attempt = async (flat: boolean, maxTokens: number): Promise<{ httpOk: boolean; content: string; failNote: string }> => {
-    const ctrl = new AbortController()
-    const timer = setTimeout(() => ctrl.abort(), 25_000)
-    try {
-      const userMessage: Record<string, unknown> = flat
-        ? { role: 'user', content: ask, image_url: DETECT_TEST_IMAGE }
-        : { role: 'user', content: [{ type: 'text', text: ask }, { type: 'image_url', image_url: { url: DETECT_TEST_IMAGE } }] }
-      const r = await fetch(`${baseURL}/chat/completions`, {
-        method: 'POST',
-        headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ model, messages: [userMessage], max_tokens: maxTokens, temperature: 0, stream: false }),
-        signal: ctrl.signal,
-      })
-      const text = await r.text().catch(() => '')
-      if (!r.ok) return { httpOk: false, content: '', failNote: `HTTP ${r.status}: ${text.slice(0, 100)}` }
-      sawHttp200 = true
-      let content = ''
-      let reasoning = ''
-      try {
-        const msg = JSON.parse(text)?.choices?.[0]?.message
-        content = String(msg?.content ?? '')
-        reasoning = typeof msg?.reasoning_content === 'string' ? msg.reasoning_content : ''
-      } catch { /* ignore */ }
-      return { httpOk: true, content: (content.trim() || reasoning.trim()), failNote: 'HTTP 200 但未返回描述' }
-    } catch (error: any) {
-      return { httpOk: false, content: '', failNote: String(error?.message ?? error).slice(0, 120) }
-    } finally {
-      clearTimeout(timer)
-    }
-  }
-  // 双格式 × 双档 max_tokens:推理模型思考吃满小配额时自动加大重试。
-  for (const flat of [false, true] as const) {
-    for (const maxTokens of [256, 1536]) {
-      const r = await attempt(flat, maxTokens)
-      if (r.httpOk && r.content !== '') return { ok: true, note: `${r.content.slice(0, 60)}${flat ? '（平铺格式）' : ''}` }
-      lastRejectNote = r.failNote
-      if (!r.httpOk) break
-    }
-  }
-  if (sawHttp200) return { ok: true, note: 'HTTP 200 已接受图片请求（未回文本，通常为思考占满输出）' }
-  return { ok: false, note: lastRejectNote !== '' ? lastRejectNote : '所有请求均被提供方拒绝' }
-}
-
-/** 生图探测:/images/generations 生成一张小红点。 */
-async function probeImage(baseURL: string, apiKey: string, model: string): Promise<ProbeOutcome> {
-  const ctrl = new AbortController()
-  const timer = setTimeout(() => ctrl.abort(), 60_000)
-  try {
-    const r = await fetch(`${baseURL}/images/generations`, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ model, prompt: 'a single red dot on white background', n: 1 }),
-      signal: ctrl.signal,
-    })
-    const text = await r.text().catch(() => '')
-    if (!r.ok) return { ok: false, note: `HTTP ${r.status}: ${text.slice(0, 120)}` }
-    try {
-      const j = JSON.parse(text)
-      const has = Boolean(j?.data?.[0]?.url ?? j?.data?.[0]?.b64_json)
-      return has ? { ok: true, note: '样例已生成' } : { ok: false, note: '响应无图片数据' }
-    } catch {
-      return { ok: false, note: '响应解析失败' }
-    }
-  } catch (error: any) {
-    return { ok: false, note: String(error?.message ?? error).slice(0, 120) }
-  } finally {
-    clearTimeout(timer)
-  }
-}
-
-/** 生视频探测:仅验证 /videos 任务能否创建(不等生成完成)。 */
-async function probeVideoTask(baseURL: string, apiKey: string, model: string): Promise<ProbeOutcome> {
-  const ctrl = new AbortController()
-  const timer = setTimeout(() => ctrl.abort(), 45_000)
-  try {
-    const r = await fetch(`${baseURL}/videos`, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ model, prompt: 'a slowly moving red dot' }),
-      signal: ctrl.signal,
-    })
-    const text = await r.text().catch(() => '')
-    if (!r.ok) return { ok: false, note: `HTTP ${r.status}: ${text.slice(0, 120)}` }
-    let id = ''
-    try { id = String(JSON.parse(text)?.id ?? '') } catch { /* ignore */ }
-    return id !== ''
-      ? { ok: true, note: `任务已创建（id: ${id.slice(0, 24)}…）` }
-      : { ok: false, note: '响应无任务 id' }
-  } catch (error: any) {
-    return { ok: false, note: String(error?.message ?? error).slice(0, 120) }
-  } finally {
-    clearTimeout(timer)
-  }
-}
-
-/** 读 model-router.json 的 capabilities。 */
-async function detectLoadCaps(ctx: PluginContext): Promise<Record<string, string[]>> {
-  try {
-    const target = await ctx.fs.resolve('.dsh/model-router.json')
-    const parsed = JSON.parse(await ctx.fs.readText(target))
-    const caps = parsed && typeof parsed.capabilities === 'object' && parsed.capabilities !== null ? parsed.capabilities : {}
-    const out: Record<string, string[]> = {}
-    for (const [k, v] of Object.entries(caps)) {
-      if (Array.isArray(v)) out[k] = v.filter((x): x is string => typeof x === 'string')
-    }
-    return out
-  } catch { return {} }
-}
-
-/** 写 model-router.json 的 capabilities(保留其余字段)。 */
-async function detectPersistCaps(ctx: PluginContext, caps: Record<string, string[]>): Promise<void> {
-  const target = await ctx.fs.resolve('.dsh/model-router.json')
-  let parsed: any = {}
-  try { parsed = JSON.parse(await ctx.fs.readText(target)) } catch { /* 新建 */ }
-  const next = { ...parsed, capabilities: caps }
-  await ctx.fs.writeText(target, JSON.stringify(next, null, 2))
-}
-
-/** 注册 HTTP 接口。 */
 // ── 一键检测:后台任务 + 轮询(每完成一项即写入状态,前端实时逐条渲染)──
+// 2025 起一键检测只做推理等级逐级探测(识图/生图/生视频三项能力不再实测,
+// 由模型行的手动开关声明;需要实体验证时用 /api/test-capability 单项测试)。
 
 interface DetectItem {
   key: string
@@ -568,9 +434,7 @@ interface DetectState {
   finishedAt: number | null
   error: string
   items: DetectItem[]
-  savedCaps: boolean
   savedLevels: boolean
-  savedInput: boolean
   saveError: string
 }
 
@@ -598,31 +462,10 @@ async function runDetectAsync(ctx: PluginContext, provider: string, model: strin
     const apiKey = await resolveApiKey(ctx, profile)
     if (!apiKey) throw new Error(`未找到 API 凭据（${profile.apiKeyEnv || '未知 env'}）`)
     const baseURL = String(profile.baseURL).replace(/[\\/]+$/, '')
-    const deadline = Date.now() + 150_000
+    // 只做推理等级探测:7 档最坏 7×14s=98s,预算放宽到 120s。
+    const deadline = Date.now() + 120_000
 
-    // 1) 三项能力实测。
-    let it = itemOf('vision')
-    it.status = 'running'
-    const vision = await probeVision(baseURL, apiKey, model)
-    it.ok = vision.ok; it.note = vision.note; it.status = 'done'
-
-    it = itemOf('image')
-    if (Date.now() < deadline) {
-      it.status = 'running'
-      const image = await probeImage(baseURL, apiKey, model)
-      it.ok = image.ok; it.note = image.note
-    } else { it.ok = false; it.note = '预算耗尽，已跳过' }
-    it.status = 'done'
-
-    it = itemOf('video')
-    if (Date.now() < deadline) {
-      it.status = 'running'
-      const video = await probeVideoTask(baseURL, apiKey, model)
-      it.ok = video.ok; it.note = video.note
-    } else { it.ok = false; it.note = '预算耗尽，已跳过' }
-    it.status = 'done'
-
-    // 2) 推理等级逐级探测(每完成一级立即写入状态)。
+    // 推理等级逐级探测(每完成一级立即写入状态)。
     const apiKind = String(profile.api ?? '')
     for (const level of DETECT_LEVELS) {
       const li = itemOf(`level:${level}`)
@@ -659,23 +502,7 @@ async function runDetectAsync(ctx: PluginContext, provider: string, model: strin
       li.status = 'done'
     }
 
-
-    // 3) 自动落盘:capabilities + settings(input / reasoningEfforts)。
-    const visionOk = itemOf('vision').ok === true
-    const imageOk = itemOf('image').ok === true
-    const videoOk = itemOf('video').ok === true
-
-    const key = `${provider}/${model}`
-    const caps = await detectLoadCaps(ctx)
-    const capArr = new Set<string>(caps[key] ?? [])
-    if (imageOk) capArr.add('image'); else capArr.delete('image')
-    if (videoOk) capArr.add('video'); else capArr.delete('video')
-    const nextCaps: Record<string, string[]> = { ...caps }
-    if (capArr.size > 0) nextCaps[key] = [...capArr]
-    else delete nextCaps[key]
-    await detectPersistCaps(ctx, nextCaps)
-    st.savedCaps = true
-
+    // 自动落盘:只写 reasoningEfforts(能力声明由模型行手动开关负责,不在此覆盖)。
     try {
       const ns = 'llm-pi-ai'
       const section: any = (ctx.settings as any).get(ns)
@@ -684,16 +511,6 @@ async function runDetectAsync(ctx: PluginContext, provider: string, model: strin
         const idx = provSection.models.findIndex((m: any) => m && m.id === model)
         if (idx >= 0) {
           const nextModels = provSection.models.map((m: any, i: number) => i === idx ? { ...m } : m)
-          const curInput = Array.isArray(nextModels[idx]!.input) ? [...nextModels[idx]!.input] : undefined
-          if (visionOk) {
-            nextModels[idx]!.input = Array.from(new Set([...(curInput ?? ['text']), 'image']))
-            st.savedInput = true
-          } else if (curInput?.includes('image')) {
-            const rest = curInput.filter((x: string) => x !== 'image')
-            if (rest.length === 0 || (rest.length === 1 && rest[0] === 'text')) delete nextModels[idx]!.input
-            else nextModels[idx]!.input = rest
-            st.savedInput = true
-          }
           const thinkers = DETECT_LEVELS.filter(l => l !== 'off' && itemOf(`level:${l}`).ok === true)
           if (thinkers.length > 0) {
             const efforts: Record<string, string | null> = { off: null }
@@ -749,14 +566,9 @@ export function applyPerfBench(ctx: PluginContext): void {
               startedAt: Date.now(),
               finishedAt: null,
               error: '',
-              savedCaps: false,
               savedLevels: false,
-              savedInput: false,
               saveError: '',
               items: [
-                { key: 'vision', label: '识图', status: 'pending', ok: null, note: '' },
-                { key: 'image', label: '生图', status: 'pending', ok: null, note: '' },
-                { key: 'video', label: '生视频', status: 'pending', ok: null, note: '' },
                 ...DETECT_LEVELS.map(level => ({ key: `level:${level}`, label: `推理等级 · ${level}`, status: 'pending' as const, ok: null, note: '' })),
               ],
             }

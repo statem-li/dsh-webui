@@ -48,7 +48,11 @@ export const chatCopy = {
   supportsImageGenHint: '声明该模型可生成图片，生图候选列表将标注「生图」。',
   supportsVideoGen: '生视频',
   supportsVideoGenHint: '声明该模型可生成视频，生视频候选列表将标注「生视频」。',
-  capabilityHint: '模型能力',
+  capabilityHint: '模型能力（手动开关声明）',
+  detectReasoning: '🔍 检测推理等级',
+  detectReasoningTitle: '逐级探测该模型支持的推理等级（off/minimal/low/medium/high/xhigh/max），完成后自动保存配置。识图/生图/生视频请用上方开关手动声明，不做实测。',
+  detectingReasoning: '检测中…（约 30 秒）',
+  capSaveFailed: '能力声明保存失败',
   addModel: '添加模型',
   removeModel: '删除模型',
   modelIdRequired: '模型 ID 不能为空。',
@@ -334,9 +338,8 @@ function IconTrash(): ReactNode {
   )
 }
 
-
 /**
- * 「一键检测」实时进度:分组行式列表(不用表格)。host 每完成一项写入状态,
+ * 「检测推理等级」实时进度:分组行式列表(不用表格)。host 每完成一项写入状态,
  * 前端轮询渲染——完成的项立即点亮(✓/✗ + 说明),运行中的显示「… 检测中」。
  * 全部完成后底部显示自动保存结果。中性色,无表格。
  */
@@ -344,7 +347,6 @@ function DetectProgress({ state }: { state?: any }): ReactNode {
   if (!state) return null
   const items: Array<any> = Array.isArray(state.items) ? state.items : []
   const doneCount = items.filter(i => i.status === 'done').length
-  const capRows = items.filter(i => i.key === 'vision' || i.key === 'image' || i.key === 'video')
   const levelRows = items.filter(i => i.key.startsWith('level:'))
   const rowOf = (it: any): ReactNode => {
     const mark = it.status === 'pending' ? '—'
@@ -375,18 +377,41 @@ function DetectProgress({ state }: { state?: any }): ReactNode {
       border: '1px solid var(--dsw-alias-border-l3, #e5e6eb)',
       borderRadius: 10,
     }}>
-      {groupTitle('能力')}
-      {capRows.map(rowOf)}
       {levelRows.length > 0 ? groupTitle('推理等级') : null}
       {levelRows.map(rowOf)}
       <p style={{ ...hintStyle, marginTop: 6 }}>
         {state.running
           ? `检测中… ${doneCount}/${items.length}（可离开此页，后台继续）`
-          : `已自动保存：能力声明 ${state.savedCaps ? '✓' : '—'} · 推理等级 ${state.savedLevels ? '✓' : '—'} · 识图输入 ${state.savedInput ? '✓' : '—'}${state.saveError ? `｜保存出错：${state.saveError}` : ''}`}
+          : `已自动保存：推理等级 ${state.savedLevels ? '✓' : '—'}${state.saveError ? `｜保存出错：${state.saveError}` : ''}`}
       </p>
     </div>
   )
 }
+/** 能力声明开关：小圆钮 switch + 标签，title 承载说明；点击切换后由回调落盘。 */
+function CapabilitySwitch({ label, hint, checked, disabled, onToggle }: {
+  label: string
+  hint: string
+  checked: boolean
+  disabled?: boolean
+  onToggle: (on: boolean) => void
+}): ReactNode {
+  return (
+    <label style={capSwitchRowStyle} title={hint}>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={checked}
+        disabled={disabled}
+        style={checked ? capSwitchOnStyle : capSwitchStyle}
+        onClick={() => { onToggle(!checked) }}
+      >
+        <span style={checked ? capKnobOnStyle : capKnobStyle} />
+      </button>
+      <span style={capSwitchLabelStyle}>{label}</span>
+    </label>
+  )
+}
+
 /** 作为文本编辑的两个 token 数，位于一行模型的 disclosure 之后。 */
 type CapacityField = 'contextWindow' | 'maxTokens'
 
@@ -436,6 +461,82 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
   const [detectState, setDetectState] = useState<ReadonlyMap<number, any>>(new Map())
   const [detectError, setDetectError] = useState<ReadonlyMap<number, string>>(new Map())
 
+  // 生图/生视频能力声明(model-router.json capabilities):手动开关读写,不再实测。
+  const [caps, setCaps] = useState<Record<string, string[]>>({})
+  const [capsError, setCapsError] = useState<string | undefined>(undefined)
+  useEffect(() => {
+    let alive = true
+    const load = (): void => {
+      fetch('/api/model-capabilities', { cache: 'no-store' })
+        .then((r) => r.json())
+        .then((d: any) => {
+          if (!alive) return
+          if (d && typeof d.capabilities === 'object' && d.capabilities !== null) {
+            setCaps(d.capabilities as Record<string, string[]>)
+          }
+        })
+        .catch(() => { /* 接口不可用时无标签 */ })
+    }
+    load()
+    // 其他模型行勾选/取消后,本行同步最新声明(同一 provider/model key)。
+    window.addEventListener('dsh-webui:model-capabilities-changed', load)
+    return () => {
+      alive = false
+      window.removeEventListener('dsh-webui:model-capabilities-changed', load)
+    }
+  }, [])
+
+  /** 生图/生视频声明的 key:provider/model;行内任一字段缺失则不可写。 */
+  const capKeyOf = (index: number): string => {
+    const provider = probe.provider
+    const modelId = textOf(models[index]!, 'id')
+    return provider !== undefined && modelId.length > 0 ? `${provider}/${modelId}` : ''
+  }
+
+  /** 切换生图/生视频开关:乐观更新 + POST 全量落盘,失败回滚。 */
+  const toggleCap = (index: number, cap: 'image' | 'video', on: boolean): void => {
+    const key = capKeyOf(index)
+    if (!key) return
+    const next = { ...caps }
+    const cur = new Set<string>(next[key] ?? [])
+    if (on) cur.add(cap)
+    else cur.delete(cap)
+    if (cur.size > 0) next[key] = [...cur]
+    else delete next[key]
+    setCaps(next)
+    setCapsError(undefined)
+    fetch('/api/model-capabilities', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ capabilities: next }),
+    })
+      .then((r) => r.json())
+      .then((d: any) => {
+        if (!d || d.ok !== true) {
+          setCapsError((d && d.error) || chatCopy.capSaveFailed)
+          setCaps(caps) // 回滚
+          return
+        }
+        window.dispatchEvent(new CustomEvent('dsh-webui:model-capabilities-changed'))
+      })
+      .catch(() => {
+        setCapsError(chatCopy.capSaveFailed)
+        setCaps(caps) // 回滚
+      })
+  }
+
+  /** 切换识图开关:读写模型草稿的 input 数组(含/不含 image)。 */
+  const toggleVision = (index: number, on: boolean): void => {
+    const model = models[index]!
+    if (on) {
+      patch(index, { input: Array.from(new Set([...(inputOf(model) ?? ['text']), 'image'])) })
+    } else {
+      const rest = (inputOf(model) ?? []).filter(x => x !== 'image')
+      // 只剩 text/空 → 删字段恢复继承(与 host 落盘口径一致)。
+      patch(index, { input: rest.length <= 1 ? undefined : rest })
+    }
+  }
+
   const runFullDetect = (index: number): void => {
     const provider = probe.provider
     const modelId = textOf(models[index]!, 'id')
@@ -453,16 +554,9 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
         if (!d.state.running) {
           if (timer !== undefined) window.clearInterval(timer)
           // 本地草稿同步(与 host 落盘一致,避免保存时覆盖)。
+          // 识图/生图/生视频由手动开关声明,检测只写推理等级。
           const st = d.state
           const patches: Record<string, unknown> = {}
-          const model = models[index]!
-          const visionItem = (st.items ?? []).find((i: any) => i.key === 'vision')
-          if (visionItem?.ok === true) {
-            patches.input = Array.from(new Set([...(inputOf(model) ?? ['text']), 'image']))
-          } else if (visionItem?.ok === false && supportsImage(model)) {
-            const rest = (inputOf(model) ?? []).filter(x => x !== 'image')
-            patches.input = rest.length <= 1 ? undefined : rest
-          }
           const thinkers = (st.items ?? []).filter((i: any) => i.key.startsWith('level:') && i.ok === true && i.key !== 'level:off')
           if (thinkers.length > 0) {
             const efforts: Record<string, string | null> = { off: null }
@@ -470,7 +564,6 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
             patches.reasoningEfforts = efforts
           }
           if (Object.keys(patches).length > 0) patch(index, patches)
-          window.dispatchEvent(new CustomEvent('dsh-webui:model-capabilities-changed'))
           setDetecting(current => {
             const next = new Set(current)
             next.delete(index)
@@ -794,14 +887,41 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
                 <div style={capabilityBlockStyle}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                     <span style={fieldLabelStyle}>{chatCopy.capabilityHint}</span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+                    <CapabilitySwitch
+                      label={chatCopy.supportsImage}
+                      hint={chatCopy.supportsImageHint}
+                      checked={supportsImage(model)}
+                      disabled={disabled}
+                      onToggle={(on) => { toggleVision(index, on) }}
+                    />
+                    <CapabilitySwitch
+                      label={chatCopy.supportsImageGen}
+                      hint={chatCopy.supportsImageGenHint}
+                      checked={(caps[capKeyOf(index)] ?? []).includes('image')}
+                      disabled={disabled || capKeyOf(index) === ''}
+                      onToggle={(on) => { toggleCap(index, 'image', on) }}
+                    />
+                    <CapabilitySwitch
+                      label={chatCopy.supportsVideoGen}
+                      hint={chatCopy.supportsVideoGenHint}
+                      checked={(caps[capKeyOf(index)] ?? []).includes('video')}
+                      disabled={disabled || capKeyOf(index) === ''}
+                      onToggle={(on) => { toggleCap(index, 'video', on) }}
+                    />
+                  </div>
+                  {capsError !== undefined ? <p style={errorStyle}>{capsError}</p> : null}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <span style={fieldLabelStyle}>推理等级</span>
                     <button
                       type="button"
                       style={{ ...capabilityTestButtonStyle, color: 'var(--dsw-alias-state-business-primary, #4176e6)', borderColor: 'var(--dsw-alias-state-business-primary, #4176e6)' }}
                       disabled={disabled || detecting.has(index) || probe.provider === undefined}
-                      title="实测识图/生图/生视频 + 逐级探测推理等级，完成后自动保存配置"
+                      title={chatCopy.detectReasoningTitle}
                       onClick={(event) => { event.stopPropagation(); runFullDetect(index) }}
                     >
-                      {detecting.has(index) ? '检测中…（约 1 分钟）' : '🔍 一键检测'}
+                      {detecting.has(index) ? chatCopy.detectingReasoning : chatCopy.detectReasoning}
                     </button>
                     {probe.provider === undefined ? <span style={hintStyle}>保存供应商后可检测</span> : null}
                   </div>
@@ -975,7 +1095,7 @@ const fieldLabelStyle: CSSProperties = {
   color: 'var(--dsw-alias-label-secondary, #4e5969)',
 }
 
-/* 能力区块（识图/生图/生视频开关 + 测试按钮 + 一键检测）：容量之下，带顶部分隔线。 */
+/* 能力区块（识图/生图/生视频开关 + 推理等级检测按钮）：容量之下，带顶部分隔线。 */
 const capabilityBlockStyle: CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
@@ -983,6 +1103,58 @@ const capabilityBlockStyle: CSSProperties = {
   paddingTop: 10,
   marginTop: 2,
   borderTop: '1px solid var(--dsw-alias-border-l2, #dcdfe6)',
+}
+
+/* 能力声明开关：行内圆钮 switch + 标签（对齐官方 switch 规格的紧凑版）。 */
+const capSwitchRowStyle: CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 6,
+  cursor: 'pointer',
+  userSelect: 'none',
+}
+
+const capSwitchStyle: CSSProperties = {
+  position: 'relative',
+  width: 34,
+  height: 18,
+  borderRadius: 9,
+  border: 'none',
+  cursor: 'pointer',
+  flex: 'none',
+  padding: 0,
+  background: 'var(--dsw-alias-border-l2, #dcdfe6)',
+  transition: 'background .15s',
+}
+
+const capSwitchOnStyle: CSSProperties = {
+  ...capSwitchStyle,
+  background: 'var(--dsw-alias-state-business-primary, #165dff)',
+}
+
+const capKnobStyle: CSSProperties = {
+  position: 'absolute',
+  top: 2,
+  left: 2,
+  width: 14,
+  height: 14,
+  borderRadius: '50%',
+  background: 'var(--dsw-alias-label-tertiary, #8f959e)',
+  transition: 'left .15s, background .15s',
+  boxShadow: '0 1px 2px rgba(0,0,0,.2)',
+}
+
+const capKnobOnStyle: CSSProperties = {
+  ...capKnobStyle,
+  left: 18,
+  background: '#fff',
+}
+
+const capSwitchLabelStyle: CSSProperties = {
+  fontSize: 12,
+  lineHeight: '18px',
+  color: 'var(--dsw-alias-label-secondary, #4e5969)',
+  whiteSpace: 'nowrap',
 }
 
 /* 「一键检测」按钮：行内小按钮。 */

@@ -36,10 +36,10 @@ export interface TrendTabProps {
 
 /* ── DSH 设置页设计令牌（对齐 ModelsSection.module.css） ──────────────── */
 
-const MONO = 'ui-monospace, SFMono-Regular, Menlo, monospace'
+export const MONO = 'ui-monospace, SFMono-Regular, Menlo, monospace'
 
 /** `.rowCard`：描边行卡片。 */
-const rowCard: React.CSSProperties = {
+export const rowCard: React.CSSProperties = {
   border: '1px solid var(--dsw-alias-border-l2)',
   borderRadius: 12,
   padding: '12px 14px',
@@ -50,7 +50,7 @@ const rowCard: React.CSSProperties = {
 }
 
 /** `.rowHead`：卡头（名称 + 右侧 meta）。 */
-function CardHead({ name, meta }: { name: string; meta?: string }): JSX.Element {
+export function CardHead({ name, meta }: { name: string; meta?: string }): JSX.Element {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
       <span style={{ fontSize: 14, lineHeight: '22px', fontWeight: 500, color: 'var(--dsw-alias-label-primary)' }}>{name}</span>
@@ -60,14 +60,14 @@ function CardHead({ name, meta }: { name: string; meta?: string }): JSX.Element 
 }
 
 /** `.editor` 填充面（概要统计的底座）。 */
-const editorFace: React.CSSProperties = {
+export const editorFace: React.CSSProperties = {
   borderRadius: 12,
   background: 'var(--dsw-alias-bg-module-platform)',
   padding: '14px 16px',
 }
 
 /** 概要统计格：label caption 上、mono 主值中、精确值/sub 下；格间竖线分隔。 */
-function Stat({ label, value, exact, sub, delta, first }: {
+export function Stat({ label, value, exact, sub, delta, first }: {
   label: string
   value: string
   exact?: string

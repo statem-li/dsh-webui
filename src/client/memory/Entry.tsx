@@ -78,6 +78,8 @@ export function MemoryNavApp(): JSX.Element | null {
         consolidate={api.consolidate}
         revisions={api.revisions}
         rollback={api.rollback}
+        getConfig={api.getConfig}
+        setConfig={api.setConfig}
       />
     </NavPortal>
   )

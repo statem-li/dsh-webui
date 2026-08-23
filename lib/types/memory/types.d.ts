@@ -107,6 +107,8 @@ export interface MemoryConfig {
     consolidateMaxEntries: number;
     /** 整理 LLM 调用超时（毫秒）。 */
     consolidateTimeoutMs: number;
+    /** 是否记录 API 请求日志（默认 false；防 api.log 被面板轮询请求灌满）。 */
+    logApiRequests: boolean;
 }
 /** 默认配置。 */
 export declare const DEFAULT_CONFIG: MemoryConfig;

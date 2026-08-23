@@ -88,6 +88,26 @@ export interface RevisionView {
   trigger: 'daily' | 'manual'
 }
 
+/** 运行时配置视图（host publicConfig 镜像，字段均可缺省）。 */
+export interface MemoryConfigView {
+  extractEveryTurns?: number
+  compileEveryTurns?: number
+  compileThreshold?: number
+  decayLambda?: number
+  hitBonus?: number
+  injectTokenBudget?: number
+  injectRefreshSteps?: number
+  extractMaxChars?: number
+  minImportance?: number
+  consolidateMaxEntries?: number
+  consolidateTimeoutMs?: number
+  injectTopK?: number
+  entryLimit?: number
+  dailyCompileEnabled?: boolean
+  consolidateEnabled?: boolean
+  logApiRequests?: boolean
+}
+
 interface ApiError {
   error?: string
 }
@@ -139,6 +159,8 @@ export interface MemoryApi {
   consolidate: (scope?: 'all' | 'global' | 'project', projectHash?: string) => Promise<{ ok: boolean; results: ConsolidateResultView[] }>
   revisions: () => Promise<{ revisions: RevisionView[] }>
   rollback: (revisionId: string) => Promise<{ ok: boolean }>
+  getConfig: () => Promise<{ config: MemoryConfigView }>
+  setConfig: (patch: Partial<MemoryConfigView>) => Promise<{ ok: boolean; config: MemoryConfigView }>
 }
 
 /** 构造面板 API 面。 */
@@ -169,5 +191,7 @@ export function createMemoryApi(): MemoryApi {
     consolidate: (scope = 'all', projectHash) => sendJson<{ ok: boolean; results: ConsolidateResultView[] }>('/consolidate', { scope, projectHash }),
     revisions: () => getJson<{ revisions: RevisionView[] }>('/revisions'),
     rollback: (revisionId) => sendJson<{ ok: boolean }>('/rollback', { revisionId }),
+    getConfig: () => getJson<{ config: MemoryConfigView }>('/config'),
+    setConfig: (patch) => sendJson<{ ok: boolean; config: MemoryConfigView }>('/config', patch),
   }
 }

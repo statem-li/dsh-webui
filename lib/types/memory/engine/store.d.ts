@@ -81,10 +81,18 @@ export declare class MemoryStore {
     replaceEntries(fn: (entries: MemoryEntry[]) => Promise<MemoryEntry[]> | MemoryEntry[]): Promise<MemoryEntry[]>;
     appendChange(change: Omit<ChangeRecord, 'id' | 'at'>): Promise<ChangeRecord>;
     readChanges(date?: string): Promise<ChangeRecord[]>;
-    /** 插件错误日志（追加模式，供崩溃排查；DSH 控制台日志不落盘）。 */
+    /**
+     * 追加一行日志（按分类落独立文件 + 大小轮转，防无界增长）。
+     * kind: extract=提取诊断 / api=API 请求（默认关闭）/ error=插件错误。
+     * 轮转：当前文件 ≥ 10MB 时改名成带时间戳归档，只保留最近 5 个归档。
+     */
+    private appendLog;
+    /** 插件错误日志（本插件 async 任务失败；DSH 控制台日志不落盘）。 */
     appendErrorLog(stage: string, message: string): Promise<void>;
-    /** 提取诊断日志（追加模式：开始/结束/耗时/候选数，排查提取卡死）。 */
+    /** 提取诊断日志（turn= 开始/结束/耗时/候选数，排查提取卡死）。 */
     appendExtractLog(message: string): Promise<void>;
+    /** API 请求诊断日志（默认关闭；仅 config.logApiRequests 开启时由 api.ts 调用）。 */
+    appendApiLog(message: string): Promise<void>;
     readState(): Promise<StoreState>;
     writeState(state: StoreState): Promise<void>;
     /** 注入被关闭的会话 id（内存缓存；null = 未加载）。 */

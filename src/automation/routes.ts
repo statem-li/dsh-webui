@@ -1,0 +1,416 @@
+/**
+ * automation — HTTP 路由（host 半身，loopback-only）。
+ *
+ * 语义对齐 openhanako 的 /desk/cron（GET 列表 + POST action 分发）：
+ *   GET  /api/webui-automation/cron                 → { jobs }
+ *   POST /api/webui-automation/cron                 → { action, ...params }
+ *         add / remove / toggle / update / apply_suggestion
+ *   GET  /api/webui-automation/runs?jobId=&limit=   → { runs }（运行历史）
+ *   GET  /api/webui-automation/suggestions          → { suggestions }（待确认建议）
+ *   POST /api/webui-automation/suggestions          → { action: dismiss|apply }
+ *   GET  /api/webui-automation/events?since=<ms>    → { events }（完成事件，供 toast）
+ */
+
+import type { IncomingMessage, ServerResponse } from 'node:http'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { URL } from 'node:url'
+import type { Context } from '@deepseek-ai/cordis'
+import { CodedError, normalizeModelRef, type CronJob, type JobType, type RunRecord } from './types.js'
+import { automationDataRoot, type CronStore } from './store.js'
+import type { AutomationSuggestionStore, SuggestionView } from './suggestions.js'
+
+export const ROUTE_PREFIX = '/api/webui-automation'
+
+/** 完成事件环形缓冲上限。 */
+const EVENT_BUFFER_MAX = 50
+
+interface WebServerRoute {
+  kind: 'exact' | 'prefix'
+  path: string
+  handler: (req: IncomingMessage, res: ServerResponse) => void
+}
+
+interface WebServerLike {
+  register(route: WebServerRoute): () => void
+}
+
+/** onJobDone 广播给前端的事件。 */
+export interface AutomationEvent {
+  seq: number
+  at: number
+  jobId: string
+  jobLabel: string
+  status: 'success' | 'error' | 'skipped'
+  summary?: string
+  error?: string
+}
+
+/** 完成事件环：scheduler 推入，前端轮询拉取。 */
+export interface AutomationEventBuffer {
+  push: (job: CronJob, result: Record<string, unknown>) => void
+  since: (seq: number) => { events: AutomationEvent[], cursor: number }
+}
+
+/** 创建完成事件环形缓冲（上限 50 条）。 */
+export function createAutomationEventBuffer(): AutomationEventBuffer {
+  let seq = 0
+  const buffer: AutomationEvent[] = []
+  return {
+    push(job, result) {
+      const status = result.status === 'success' || result.status === 'error' || result.status === 'skipped'
+        ? result.status
+        : 'skipped'
+      seq += 1
+      buffer.push({
+        seq,
+        at: Date.now(),
+        jobId: job.id,
+        jobLabel: job.label,
+        status,
+        ...(typeof result.summary === 'string' ? { summary: result.summary } : {}),
+        ...(typeof result.error === 'string' ? { error: result.error } : {}),
+      })
+      if (buffer.length > EVENT_BUFFER_MAX) buffer.splice(0, buffer.length - EVENT_BUFFER_MAX)
+    },
+    since(sinceSeq) {
+      const events = buffer.filter(event => event.seq > sinceSeq)
+      return { events, cursor: seq }
+    },
+  }
+}
+
+function isLoopbackAddress(address: string | undefined): boolean {
+  if (typeof address !== 'string') return false
+  const a = address.toLowerCase()
+  if (a === '::1') return true
+  const ipv4 = a.startsWith('::ffff:') ? a.slice(7) : a
+  const octets = ipv4.split('.')
+  return octets.length === 4 && octets[0] === '127'
+    && octets.every(part => /^\d{1,3}$/.test(part) && Number(part) <= 255)
+}
+
+function hostNameOf(value: string | undefined): string | null {
+  if (typeof value !== 'string') return null
+  const host = value.trim().toLowerCase()
+  if (host.startsWith('[')) {
+    const close = host.indexOf(']')
+    if (close <= 1) return null
+    return host.slice(1, close)
+  }
+  const firstColon = host.indexOf(':')
+  const lastColon = host.lastIndexOf(':')
+  if (firstColon !== lastColon) return null
+  return firstColon === -1 ? host : host.slice(0, firstColon)
+}
+
+function loopbackAllowed(req: IncomingMessage): boolean {
+  if (!isLoopbackAddress(req.socket.remoteAddress)) return false
+  const host = hostNameOf(req.headers.host)
+  if (host === null) return false
+  return host === 'localhost' || host === '127.0.0.1' || host === '::1'
+}
+
+function json(res: ServerResponse, status: number, value: unknown): void {
+  const body = JSON.stringify(value)
+  res.writeHead(status, {
+    'content-type': 'application/json; charset=utf-8',
+    'cache-control': 'no-cache',
+  })
+  res.end(body)
+}
+
+function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
+  return new Promise((resolvePromise, reject) => {
+    const chunks: Buffer[] = []
+    let size = 0
+    req.on('data', (chunk: Buffer) => {
+      size += chunk.length
+      if (size > 1024 * 1024) {
+        reject(new Error('request body too large'))
+        req.destroy()
+        return
+      }
+      chunks.push(chunk)
+    })
+    req.on('end', () => {
+      if (chunks.length === 0) {
+        resolvePromise({})
+        return
+      }
+      try {
+        resolvePromise(JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>)
+      } catch {
+        reject(new Error('invalid JSON body'))
+      }
+    })
+    req.on('error', reject)
+  })
+}
+
+/** 把 store/suggestion 错误映射为 HTTP 状态码。 */
+function errorStatus(error: unknown): number {
+  if (error instanceof CodedError) return error.status
+  return 400
+}
+
+// ── 入参归一化 ──────────────────────────────────────────────────────────
+
+function validateType(value: unknown): JobType {
+  if (value !== 'at' && value !== 'every' && value !== 'cron') {
+    throw new Error(`无效的调度类型 "${String(value)}"，必须是 at / every / cron`)
+  }
+  return value
+}
+
+/** HTTP 层的 every 单位与存储一致（毫秒），但兼容 UI 传来的分钟数（everyMinutes 别名）。 */
+function normalizeScheduleForWrite(type: JobType, schedule: unknown): string | number {
+  if (type === 'every') {
+    const ms = typeof schedule === 'number' ? schedule : Number.parseInt(String(schedule), 10)
+    if (!Number.isFinite(ms) || ms <= 0) throw new Error(`无效的 every schedule："${String(schedule)}"`)
+    // 兼容：小于 60 的值视为分钟（UI 旧协议），否则视为毫秒。
+    return ms < 60_000 ? ms * 60_000 : ms
+  }
+  if (type === 'at') return String(schedule)
+  return String(schedule).trim()
+}
+
+// ── 路由装配 ────────────────────────────────────────────────────────────
+
+export interface RouteDeps {
+  ctx: Context
+  webServer: WebServerLike
+  store: CronStore
+  suggestions: AutomationSuggestionStore
+  events: AutomationEventBuffer
+}
+
+/** 注册全部自动化路由；返回 disposer。 */
+export function registerAutomationRoutes({ webServer, store, suggestions, events }: RouteDeps): () => void {
+  async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!loopbackAllowed(req)) {
+      json(res, 403, { ok: false, error: 'loopback-only' })
+      return
+    }
+    const url = new URL(req.url ?? '/', 'http://localhost')
+    const rest = url.pathname.slice(ROUTE_PREFIX.length)
+    const method = req.method ?? 'GET'
+    try {
+      // ── 任务列表 ──
+      if (method === 'GET' && rest === '/cron') {
+        json(res, 200, { ok: true, jobs: store.listJobs() })
+        return
+      }
+
+      // ── 任务操作 ──
+      if (method === 'POST' && rest === '/cron') {
+        const body = await readBody(req)
+        const params = body as Record<string, unknown>
+        switch (body.action) {
+          case 'add': {
+            const type = validateType(params.scheduleType ?? params.type)
+            const requiresPrompt = params.enabled !== false
+            if ((params.schedule === undefined || params.schedule === null || params.schedule === '')
+              || (requiresPrompt && typeof params.prompt !== 'string')) {
+              json(res, 400, { ok: false, error: 'scheduleType、schedule、prompt 为必填' })
+              return
+            }
+            const schedule = normalizeScheduleForWrite(type, params.schedule)
+            const job = store.addJob({
+              type,
+              schedule,
+              prompt: typeof params.prompt === 'string' ? params.prompt : '',
+              label: typeof params.label === 'string' ? params.label : undefined,
+              model: normalizeModelRef(params.model),
+              enabled: params.enabled !== false,
+            })
+            json(res, 200, { ok: true, job, jobs: store.listJobs() })
+            return
+          }
+
+          case 'remove': {
+            const id = typeof params.id === 'string' ? params.id : ''
+            const removed = id !== '' && store.removeJob(id)
+            if (!removed) {
+              json(res, 404, { ok: false, error: `找不到任务 ${id}` })
+              return
+            }
+            json(res, 200, { ok: true, jobs: store.listJobs() })
+            return
+          }
+
+          case 'toggle': {
+            const id = typeof params.id === 'string' ? params.id : ''
+            const job = id === '' ? null : store.toggleJob(id)
+            if (job === null) {
+              json(res, 404, { ok: false, error: `找不到任务 ${id}` })
+              return
+            }
+            json(res, 200, { ok: true, job, jobs: store.listJobs() })
+            return
+          }
+
+          case 'update': {
+            const id = typeof params.id === 'string' ? params.id : ''
+            const existing = id === '' ? null : store.getJob(id)
+            if (existing === null) {
+              json(res, 404, { ok: false, error: `找不到任务 ${id}` })
+              return
+            }
+            const patch: Record<string, unknown> = {}
+            if ('label' in params) patch.label = String(params.label ?? '')
+            if ('prompt' in params) patch.prompt = String(params.prompt ?? '')
+            if ('model' in params) patch.model = normalizeModelRef(params.model)
+            if ('enabled' in params) patch.enabled = params.enabled === true
+            if ('scheduleType' in params || 'type' in params || 'schedule' in params) {
+              const nextType = validateType(
+                ('scheduleType' in params ? params.scheduleType : undefined) ?? params.type ?? existing.type,
+              )
+              if (nextType !== existing.type && !('schedule' in params)) {
+                throw new Error('修改调度类型时必须同时提供 schedule')
+              }
+              patch.type = nextType
+              if ('schedule' in params) {
+                patch.schedule = normalizeScheduleForWrite(nextType, params.schedule)
+              }
+            }
+            const job = store.updateJob(id, patch)
+            if (job === null) {
+              json(res, 404, { ok: false, error: `找不到任务 ${id}` })
+              return
+            }
+            json(res, 200, { ok: true, job, jobs: store.listJobs() })
+            return
+          }
+
+          case 'run_now': {
+            // 立即执行：把 nextRunAt 拨到当下，由调度器下一 tick 处理。
+            const id = typeof params.id === 'string' ? params.id : ''
+            const due = id !== '' && store.dueNow(id)
+            if (!due) {
+              json(res, 409, { ok: false, error: '任务不存在或已停用，请先启用' })
+              return
+            }
+            json(res, 200, { ok: true })
+            return
+          }
+
+          case 'apply_suggestion': {
+            const ref = typeof params.suggestionId === 'string' && params.suggestionId.trim() !== ''
+              ? params.suggestionId.trim()
+              : typeof params.ref === 'string' ? params.ref : null
+            const applied = await suggestions.apply({
+              ref,
+              value: isPlainObject(params.jobData) ? params.jobData : undefined,
+            })
+            if (!applied.ok) {
+              const message = applied.reason === 'already-applying' ? '建议正在应用中'
+                : applied.reason === 'expired' ? '建议已过期，请让助手重新发起'
+                  : '建议不存在或已失效'
+              json(res, applied.reason === 'already-applying' ? 409 : 410, { ok: false, error: message, reason: applied.reason })
+              return
+            }
+            json(res, 200, { ok: true, job: applied.result, jobs: store.listJobs(), suggestions: suggestions.list() })
+            return
+          }
+
+          default:
+            json(res, 400, { ok: false, error: `未知动作：${String(body.action)}` })
+        }
+        return
+      }
+
+      // ── 运行历史 ──
+      if (method === 'GET' && rest === '/runs') {
+        const limit = clampLimit(url.searchParams.get('limit'), 20)
+        const jobId = url.searchParams.get('jobId')
+        if (jobId !== null && jobId !== '') {
+          json(res, 200, { ok: true, runs: store.getRunHistory(jobId, limit) })
+          return
+        }
+        // 无 taskId：返回全部任务的最近记录合并视图（新→旧），带任务名。
+        const jobs = store.listJobs()
+        const labelOf = new Map(jobs.map(job => [job.id, job.label]))
+        const all: Array<RunRecord & { jobId: string, jobLabel: string }> = []
+        for (const job of jobs) {
+          for (const run of store.getRunHistory(job.id, limit)) {
+            all.push({ ...run, jobId: job.id, jobLabel: labelOf.get(job.id) ?? job.id })
+          }
+        }
+        all.sort((a, b) => b.timestamp.localeCompare(a.timestamp))
+        json(res, 200, { ok: true, runs: all.slice(0, limit) })
+        return
+      }
+
+      // ── 运行产出全文 ──
+      if (method === 'GET' && rest === '/runs/file') {
+        const jobId = url.searchParams.get('jobId') ?? ''
+        const name = url.searchParams.get('name') ?? ''
+        if (!/^[A-Za-z0-9_-]+$/.test(jobId)) {
+          json(res, 400, { ok: false, error: 'invalid jobId' })
+          return
+        }
+        // 文件名只允许「数字字母下划线连字符点」，且必须以 .md 结尾，防穿越。
+        if (!/^[A-Za-z0-9_-]+\.md$/.test(name)) {
+          json(res, 400, { ok: false, error: 'invalid file name' })
+          return
+        }
+        try {
+          const content = readFileSync(join(automationDataRoot(), 'runs', jobId, name), 'utf-8')
+          json(res, 200, { ok: true, content })
+        } catch {
+          json(res, 404, { ok: false, error: '产出文件不存在或已被清理' })
+        }
+        return
+      }
+
+      // ── 待确认建议 ──
+      if (method === 'GET' && rest === '/suggestions') {
+        json(res, 200, { ok: true, suggestions: suggestions.list() })
+        return
+      }
+      if (method === 'POST' && rest === '/suggestions') {
+        const body = await readBody(req)
+        const ref = typeof body.suggestionId === 'string' ? body.suggestionId : ''
+        const dismissed = ref !== '' && body.action === 'dismiss' && suggestions.dismiss(ref)
+        if (!dismissed) {
+          json(res, 404, { ok: false, error: '建议不存在或已失效' })
+          return
+        }
+        json(res, 200, { ok: true, suggestions: suggestions.list() })
+        return
+      }
+
+      // ── 完成事件流（供全局 toast 轮询）──
+      if (method === 'GET' && rest === '/events') {
+        const since = Number.parseInt(url.searchParams.get('since') ?? '0', 10) || 0
+        const { events: pending, cursor } = events.since(since)
+        json(res, 200, { ok: true, events: pending, cursor })
+        return
+      }
+
+      json(res, 404, { ok: false, error: `no route for ${method} ${rest}` })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      json(res, errorStatus(error), { ok: false, error: message })
+    }
+  }
+
+  const dispose = webServer.register({
+    kind: 'prefix',
+    path: ROUTE_PREFIX,
+    handler: (req, res) => { void handle(req, res) },
+  })
+
+  return dispose
+}
+
+function clampLimit(raw: string | null, fallback: number): number {
+  const value = Number.parseInt(raw ?? '', 10)
+  if (!Number.isFinite(value) || value <= 0) return fallback
+  return Math.min(100, value)
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}

@@ -82,7 +82,18 @@ export function createTicker(
         if (shouldEvict(entry, config.compileThreshold)) evicted.push(entry)
         else kept.push(entry)
       }
-      return [...promoted, ...kept]
+      // 预算治理：条目数超上限时，按 importance+recency 淘汰低分条目（pinned 豁免）。
+      let survivor = [...promoted, ...kept]
+      if (survivor.length > config.entryLimit) {
+        const overflow = survivor
+          .filter(entry => !entry.pinned)
+          .sort((a, b) => (a.importance - b.importance) || a.updatedAt.localeCompare(b.updatedAt))
+          .slice(0, survivor.length - config.entryLimit)
+        const overflowIds = new Set(overflow.map(entry => entry.id))
+        evicted.push(...overflow)
+        survivor = survivor.filter(entry => !overflowIds.has(entry.id))
+      }
+      return survivor
     })
 
     // 4) 变更流。

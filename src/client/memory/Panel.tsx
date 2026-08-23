@@ -19,15 +19,16 @@ import {
   Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { MarkstreamMarkdown } from '../markdown/renderer.js'
-import type { ChangeView, MemoryApi, MemoryEntryView, MemoryListResponse, ProjectView, RevisionView } from './api.js'
+import type { ChangeView, MemoryApi, MemoryConfigView, MemoryEntryView, MemoryListResponse, ProjectView, RevisionView } from './api.js'
 import { css, ensureStyles } from './styles.js'
 import { changeActionLabel } from './Notify.tsx'
+import { SettingsTab } from './SettingsTab.js'
 import { makeT, type MemoryT } from './locales.js'
 import { modalStaggerClass } from '../modal-animation.js'
 import { PshBody, PshHead, PopoverShell, type PopoverAnchor } from '../popover-shell.js'
 
 /** 面板 Tab。 */
-export type MemoryTab = 'all' | 'changes' | 'revisions'
+export type MemoryTab = 'all' | 'changes' | 'revisions' | 'settings'
 
 /** 时间分组。 */
 type GroupKey = 'today' | 'week' | 'earlier' | 'longterm'
@@ -210,7 +211,6 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
   const [allTags, setAllTags] = useState<Array<{ tag: string; count: number }>>([])
   const [changes, setChanges] = useState<ChangeView[]>([])
   const [revisions, setRevisions] = useState<RevisionView[]>([])
-  const [consolidating, setConsolidating] = useState(false)
   const [editing, setEditing] = useState<EditState | null>(null)
   const [moving, setMoving] = useState<MoveState | null>(null)
   const [busy, setBusy] = useState(false)
@@ -227,6 +227,8 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
   // 多选删除模式。
   const [selecting, setSelecting] = useState(false)
   const [checkedIds, setCheckedIds] = useState<ReadonlySet<string>>(new Set())
+  // 运行时配置（面板设置）。
+  const [config, setConfigState] = useState<MemoryConfigView | null>(null)
 
   const load = useCallback(async () => {
     const current = apiRef.current
@@ -235,21 +237,33 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
     try {
       const scopeParam = scope === 'all' ? undefined : scope === 'global' ? 'global' : 'project'
       const projectParam = scope.startsWith('project:') ? scope.slice('project:'.length) : undefined
-      const [list, tagsRes, changesRes, revisionsRes] = await Promise.all([
+      const [list, tagsRes, changesRes, revisionsRes, configRes] = await Promise.all([
         current.list({ scope: scopeParam, project: projectParam, q: q !== '' ? q : undefined, tag: tag !== '' ? tag : undefined }),
         current.tags(),
         current.changes(),
         current.revisions(),
+        current.getConfig(),
       ])
       setState({ status: 'ready', snapshot: list })
       setAllTags(tagsRes.tags)
       setChanges(changesRes.changes)
       setRevisions(revisionsRes.revisions)
+      setConfigState(configRes.config)
     } catch (loadError) {
       setState({ status: 'error' })
       setError(loadError instanceof Error ? loadError.message : String(loadError))
     }
   }, [scope, q, tag])
+
+  // 运行时配置补丁（面板设置）。
+  const patchConfig = useCallback(async (patch: Partial<MemoryConfigView>) => {
+    try {
+      const res = await apiRef.current.setConfig(patch)
+      setConfigState(res.config)
+    } catch (configError) {
+      setError(configError instanceof Error ? configError.message : String(configError))
+    }
+  }, [])
 
   useEffect(() => {
     if (open) void load()
@@ -344,24 +358,6 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
     const name = project?.alias ?? project?.path.split(/[\\/]/).filter(Boolean).at(-1) ?? hash
     if (!window.confirm(t('clearProjectConfirm', { name, count: project?.entryCount ?? 0 }))) return
     void run(() => api.deleteProject(hash))
-  }
-
-  /** 立即整理当前范围（Memory Dream）。 */
-  const handleConsolidate = (): void => {
-    setConsolidating(true)
-    setError('')
-    void (async () => {
-      try {
-        if (scope === 'global') await api.consolidate('global')
-        else if (scope.startsWith('project:')) await api.consolidate('project', scope.slice('project:'.length))
-        else await api.consolidate('all')
-        await load()
-      } catch (consolidateError) {
-        setError(consolidateError instanceof Error ? consolidateError.message : String(consolidateError))
-      } finally {
-        setConsolidating(false)
-      }
-    })()
   }
 
   /** 回滚到某修订版本。 */
@@ -589,7 +585,7 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
       anchor={anchor}
       onCardMouseEnter={onCardMouseEnter}
       onCardMouseLeave={onCardMouseLeave}
-      width={980}
+      width={1200}
       ariaLabel={t('panelTitle')}
     >
       <PshHead title={t('panelTitle')} closeLabel={t('close')} onClose={onClose} />
@@ -597,7 +593,7 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
       <div className={`${css.panel} ${modalStaggerClass}`} aria-busy={state.status === 'loading'}>
         {/* Tab：全部 / 变更 */}
         <div className={css.tabs} role="tablist">
-          {(['all', 'changes', 'revisions'] as const).map(key => (
+          {(['all', 'changes', 'revisions', 'settings'] as const).map(key => (
             <button
               key={key}
               type="button"
@@ -606,7 +602,7 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
               className={tab === key ? `${css.tab} ${css.tabActive}` : css.tab}
               onClick={() => { setTab(key); closeForms() }}
             >
-              {key === 'all' ? t('tabAll') : key === 'changes' ? `${t('tabChanges')}${changes.length > 0 ? ` (${changes.length})` : ''}` : t('tabRevisions')}
+              {key === 'all' ? t('tabAll') : key === 'changes' ? `${t('tabChanges')}${changes.length > 0 ? ` (${changes.length})` : ''}` : key === 'revisions' ? t('tabRevisions') : '设置'}
             </button>
           ))}
         </div>
@@ -667,17 +663,6 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
               </>
             )
           })()}
-          <Button
-            variant="ghost"
-            size="sm"
-            className={css.consolidate}
-            disabled={busy || consolidating}
-            onClick={handleConsolidate}
-            style={{ marginLeft: 'auto' }}
-            title={t('consolidateHint')}
-          >
-            {consolidating ? t('consolidating') : t('consolidate')}
-          </Button>
         </div>
 
         {/* 搜索 + 标签筛选 + 新建/多选（全部 Tab） */}
@@ -902,6 +887,9 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
             ? renderEmpty(t('revisionsEmpty'))
             : <ul className={css.cardList}>{revisions.map(renderRevision)}</ul>
         )}
+
+        {/* 设置（运行时配置，改动即时生效） */}
+        {tab === 'settings' && <SettingsTab config={config} onPatch={v => { void patchConfig(v) }} />}
       </div>
       </PshBody>
     </PopoverShell>

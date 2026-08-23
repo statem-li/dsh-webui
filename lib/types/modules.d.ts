@@ -21,7 +21,7 @@
  * 老配置自动保持启用。
  */
 /** 全部可开关的功能模块 key（与 README「功能总览」分组对应）。 */
-export declare const WEBUI_MODULE_KEYS: readonly ["messageWidth", "doneSound", "donePill", "approvalNotify", "ctrlEnter", "sessionMotion", "sessionPin", "rewind", "screenshot", "promptOptimize", "zhThinking", "peakValley", "chatStats", "toolSummary", "reasoningSync", "modelSeats", "providerHub", "vision", "webSearch", "mail", "skills", "browser", "automation", "planweave", "memory", "usage", "fileExplorer", "dirPicker", "appearance", "sidebarFloat", "updater", "proxy"];
+export declare const WEBUI_MODULE_KEYS: readonly ["messageWidth", "doneSound", "donePill", "approvalNotify", "ctrlEnter", "sessionMotion", "sessionPin", "rewind", "screenshot", "promptOptimize", "zhThinking", "peakValley", "chatStats", "toolSummary", "reasoningSync", "modelSeats", "providerHub", "vision", "webSearch", "mail", "skills", "browser", "planweave", "memory", "usage", "fileExplorer", "dirPicker", "appearance", "sidebarFloat", "updater", "proxy"];
 /** 单个功能模块的 key。 */
 export type WebuiModuleKey = (typeof WEBUI_MODULE_KEYS)[number];
 /** 部分覆盖表：只包含被显式配置的模块（缺省 = 启用）。 */

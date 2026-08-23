@@ -19,11 +19,14 @@ const ZOOM_MAX = 8
 interface ImageViewerProps {
   open: boolean
   path: string
+  /** raw 字节流来源；缺省走 file-explorer（产物场景传 deliverableSource.rawUrl）。 */
+  rawUrl?: (path: string, download?: boolean) => string
   onClose: () => void
   t: T
 }
 
-export function ImageViewer({ open, path, onClose, t }: ImageViewerProps): JSX.Element {
+export function ImageViewer({ open, path, rawUrl, onClose, t }: ImageViewerProps): JSX.Element {
+  const rawOf = rawUrl ?? rawFileUrl
   const [failed, setFailed] = useState(false)
   const [natural, setNatural] = useState<{ width: number; height: number } | null>(null)
   /** 'fit' = 适应窗口；数字 = 相对原始尺寸的倍率。 */
@@ -54,7 +57,7 @@ export function ImageViewer({ open, path, onClose, t }: ImageViewerProps): JSX.E
       <button type="button" className={css.viewerButton} onClick={() => { stepZoom(ZOOM_STEP) }}>{t('zoomIn')}</button>
       <button type="button" className={css.viewerButton} onClick={() => { setZoom('fit') }}>{t('zoomReset')}</button>
       <span style={{ flex: 1 }} />
-      <a className={css.viewerButton} href={rawFileUrl(path, true)} download>{t('download')}</a>
+      <a className={css.viewerButton} href={rawOf(path, true)} download>{t('download')}</a>
     </div>
   )
 
@@ -65,6 +68,7 @@ export function ImageViewer({ open, path, onClose, t }: ImageViewerProps): JSX.E
       closeLabel={t('close')}
       title={`${t('viewTitle')} · ${name}`}
       className={css.viewerModal}
+      maximizable
       footer={toolbar}
     >
       <div className={css.viewerStage}>
@@ -74,7 +78,7 @@ export function ImageViewer({ open, path, onClose, t }: ImageViewerProps): JSX.E
             <img
               key={path}
               className={css.viewerImg}
-              src={rawFileUrl(path)}
+              src={rawOf(path)}
               alt={name}
               draggable={false}
               style={zoom === 'fit' || natural === null ? undefined : {

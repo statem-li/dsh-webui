@@ -50,7 +50,7 @@ export const WEBUI_MODULE_KEYS = [
   // ── AI 浏览器 ──
   'browser',           // AI 浏览器 host 工具 + dock UI + 设置开关
   // ── 自动化与计划 ──
-  'automation',        // 自动化任务 + 真实执行引擎
+  'automation',        // 定时自动化（openhanako 式 cron/at/every 任务 + Agent Run 执行）
   'planweave',         // PlanWeave 计划项目
   // ── 记忆 ──
   'memory',            // 记忆引擎 + Memory Dream

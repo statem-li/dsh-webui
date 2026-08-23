@@ -1,221 +1,217 @@
 /**
  * automation — 文案（zh/en）。
  *
- * 本模块的菜单项经 DOM 注入挂进侧边栏（sidebar.workspaces 是 single 插槽，
- * 无法再注册条目），拿不到 slots 体系的 t seat；因此自带轻量字典，
- * 语言跟随 DSH locale 服务同步到 <html lang> 的值（zh / en）。
+ * 菜单项经 DOM 注入挂进侧边栏，拿不到 slots 体系的 t seat；因此自带轻量
+ * 字典，语言跟随 DSH locale 服务同步到 <html lang> 的值（zh / en）。
+ * 键语义对齐 openhanako 的 automation.* / cron.* 词条。
  */
 
 /** 简体中文词典（key 源）。 */
 export const zh = {
   entry: '自动化',
-  entryAria: '打开自动化设置',
-  cardTitle: '自动化',
+  entryAria: '打开自动化面板',
+  title: '任务计划',
   close: '关闭',
-  // TAB
-  tabTasks: '执行任务',
-  tabLogs: '执行日志',
-  cancel: '取消',
-  // 执行任务页
-  enabledLabel: '启用',
-  newTask: '新建任务',
-  editTask: '编辑任务',
-  taskNamePlaceholder: '任务名称，如：生成用量日报',
-  categoryLabel: '所属分类',
-  modelLabel: '模型',
-  effortLabel: '推理强度',
-  effortDefault: '模型默认',
-  modelPlaceholder: '选择模型（可选）',
-  modelsLoading: '模型目录加载中…',
-  modelsEmpty: '暂无可用模型，可稍后再编辑任务',
-  confirmAdd: '添加',
-  save: '保存',
+  add: '添加自动化',
+  empty: '暂无任务计划',
+  emptyHint: '点击右上角 + 新建，或让助手在对话中为你创建',
+
+  // 卡片
+  enable: '启用',
+  disable: '停用',
+  on: '开',
+  off: '关',
   delete: '删除',
-  emptyTasks: '还没有任务，点击上方「+ 新建任务」创建',
-  // 执行计划（借鉴 openhanako：模式 + 动态字段 + 预览）
-  schedLabel: '执行计划',
-  'schedMode.interval': '间隔执行',
-  'schedMode.daily': '每天',
-  'schedMode.weekly': '每周',
-  'schedMode.monthly': '每月',
-  'schedMode.once': '单次',
-  schedEvery: '执行间隔',
-  schedUnit: '单位',
-  'schedUnit.minutes': '分钟',
-  'schedUnit.hours': '小时',
-  'schedUnit.days': '天',
-  schedTime: '执行时间',
-  schedWeekday: '星期',
-  schedMonthDay: '几号',
-  schedDateTime: '具体时间',
-  // 执行日志页
-  filterAll: '全部任务',
-  filterLabel: '按任务筛选',
-  statusSuccess: '已执行',
-  statusFailed: '失败',
-  logEmpty: '暂无执行记录',
-  logEmptyHint: '到达执行计划的触发时刻会自动生成执行记录',
-  clearLogs: '清空记录',
-  clearLogsConfirm: '确定清空全部执行记录？',
-  dayToday: '今天',
-  dayYesterday: '昨天',
-  // 执行 / 重跑
-  runNow: '立即执行',
-  rerun: '重跑',
-  executing: '执行中…',
-  noModel: '未绑定模型，请先在任务里选择模型',
-  // 失败重试
-  retryLabel: '失败重试',
-  retryHint: '失败后自动重试的次数（0–3）',
-  // 执行步骤
-  stepsLabel: '执行步骤',
-  addStep: '+ 添加步骤',
-  stepName: '步骤名',
-  stepNamePlaceholder: '如：生成日报正文',
-  stepPrompt: '执行指令',
-  stepPromptPlaceholder: '发送给模型的任务指令',
-  stepOnError: '本步失败时',
-  onErrorStop: '停止整个任务',
-  onErrorSkip: '跳过本步继续',
-  stepSaveFile: '保存到文件',
-  stepFileName: '文件名',
-  stepFileNameHint: '支持 {date} / {time} 占位',
-  deleteStep: '删除步骤',
-  stepNo: '步骤 {n}',
-  // 日志详情
-  summaryLabel: '输出摘要',
-  stepStatusSuccess: '成功',
-  stepStatusFailed: '失败',
-  stepStatusSkipped: '跳过',
-  stepRecords: '{n} 字符',
-  noSteps: '无步骤详情',
-  fileSection: '生成的文件',
-  noFiles: '本次未生成文件',
-  copyPath: '复制路径',
-  copied: '已复制',
-  downloadFile: '下载',
-  openFolder: '打开所在文件夹',
-  logError: '失败原因',
-  filterStatusLabel: '状态',
-  filterStatusAll: '全部状态',
-  filterStatusSuccess: '仅成功',
-  filterStatusFailed: '仅失败',
+  confirm: '确认',
+  cancel: '取消',
+  runNow: '立即运行',
+  newAutomation: '新的自动化',
+  promptRequired: '先写下想让助手做什么，再启用这条自动化',
+  executorLabel: '助手执行',
+  historyTitle: '运行记录',
+  historyEmpty: '暂无运行记录',
+  statusSuccess: '成功',
+  statusError: '失败',
+  statusSkipped: '跳过',
+  consecutiveErrors: '连续失败 {n} 次',
+  nextRun: '下次 {time}',
+  // Tab（任务计划 / 运行记录）
+  tabJobs: '任务计划',
+  tabRuns: '运行记录',
+  runsEmpty: '还没有运行记录',
+  runsEmptyHint: '任务到点执行后，每次的完整产出都会保存在这里，可回看全文',
+  fieldLabel: '名称',
+  fieldSchedule: '时间',
+  fieldPrompt: '执行内容',
+  promptPlaceholder: '写下你想让助手做什么',
+  modelLabel: '模型',
+  defaultModel: '默认模型',
+  modelsLoading: '模型目录加载中…',
+  saveFailed: '保存失败',
+  loadFailed: '加载失败',
+  createFailed: '创建自动化失败',
+
+  // ScheduleEditor
+  scheduleMode: '模式',
+  'mode.interval': '每隔多久',
+  'mode.daily': '每天',
+  'mode.weekly': '每周',
+  'mode.monthly': '每月',
+  'mode.once': '指定一次',
+  'mode.advanced': '高级 Cron',
+  every: '每隔',
+  unit: '单位',
+  'unit.minutes': '分钟',
+  'unit.hours': '小时',
+  'unit.days': '天',
+  time: '时间',
+  hour: '小时',
+  minute: '分钟',
+  weekday: '星期',
+  monthDay: '日期',
+  dateTime: '日期时间',
+  cronExpression: 'Cron 表达式',
+  'schedule.onceAt': '一次：{date}',
+  'schedule.advancedCron': '高级 Cron：{cron}',
+
+  // 预览与文案
+  everyMinutes: '每 {n} 分钟',
+  everyHours: '每 {n} 小时',
+  everyDays: '每 {n} 天',
+  hourly: '每小时',
+  hourlyAt: '每小时第 {min} 分',
+  dailyAt: '每天 {hour}:{min}',
+  weeklyAt: '{days} {hour}:{min}',
+  monthlyAt: '每月 {day} 日 {hour}:{min}',
+  weekPrefix: '周',
+  dayNames: '日,一,二,三,四,五,六',
+
+  // AI 建议
+  suggestTitle: '助手的建议',
+  suggestCreate: '建议新建',
+  suggestUpdate: '建议修改',
+  suggestView: '查看建议',
+  suggestConfirmCreate: '确认添加',
+  suggestConfirmUpdate: '确认修改',
+  suggestReject: '取消',
+  suggestApplied: '已创建「{label}」',
+  suggestRejected: '已取消该建议',
+  suggestApplyFailed: '应用建议失败',
+  suggestExpireSoon: '即将过期',
+
+  // 通知
+  notifyDone: '定时任务执行完毕：「{label}」',
+  notifyFailed: '定时任务执行失败：「{label}」',
 } as const
 
-/** 自动化模块词典 key 集合。 */
-export type AutomationLocaleKey = keyof typeof zh
+export type DictKey = keyof typeof zh
 
-/** 英文词典（与中文 key 一一对应）。 */
-export const en: Record<AutomationLocaleKey, string> = {
-  entry: 'Automation',
-  entryAria: 'Open automation settings',
-  cardTitle: 'Automation',
+/** 英文词典。 */
+export const en: Partial<Record<DictKey, string>> = {
+  entry: 'Automations',
+  entryAria: 'Open automations panel',
+  title: 'Scheduled tasks',
   close: 'Close',
-  tabTasks: 'Tasks',
-  tabLogs: 'Logs',
-  cancel: 'Cancel',
-  enabledLabel: 'Enabled',
-  newTask: 'New task',
-  editTask: 'Edit task',
-  taskNamePlaceholder: 'Task name, e.g. daily usage report',
-  categoryLabel: 'Category',
-  modelLabel: 'Model',
-  effortLabel: 'Reasoning',
-  effortDefault: 'Model default',
-  modelPlaceholder: 'Pick a model (optional)',
-  modelsLoading: 'Loading model catalog…',
-  modelsEmpty: 'No models available — edit the task later',
-  confirmAdd: 'Add',
-  save: 'Save',
+  add: 'Add automation',
+  empty: 'No scheduled tasks yet',
+  emptyHint: 'Click + to create one, or ask your assistant in chat',
+  enable: 'Enable',
+  disable: 'Disable',
+  on: 'On',
+  off: 'Off',
   delete: 'Delete',
-  emptyTasks: 'No tasks yet — tap "+ New task" to create one',
-  schedLabel: 'Schedule',
-  'schedMode.interval': 'Interval',
-  'schedMode.daily': 'Daily',
-  'schedMode.weekly': 'Weekly',
-  'schedMode.monthly': 'Monthly',
-  'schedMode.once': 'Once',
-  schedEvery: 'Every',
-  schedUnit: 'Unit',
-  'schedUnit.minutes': 'minutes',
-  'schedUnit.hours': 'hours',
-  'schedUnit.days': 'days',
-  schedTime: 'Time',
-  schedWeekday: 'Weekday',
-  schedMonthDay: 'Day of month',
-  schedDateTime: 'Date & time',
-  filterAll: 'All tasks',
-  filterLabel: 'Filter by task',
-  statusSuccess: 'Ran',
-  statusFailed: 'Failed',
-  logEmpty: 'No run records yet',
-  logEmptyHint: 'Reaching a schedule trigger writes a run record automatically',
-  clearLogs: 'Clear records',
-  clearLogsConfirm: 'Clear all run records?',
-  dayToday: 'Today',
-  dayYesterday: 'Yesterday',
+  confirm: 'Confirm',
+  cancel: 'Cancel',
   runNow: 'Run now',
-  rerun: 'Rerun',
-  executing: 'Running…',
-  noModel: 'No model bound — pick one in the task first',
-  retryLabel: 'Retry on failure',
-  retryHint: 'Auto-retry count after failure (0–3)',
-  stepsLabel: 'Steps',
-  addStep: '+ Add step',
-  stepName: 'Step name',
-  stepNamePlaceholder: 'e.g. generate report body',
-  stepPrompt: 'Instruction',
-  stepPromptPlaceholder: 'Instruction sent to the model',
-  stepOnError: 'On failure',
-  onErrorStop: 'Stop the whole task',
-  onErrorSkip: 'Skip this step',
-  stepSaveFile: 'Save to file',
-  stepFileName: 'File name',
-  stepFileNameHint: 'Supports {date} / {time} placeholders',
-  deleteStep: 'Delete step',
-  stepNo: 'Step {n}',
-  summaryLabel: 'Output summary',
-  stepStatusSuccess: 'Success',
-  stepStatusFailed: 'Failed',
-  stepStatusSkipped: 'Skipped',
-  stepRecords: '{n} chars',
-  noSteps: 'No step details',
-  fileSection: 'Generated files',
-  noFiles: 'No files generated this run',
-  copyPath: 'Copy path',
-  copied: 'Copied',
-  downloadFile: 'Download',
-  openFolder: 'Open folder',
-  logError: 'Failure reason',
-  filterStatusLabel: 'Status',
-  filterStatusAll: 'All statuses',
-  filterStatusSuccess: 'Success only',
-  filterStatusFailed: 'Failed only',
+  newAutomation: 'New automation',
+  promptRequired: 'Write what the assistant should do before enabling this automation',
+  executorLabel: 'Agent run',
+  historyTitle: 'Run history',
+  historyEmpty: 'No runs yet',
+  tabJobs: 'Scheduled tasks',
+  tabRuns: 'Run history',
+  runsEmpty: 'No runs yet',
+  runsEmptyHint: 'Once a task fires, its full output is saved here for review',
+  statusSuccess: 'Success',
+  statusError: 'Failed',
+  statusSkipped: 'Skipped',
+  consecutiveErrors: '{n} consecutive failures',
+  nextRun: 'Next {time}',
+  fieldLabel: 'Name',
+  fieldSchedule: 'Schedule',
+  fieldPrompt: 'Instructions',
+  promptPlaceholder: 'Describe what the assistant should do',
+  modelLabel: 'Model',
+  defaultModel: 'Default model',
+  modelsLoading: 'Loading models…',
+  saveFailed: 'Save failed',
+  loadFailed: 'Load failed',
+  createFailed: 'Failed to create automation',
+  scheduleMode: 'Mode',
+  'mode.interval': 'Every interval',
+  'mode.daily': 'Daily',
+  'mode.weekly': 'Weekly',
+  'mode.monthly': 'Monthly',
+  'mode.once': 'Once',
+  'mode.advanced': 'Advanced cron',
+  every: 'Every',
+  unit: 'Unit',
+  'unit.minutes': 'minutes',
+  'unit.hours': 'hours',
+  'unit.days': 'days',
+  time: 'Time',
+  hour: 'Hour',
+  minute: 'Minute',
+  weekday: 'Weekday',
+  monthDay: 'Day of month',
+  dateTime: 'Date & time',
+  cronExpression: 'Cron expression',
+  'schedule.onceAt': 'Once: {date}',
+  'schedule.advancedCron': 'Cron: {cron}',
+  everyMinutes: 'Every {n} min',
+  everyHours: 'Every {n} h',
+  everyDays: 'Every {n} d',
+  hourly: 'Hourly',
+  hourlyAt: 'Hourly at :{min}',
+  dailyAt: 'Daily at {hour}:{min}',
+  weeklyAt: '{days} {hour}:{min}',
+  monthlyAt: 'Monthly on day {day} at {hour}:{min}',
+  weekPrefix: '',
+  dayNames: 'Sun,Mon,Tue,Wed,Thu,Fri,Sat',
+  suggestTitle: "Assistant's suggestion",
+  suggestCreate: 'Suggested addition',
+  suggestUpdate: 'Suggested change',
+  suggestView: 'View suggestion',
+  suggestConfirmCreate: 'Confirm & add',
+  suggestConfirmUpdate: 'Confirm & update',
+  suggestReject: 'Dismiss',
+  suggestApplied: 'Created "{label}"',
+  suggestRejected: 'Suggestion dismissed',
+  suggestApplyFailed: 'Failed to apply suggestion',
+  suggestExpireSoon: 'Expiring soon',
+  notifyDone: 'Scheduled task finished: "{label}"',
+  notifyFailed: 'Scheduled task failed: "{label}"',
 }
 
-/** 轻量翻译函数类型（面板组件共用）。 */
-export type T = (key: AutomationLocaleKey, vars?: Record<string, string | number>) => string
+const DICTS = { zh, en } as const
 
-const DICTS: Record<'zh' | 'en', Record<AutomationLocaleKey, string>> = { zh, en }
-
-/** 当前语言：跟随 DSH 同步到 <html lang> 的主子标签（缺省 zh）。 */
-function currentLang(): 'zh' | 'en' {
+/** 解析当前语言（跟随 <html lang>）。 */
+function locale(): 'zh' | 'en' {
   try {
-    const lang = document.documentElement.lang.toLowerCase().split('-')[0]
-    if (lang === 'en') return 'en'
-  } catch { /* 非 DOM 环境 */ }
-  return 'zh'
+    return (document.documentElement.lang || '').toLowerCase().startsWith('zh') ? 'zh' : 'en'
+  } catch {
+    return 'zh'
+  }
 }
 
-/** 轻量翻译：{n} 占位插值。 */
-export function makeT(): (key: AutomationLocaleKey, vars?: Record<string, string | number>) => string {
-  return (key, vars) => {
-    let text: string = DICTS[currentLang()][key] ?? zh[key]
-    if (vars !== undefined) {
-      for (const [name, value] of Object.entries(vars)) {
-        text = text.replaceAll(`{${name}}`, String(value))
-      }
+/** 取词条；缺省回退中文词典原文；支持 {name} 插值。key 放宽为 string 以支持组合键。 */
+export function t(key: string, params?: Record<string, string | number>): string {
+  const dict = DICTS[locale()]
+  let text: string = (dict as Partial<Record<string, string>>)[key] ?? (zh as Record<string, string>)[key] ?? key
+  if (params !== undefined) {
+    for (const [name, value] of Object.entries(params)) {
+      text = text.replaceAll(`{${name}}`, String(value))
     }
-    return text
   }
+  return text
 }

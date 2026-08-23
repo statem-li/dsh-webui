@@ -7,7 +7,7 @@
  * 已配置行 → 编辑；目录预设行 → 配置（创建）；底部「添加自定义提供方」。
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { CSSProperties } from 'react'
 import { getPath } from '@deepseek-ai/dsh-client-schema-form'
@@ -136,6 +136,7 @@ export function ChatProviderList(props: ChatProviderListProps): ReactNode {
         )
         : null}
       <SectionTitle />
+      <DevRoleProbeBar />
       {!state.writable && state.status === 'ready' ? <p style={hintStyle}>{chatCopy.readOnly}</p> : null}
 
       <p style={groupLabelStyle}>{chatCopy.configuredGroup}</p>
@@ -181,6 +182,139 @@ export function ChatProviderList(props: ChatProviderListProps): ReactNode {
         + {chatCopy.addCustom}
       </button>
     </section>
+  )
+}
+
+/**
+ * 「Developer Role 兼容」一键检测条：对全部 openai-completions 供应商真实发
+ * developer/system 各一条最小请求做对照，判定不支持的自动写入路由级
+ * compat.supportsDeveloperRole=false 并落盘。POST 启动 + GET 轮询逐项点亮，
+ * 与模型行「一键检测」同一交互模式。
+ */
+const DEVROLE_API = '/api/webui-devrole/probe'
+
+interface DevRoleItem {
+  key: string
+  label: string
+  status: 'pending' | 'running' | 'done'
+  ok: boolean | null
+  model: string
+  note: string
+}
+
+interface DevRoleState {
+  running: boolean
+  error: string
+  saved: boolean
+  saveError: string
+  items: DevRoleItem[]
+}
+
+function DevRoleProbeBar(): ReactNode {
+  const [busy, setBusy] = useState(false)
+  const [state, setState] = useState<DevRoleState | null>(null)
+  const timer = useRef<number | undefined>(undefined)
+
+  useEffect(() => () => { if (timer.current !== undefined) window.clearInterval(timer.current) }, [])
+
+  const pollOnce = async (): Promise<void> => {
+    try {
+      const r = await fetch(DEVROLE_API, { cache: 'no-store' })
+      const d: any = await r.json()
+      if (!d?.ok || !d.state) return
+      setState(d.state as DevRoleState)
+      if (d.state.running === false) {
+        if (timer.current !== undefined) window.clearInterval(timer.current)
+        setBusy(false)
+      }
+    } catch { /* 轮询失败下次再试 */ }
+  }
+
+  const start = (): void => {
+    if (busy) return
+    setBusy(true)
+    fetch(DEVROLE_API, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    })
+      .then(r => r.json())
+      .then((d: any) => {
+        if (!d?.ok) {
+          setBusy(false)
+          setState({ running: false, error: String(d?.error ?? '启动失败'), saved: false, saveError: '', items: [] })
+          return
+        }
+        if (d.state !== null && d.state !== undefined) setState(d.state as DevRoleState)
+        timer.current = window.setInterval(() => { void pollOnce() }, 800)
+        void pollOnce()
+      })
+      .catch((error) => {
+        setBusy(false)
+        setState({ running: false, error: String(error?.message ?? error), saved: false, saveError: '', items: [] })
+      })
+  }
+
+  return (
+    <div style={probeBarStyle}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <button
+          type="button"
+          style={probeButtonStyle}
+          disabled={busy}
+          title="向每个供应商真实发送 developer / system 角色的最小请求做对照测试：不认 OpenAI “developer” 角色的网关（症状是该家推理模型一直报错连不通）会被自动改用传统 system 角色并保存，无需手动改配置。"
+          onClick={start}
+        >
+          {busy ? '🛡 检测中…' : '🛡 一键兼容检测'}
+        </button>
+        <span style={hintStyle}>
+          自动验证各供应商是否接受 OpenAI “developer” 角色，不接受的自动改用 system 并保存
+        </span>
+      </div>
+      {(state?.error ?? '') !== ''
+        ? <p style={errorStyle}>{`检测失败：${state!.error}`}</p>
+        : null}
+      {state !== null && state.items.length > 0
+        ? (
+          <div style={probePanelStyle}>
+            {state.items.map(item => {
+              const mark = item.status !== 'done'
+                ? (item.status === 'running' ? '…' : '—')
+                : item.ok === true ? '✓' : item.ok === false ? '✗ 已修复' : '?'
+              const markColor = item.status !== 'done'
+                ? 'var(--dsw-alias-label-tertiary, #8f959e)'
+                : item.ok === true
+                  ? 'var(--dsw-alias-state-success-primary, #00b42a)'
+                  : item.ok === false
+                    ? 'var(--dsw-alias-state-business-primary, #4176e6)'
+                    : 'var(--dsw-alias-label-tertiary, #8f959e)'
+              return (
+                <div key={item.key} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '2px 0', minWidth: 0 }}>
+                  <span style={{ flex: 'none', width: 120, fontSize: 12.5, color: 'var(--dsw-alias-label-primary, #1f2329)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {item.label}
+                  </span>
+                  <span style={{ flex: 'none', width: 86, fontSize: 12.5, color: markColor }}>
+                    {mark}{item.status === 'running' ? ' 测试中' : ''}
+                  </span>
+                  <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: 'var(--dsw-alias-label-tertiary, #8f959e)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.note}>
+                    {item.note || `测试模型 ${item.model}`}
+                  </span>
+                </div>
+              )
+            })}
+            {state.running === false
+              ? (
+                <p style={hintStyle}>
+                  {state.saveError !== ''
+                    ? `保存出错：${state.saveError}`
+                    : `完成。${state.items.filter(i => i.ok === false).length} 家已自动改用 system 角色并保存；✓ 的保持现状。`}
+                </p>
+              )
+              : null}
+          </div>
+        )
+        : null}
+    </div>
   )
 }
 
@@ -416,4 +550,27 @@ const editorStyle: CSSProperties = {
   background: 'var(--dsw-alias-bg-module-platform, #f2f3f5)',
   padding: '14px 16px',
   display: 'flex', flexDirection: 'column', gap: 12,
+}
+
+/* Developer Role 一键检测：容器 / 主按钮 / 结果面板。 */
+const probeBarStyle: CSSProperties = {
+  display: 'flex', flexDirection: 'column', gap: 8,
+}
+
+const probeButtonStyle: CSSProperties = {
+  boxSizing: 'border-box',
+  height: 28, padding: '0 12px',
+  border: '1px solid var(--dsw-alias-state-business-primary, #4176e6)',
+  borderRadius: 14,
+  background: 'transparent',
+  color: 'var(--dsw-alias-state-business-primary, #4176e6)',
+  fontSize: 12, lineHeight: '18px', cursor: 'pointer',
+  flexShrink: 0,
+}
+
+const probePanelStyle: CSSProperties = {
+  display: 'flex', flexDirection: 'column',
+  padding: '8px 12px',
+  border: '1px solid var(--dsw-alias-border-l3, #e5e6eb)',
+  borderRadius: 10,
 }

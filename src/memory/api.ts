@@ -7,7 +7,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { URL } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
-import type { ConsolidateResult, MemoryConfig, MemoryEntry } from './types.js'
+import { applyConfigOverrides, publicConfig, type ConsolidateResult, type MemoryConfig, type MemoryEntry } from './types.js'
 import { compileAll } from './engine/compile.js'
 import { consolidateAll, consolidateScope } from './engine/consolidate.js'
 import { localDate, mergeTags, nowIso, projectHashOf, entryIdOf, summarize, type MemoryStore } from './engine/store.js'
@@ -95,9 +95,9 @@ async function handle(
     json(res, 400, { error: 'invalid request url' })
     return
   }
-  // API 诊断日志：请求到达与完成时间（排查面板「读取中」= 请求未达 vs host 未响应）。
+  // API 诊断日志（仅 logApiRequests 开启时记录，默认关闭防日志膨胀）。
   const apiStarted = Date.now()
-  void store.appendExtractLog(`api ${method} ${rest} start`).catch(() => undefined)
+  if (config.logApiRequests) void store.appendApiLog(`${method} ${rest} start`).catch(() => undefined)
   try {
     // ── 查询 ──────────────────────────────────────────────────────────
     if (method === 'GET' && rest === '/list') {
@@ -132,6 +132,19 @@ async function handle(
         projectCount: (await store.listProjects(entries)).length,
         todayChanges: (await store.readChanges(today)).length,
       })
+      return
+    }
+
+    // ── 运行时配置（面板设置；改动即时生效并持久化到 config.json） ─────
+    if (method === 'GET' && rest === '/config') {
+      json(res, 200, { config: publicConfig(config) })
+      return
+    }
+    if (method === 'POST' && rest === '/config') {
+      const body = await readBody(req) as Record<string, unknown>
+      const applied = applyConfigOverrides(config, body)
+      await store.writeConfig(applied)
+      json(res, 200, { ok: true, config: publicConfig(config) })
       return
     }
 
@@ -379,7 +392,7 @@ async function handle(
   } catch (error) {
     json(res, 400, { error: error instanceof Error ? error.message : String(error) })
   } finally {
-    void store.appendExtractLog(`api ${method} ${rest} done ${Date.now() - apiStarted}ms`).catch(() => undefined)
+    if (config.logApiRequests) void store.appendApiLog(`${method} ${rest} done ${Date.now() - apiStarted}ms`).catch(() => undefined)
   }
 }
 

@@ -1,258 +1,368 @@
 /**
- * automation — 容器组件（状态中枢 + 侧边栏入口 portal）。
+ * automation — 面板主体（openhanako AutomationPanel 同款布局，DSH 视觉规格）。
  *
- * 职责：
- *  - 持有卡片/抽屉的开合与 closing 动画状态机（复用 modal-animation，240ms）；
- *  - 持有 AutomationCatalog（任务自带执行计划）/ 执行日志 并即时持久化；
- *  - 启动定时调度检查器（按每任务 schedule 触发，每天有没有执行都有记录）；
- *  - 接入模型目录（任务可绑定模型 + 推理强度）；
- *  - 「自动化」菜单项经 portal 渲进侧边栏（新会话正下方），rail 态只显示图标；
- *  - Esc 分层退出：先关抽屉，再关卡片。
+ * 结构：侧边栏入口按钮 + PopoverShell 浮层（portal 到 body，右侧滑出）。
+ * 浮层 = Tab 栏（任务计划 / 运行记录）：
+ *  - 任务计划：工具栏（+ 新建）→ AI 待确认建议区 → 任务卡列表；
+ *  - 运行记录：全部任务的执行历史（含完整产出全文回看）。
+ * 打开期间低频轮询刷新；所有变更操作后立即重拉。
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { useModalClose } from '../modal-animation.js'
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
-import { AutomationCard } from './AutomationCard.tsx'
-import { TaskEditorModal } from './TaskEditorModal.tsx'
-import { createModelSource, type ModelSource } from './models.ts'
-import { AutomationIcon } from './icons.tsx'
-import { makeT } from './locales.ts'
-import { ensureStyles } from './styles.ts'
+import { PshHead, PopoverShell, ensureShellStyles } from '../popover-shell.js'
+import { NavButton, useRail } from '../sidebar-nav.js'
+import { ensureAutomationStyles } from './styles.ts'
+import { t } from './locales.ts'
 import {
-  defaultSteps, loadCatalog, loadLogs, recordRun, saveCatalog, saveLogs,
-} from './storage.ts'
-import { startScheduler } from './scheduler.ts'
-import type {
-  AutomationCatalog,
-  AutomationLogEntry,
-  AutomationRunResult,
-  AutomationTask,
-  ModelOption,
-} from './types.ts'
+  addJob,
+  getRunFile,
+  getRuns,
+  listJobs,
+  listSuggestions,
+  removeJob,
+  runNow,
+  toggleJob,
+  updateJob,
+} from './api.ts'
+import type { CronJob, ModelOption, RunRecord, SuggestionView } from './types.ts'
+import { createModelSource } from './models.ts'
+import { AutomationCard } from './AutomationCard.tsx'
+import { SuggestCard } from './SuggestCard.tsx'
 
-/** 侧边栏折叠观察：与 sidebar-float 相同的稳定 DOM 契约。 */
-const FRAME_SELECTOR = 'div:has(> [data-shell-overlay])'
+const RELOAD_MS = 30_000
 
-/** 抽屉状态：关闭 / 新建（预选分类）/ 编辑（指定任务）。 */
-interface DrawerState {
-  open: boolean
-  presetCategory?: string
-  editing?: AutomationTask | null
+type PanelTab = 'jobs' | 'runs'
+
+interface ToastState {
+  key: number
+  text: string
 }
 
+/** 合并视图里的一条运行记录（带任务名）。 */
+type RunRow = RunRecord & { jobId?: string, jobLabel?: string }
+
+/** 自动化面板（含侧边栏入口按钮）。 */
 export function AutomationApp({ ctx }: { ctx: ClientContext }): JSX.Element {
-  ensureStyles()
-  const t = useMemo(makeT, [])
-
-  // ---- 数据：localStorage 初始化，commit 阶段即时落盘 ---------------------
-  const [catalog, setCatalog] = useState<AutomationCatalog>(loadCatalog)
-  const [logs, setLogs] = useState<AutomationLogEntry[]>(loadLogs)
-  const [running, setRunning] = useState<ReadonlySet<string>>(new Set<string>())
-  const runningRef = useRef<Set<string>>(new Set())
-
-  // refs：调度器闭包经它们读取最新值（避免每 tick 重挂 interval）。
-  const catalogRef = useRef(catalog)
-  useEffect(() => { catalogRef.current = catalog }, [catalog])
-
-  const replaceCatalog = useCallback((next: AutomationCatalog): void => {
-    setCatalog(next)
-  }, [])
-
-  useEffect(() => { saveCatalog(catalog) }, [catalog])
-  useEffect(() => { saveLogs(logs) }, [logs])
-
-  // ---- 真实执行：把任务步骤交给 host 执行引擎，结果落执行日志 --------------
-  const executeTask = useCallback((task: AutomationTask): void => {
-    if (runningRef.current.has(task.id)) return
-    runningRef.current.add(task.id)
-    setRunning(new Set(runningRef.current))
-    void (async () => {
-      try {
-        const response = await fetch('/api/webui-automation/run', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            provider: task.provider ?? '',
-            model: task.model ?? '',
-            retry: task.retry ?? 0,
-            steps: task.steps ?? defaultSteps(),
-          }),
-        })
-        const result = await response.json() as AutomationRunResult
-        const detailParts: string[] = []
-        if (task.model !== undefined && task.model !== '') detailParts.push(task.model)
-        if (task.effort !== undefined && task.effort !== '') detailParts.push(task.effort)
-        const entry = recordRun(task, result.status, detailParts.length > 0 ? detailParts.join(' · ') : undefined, {
-          error: result.error,
-          steps: result.steps,
-          files: result.files,
-        })
-        setLogs(prev => [...prev, entry])
-      } catch (error) {
-        const entry = recordRun(task, 'failed', undefined, {
-          error: error instanceof Error ? error.message : String(error),
-        })
-        setLogs(prev => [...prev, entry])
-      } finally {
-        runningRef.current.delete(task.id)
-        setRunning(new Set(runningRef.current))
-      }
-    })()
-  }, [])
-
-  /** 按任务 id 立即执行（任务行「立即执行」与日志行「重跑」共用）。 */
-  const runTaskById = useCallback((taskId: string): void => {
-    const task = catalogRef.current.tasks.find(candidate => candidate.id === taskId)
-    if (task !== undefined) executeTask(task)
-  }, [executeTask])
-
-  /** 任务是否正在执行（调度器防重）。 */
-  const isRunning = useCallback((taskId: string): boolean => runningRef.current.has(taskId), [])
-
-  // ---- 定时调度检查器：挂载启动一次；按每任务执行计划触发并真实执行 --------
-  useEffect(() => startScheduler({
-    getCatalog: () => catalogRef.current,
-    executeTask,
-    isRunning,
-  }), [executeTask, isRunning])
-
-  // ---- 模型目录（任务绑定模型 + 推理强度） ---------------------------------
+  const [open, setOpen] = useState(false)
+  const [closing, setClosing] = useState(false)
+  const [tab, setTab] = useState<PanelTab>('jobs')
+  const [jobs, setJobs] = useState<CronJob[]>([])
+  const [suggestions, setSuggestions] = useState<SuggestionView[]>([])
+  const [runs, setRuns] = useState<RunRow[]>([])
+  const [viewing, setViewing] = useState<{ title: string, content: string } | null>(null)
   const [models, setModels] = useState<ModelOption[]>([])
-  const [modelsLoading, setModelsLoading] = useState(false)
-  const modelSourceRef = useRef<ModelSource | null>(null)
-  useEffect(() => {
-    modelSourceRef.current = createModelSource(ctx)
-  }, [ctx])
+  const [modelsLoading, setModelsLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [toast, setToast] = useState<ToastState | null>(null)
+  const [openIds, setOpenIds] = useState<Record<string, boolean>>({})
+  const [creating, setCreating] = useState(false)
+  const wrapRef = useRef<HTMLDivElement | null>(null)
+  const toastSeq = useRef(0)
+  const rail = useRail()
 
-  /** 打开抽屉前拉取一次模型目录。 */
-  const ensureModels = useCallback((): void => {
-    const source = modelSourceRef.current
-    if (source === null) return
+  const modelSource = useMemo(() => createModelSource(ctx), [ctx])
+
+  const showToast = useCallback((text: string): void => {
+    toastSeq.current += 1
+    setToast({ key: toastSeq.current, text })
+    window.setTimeout(() => {
+      setToast(current => (current !== null && current.text === text ? null : current))
+    }, 4000)
+  }, [])
+
+  const loadData = useCallback(async (): Promise<void> => {
+    try {
+      const [cronData, suggestData] = await Promise.all([
+        listJobs(),
+        listSuggestions(),
+      ])
+      setJobs(cronData.jobs)
+      setSuggestions(suggestData.suggestions)
+      setLoadError(null)
+    } catch (error) {
+      setLoadError(`${t('loadFailed')}：${error instanceof Error ? error.message : String(error)}`)
+    }
+  }, [])
+
+  // 打开：加载数据 + 模型目录。
+  useEffect(() => {
+    if (!open) return
+    void loadData()
+    let alive = true
     setModelsLoading(true)
-    source.load()
-      .then(list => { setModels(list) })
-      .catch(() => { setModels([]) })
-      .finally(() => { setModelsLoading(false) })
-  }, [])
-
-  // ---- 两级开合动画状态机 --------------------------------------------------
-  const [cardOpen, setCardOpen] = useState(false)
-  const [drawer, setDrawer] = useState<DrawerState>({ open: false })
-  const card = useModalClose(cardOpen, () => { setCardOpen(false) })
-  const drawerAnim = useModalClose(drawer.open, () => { setDrawer(prev => ({ ...prev, open: false })) })
-
-  // ---- 侧边栏折叠态：rail 模式下菜单项只显示图标 --------------------------
-  const [rail, setRail] = useState(() =>
-    document.querySelector(FRAME_SELECTOR)?.hasAttribute('data-sidebar-collapsed') ?? false)
-  useEffect(() => {
-    const frame = document.querySelector(FRAME_SELECTOR)
-    if (frame === null) return
-    setRail(frame.hasAttribute('data-sidebar-collapsed'))
-    const observer = new MutationObserver(() => {
-      setRail(frame.hasAttribute('data-sidebar-collapsed'))
+    modelSource.load().then(options => {
+      if (!alive) return
+      setModels(options)
+      setModelsLoading(false)
+    }).catch(() => {
+      if (alive) { setModels([]); setModelsLoading(false) }
     })
-    observer.observe(frame, { attributes: true, attributeFilter: ['data-sidebar-collapsed'] })
-    return () => { observer.disconnect() }
-  }, [])
-
-  // ---- Esc 统一退出：先抽屉后卡片；遮罩由各层自行处理 ----------------------
-  useEffect(() => {
-    if (!cardOpen && !drawer.open) return
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key !== 'Escape') return
-      if (drawer.open) drawerAnim.requestClose()
-      else card.requestClose()
+    const timer = window.setInterval(() => { void loadData() }, RELOAD_MS)
+    return () => {
+      alive = false
+      window.clearInterval(timer)
     }
-    document.addEventListener('keydown', onKeyDown)
-    return () => { document.removeEventListener('keydown', onKeyDown) }
-  }, [cardOpen, drawer.open, card, drawerAnim])
+  }, [open, loadData, modelSource])
 
-  // ---- 菜单项：portal 进侧边栏（mount 已把 host 放到新会话按钮下方）--------
-  const menuBtnRef = useRef<HTMLButtonElement | null>(null)
-  const [cardAnchor, setCardAnchor] = useState<{ left: number; top: number } | null>(null)
-  const openCard = useCallback((): void => {
-    const rect = menuBtnRef.current?.getBoundingClientRect()
-    setCardAnchor(rect !== undefined ? { left: rect.right + 8, top: rect.top - 6 } : null)
-    setCardOpen(true)
-  }, [])
-
-  const openNewTask = useCallback((presetCategory: string): void => {
-    ensureModels()
-    setDrawer({ open: true, presetCategory, editing: null })
-  }, [ensureModels])
-
-  const openEditTask = useCallback((taskId: string): void => {
-    const task = catalog.tasks.find(candidate => candidate.id === taskId)
-    if (task === undefined) return
-    ensureModels()
-    setDrawer({ open: true, editing: task })
-  }, [catalog, ensureModels])
-
-  const [menuHost, setMenuHost] = useState<HTMLElement | null>(null)
-  useEffect(() => {
-    let timer = 0
-    const poll = (): void => {
-      const host = document.getElementById('dsh-automation-menu-host')
-      setMenuHost(host)
-      if (host === null) timer = window.setTimeout(poll, 400)
+  /** 运行记录加载（runs tab 打开时）。 */
+  const loadRuns = useCallback(async (): Promise<void> => {
+    try {
+      const data = await getRuns(undefined, 50)
+      setRuns(data.runs)
+    } catch {
+      setRuns([])
     }
-    poll()
-    return () => { window.clearTimeout(timer) }
   }, [])
 
-  const menu = menuHost !== null && createPortal(
-    <button
-      ref={menuBtnRef}
-      type="button"
-      className="auto-nav"
-      data-rail={rail || undefined}
-      aria-label={t('entryAria')}
-      onClick={openCard}
-    >
-      <AutomationIcon size={rail ? 18 : 15} />
-      {!rail && <span className="auto-nav-label">{t('entry')}</span>}
-    </button>,
-    menuHost,
-  )
+  // 切到运行记录 tab（或面板打开）时拉取；打开期间随 tab 驻留低频刷新。
+  useEffect(() => {
+    if (!open || tab !== 'runs') return
+    void loadRuns()
+    const timer = window.setInterval(() => { void loadRuns() }, RELOAD_MS)
+    return () => { window.clearInterval(timer) }
+  }, [open, tab, loadRuns])
 
-  // 编辑模式：以最新目录中的任务为准（编辑期间被删则回退原快照）。
-  const editingTask: AutomationTask | null = drawer.editing != null
-    ? catalog.tasks.find(task => task.id === drawer.editing?.id) ?? drawer.editing
-    : null
+  /** 查看某次运行的完整产出。 */
+  const openRunFile = async (row: RunRow): Promise<void> => {
+    if (row.jobId === undefined || row.jobId === '' || row.file === undefined || row.file === '') return
+    try {
+      const data = await getRunFile(row.jobId, row.file)
+      setViewing({ title: `${row.jobLabel ?? row.jobId} · ${new Date(row.timestamp).toLocaleString(undefined, { hour12: false })}`, content: data.content })
+    } catch (error) {
+      showToast(`${t('loadFailed')}：${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
+  useEffect(() => {
+    ensureShellStyles()
+    ensureAutomationStyles()
+  }, [])
+
+  const close = useCallback((): void => {
+    setClosing(true)
+    window.setTimeout(() => {
+      setClosing(false)
+      setOpen(false)
+    }, 240)
+  }, [])
+
+  /** 新建灰卡（openhanako 同款：默认每天 09:00、停用态，建完直接展开编辑）。 */
+  const createDraftJob = async (): Promise<void> => {
+    if (creating) return
+    setCreating(true)
+    try {
+      const data = await addJob({
+        scheduleType: 'cron',
+        schedule: '0 9 * * *',
+        label: t('newAutomation'),
+        prompt: '',
+        enabled: false,
+      })
+      await loadData()
+      if (data.job !== null) setOpenIds(previous => ({ ...previous, [data.job.id]: true }))
+    } catch (error) {
+      showToast(`${t('createFailed')}：${error instanceof Error ? error.message : String(error)}`)
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  const handleToggleEnabled = async (job: CronJob): Promise<void> => {
+    try {
+      if (!job.enabled && job.prompt.trim() === '') {
+        showToast(t('promptRequired'))
+        return
+      }
+      await toggleJob(job.id)
+      await loadData()
+    } catch (error) {
+      showToast(`${t('saveFailed')}：${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
+  const handleUpdate = async (id: string, fields: Record<string, unknown>): Promise<void> => {
+    try {
+      await updateJob({ id, ...fields })
+      await loadData()
+    } catch (error) {
+      showToast(`${t('saveFailed')}：${error instanceof Error ? error.message : String(error)}`)
+      throw error
+    }
+  }
+
+  const handleRemove = async (id: string): Promise<void> => {
+    try {
+      await removeJob(id)
+      await loadData()
+    } catch (error) {
+      showToast(`${t('saveFailed')}：${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
+  const handleRunNow = async (id: string): Promise<void> => {
+    try {
+      await runNow(id)
+      showToast(t('runNow') + ' ✓')
+    } catch (error) {
+      showToast(`${t('saveFailed')}：${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
+  const handleSuggestApplied = async (appliedLabel: string | null): Promise<void> => {
+    await loadData()
+    if (appliedLabel !== null) showToast(t('suggestApplied', { label: appliedLabel }))
+    else showToast(t('suggestRejected'))
+  }
+
+  const anchor = useMemo<{ left: number, top: number } | null>(() => {
+    const wrap = wrapRef.current
+    if (wrap === null) return null
+    const rect = wrap.getBoundingClientRect()
+    return { left: rect.right + 8, top: rect.top }
+  }, [open])
 
   return (
     <>
-      {menu}
-      <AutomationCard
-        open={cardOpen}
-        closing={card.closing}
-        onClose={card.requestClose}
-        t={t}
-        catalog={catalog}
-        onCatalogChange={replaceCatalog}
-        logs={logs}
-        onClearLogs={() => { setLogs([]) }}
-        onNewTask={openNewTask}
-        onEditTask={openEditTask}
-        onRunTask={runTaskById}
-        onRerunTask={runTaskById}
-        running={running}
-        anchor={cardAnchor}
-      />
-      <TaskEditorModal
-        open={drawer.open}
-        closing={drawerAnim.closing}
-        onClose={drawerAnim.requestClose}
-        t={t}
-        catalog={catalog}
-        onCatalogChange={replaceCatalog}
-        models={models}
-        modelsLoading={modelsLoading}
-        presetCategory={drawer.presetCategory}
-        editing={editingTask}
-      />
+      <div ref={wrapRef}>
+        <NavButton
+          icon={(
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="9" />
+              <path d="M12 7v5l3.5 2" />
+            </svg>
+          )}
+          label={t('entry')}
+          rail={rail}
+          expanded={open}
+          ariaLabel={t('entryAria')}
+          onClick={() => { if (open || closing) close(); else setOpen(true) }}
+        />
+      </div>
+
+      {(open || closing) && createPortal(
+        <PopoverShell closing={closing} onClose={close} anchor={anchor} width={520} ariaLabel={t('title')}>
+          <PshHead title={t('title')} closeLabel={t('close')} onClose={close} />
+          <div className="auto-panel">
+            {/* Tab 栏：任务计划 / 运行记录 */}
+            <div className="auto-tabs" role="tablist">
+              <button type="button" className="auto-tab" role="tab" data-active={tab === 'jobs'} aria-selected={tab === 'jobs'} onClick={() => setTab('jobs')}>{t('tabJobs')}</button>
+              <button type="button" className="auto-tab" role="tab" data-active={tab === 'runs'} aria-selected={tab === 'runs'} onClick={() => setTab('runs')}>{t('tabRuns')}</button>
+            </div>
+
+            {tab === 'jobs' ? (
+              <>
+                <div className="auto-toolbar">
+                  <button
+                    type="button"
+                    className="auto-add"
+                    title={t('add')}
+                    aria-label={t('add')}
+                    disabled={creating}
+                    onClick={() => void createDraftJob()}
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+                      <line x1="12" y1="5" x2="12" y2="19" />
+                      <line x1="5" y1="12" x2="19" y2="12" />
+                    </svg>
+                  </button>
+                </div>
+
+                <div className="auto-scroll">
+                  {loadError !== null ? <div className="auto-error" role="alert">{loadError}</div> : null}
+
+                  {suggestions.length > 0 ? (
+                    <>
+                      <div className="auto-section-title">{t('suggestTitle')}</div>
+                      {suggestions.map(suggestion => (
+                        <SuggestCard
+                          key={suggestion.suggestionId}
+                          suggestion={suggestion}
+                          onDone={label => void handleSuggestApplied(label)}
+                          onError={showToast}
+                        />
+                      ))}
+                    </>
+                  ) : null}
+
+                  {jobs.length === 0 && suggestions.length === 0 && loadError === null ? (
+                    <div className="auto-empty">
+                      <span>{t('empty')}</span>
+                      <span>{t('emptyHint')}</span>
+                    </div>
+                  ) : (
+                    jobs.map(job => (
+                      <AutomationCard
+                        key={job.id}
+                        job={job}
+                        models={models}
+                        modelsLoading={modelsLoading}
+                        open={openIds[job.id] === true}
+                        onToggleOpen={() => setOpenIds(previous => ({ ...previous, [job.id]: previous[job.id] !== true }))}
+                        onToggleEnabled={handleToggleEnabled}
+                        onRemove={handleRemove}
+                        onRunNow={handleRunNow}
+                        onUpdate={handleUpdate}
+                      />
+                    ))
+                  )}
+                </div>
+              </>
+            ) : (
+              <div className="auto-scroll">
+                {runs.length === 0 ? (
+                  <div className="auto-empty">
+                    <span>{t('runsEmpty')}</span>
+                    <span>{t('runsEmptyHint')}</span>
+                  </div>
+                ) : (
+                  runs.map((row, index) => (
+                    <div className="auto-run" key={`${row.jobId ?? ''}-${row.timestamp}-${index}`}>
+                      <div className="auto-run-head">
+                        <span className="auto-run-status" data-status={row.status}>
+                          {row.status === 'success' ? t('statusSuccess') : row.status === 'error' ? t('statusError') : t('statusSkipped')}
+                        </span>
+                        <span className="auto-run-job">{row.jobLabel ?? row.jobId}</span>
+                        <span style={{ marginLeft: 'auto', flex: 'none' }}>{new Date(row.timestamp).toLocaleString(undefined, { hour12: false })}</span>
+                      </div>
+                      {(row.summary ?? row.error ?? row.reason) !== undefined ? (
+                        <div className="auto-run-detail">{row.summary ?? row.error ?? row.reason}</div>
+                      ) : null}
+                      {row.file !== undefined && row.file !== '' && row.status === 'success' ? (
+                        <div className="auto-run-actions">
+                          <button type="button" className="auto-btn" onClick={() => void openRunFile(row)}>{t('viewFull')}</button>
+                        </div>
+                      ) : null}
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+
+            {/* 全文查看覆盖层 */}
+            {viewing !== null ? (
+              <div className="auto-viewer">
+                <div className="auto-viewer-head">
+                  <span className="auto-viewer-title" title={viewing.title}>{viewing.title}</span>
+                  <button type="button" className="psh-close" aria-label={t('outputClose')} onClick={() => setViewing(null)}>
+                    <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                      <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+                    </svg>
+                  </button>
+                </div>
+                <pre className="auto-viewer-body">{viewing.content}</pre>
+              </div>
+            ) : null}
+          </div>
+        </PopoverShell>,
+        document.body,
+      )}
+
+      {toast !== null && createPortal(
+        <div className="auto-toast" role="status" onClick={() => setToast(null)}>{toast.text}</div>,
+        document.body,
+      )}
     </>
   )
 }

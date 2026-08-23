@@ -29,7 +29,24 @@ export interface MemoryEntry {
   layer: 'short' | 'long'
   /** extract=自动提取；manual=用户手写。 */
   source: 'extract' | 'manual'
+
+  // ── schema v2（MemCube 元数据：识别 / 控制 / 进化）─────────────────
+  /** 条目级版本号（每次内容变更 +1；迁移自 v1 时补 1）。 */
+  version: number
+  /** 置信度 0-1：manual=1；extract 由 LLM 输出或默认 0.6。 */
+  confidence: number
+  /** 是否已被用户显式确认（手动记忆/手动编辑/裁决保留即置 true）。 */
+  verified: boolean
+  /** 显式记忆类型（替代靠标签猜 identity/fact）。 */
+  kind: MemoryKind
+  /** 溯源：产生该条目的会话 / 轮次 / 原始片段（截断，可缺省）。 */
+  provenance?: { sessionId?: string; turn?: number; snippet?: string }
+  /** 嵌入向量（Retrieval 层缓存；未算则缺省）。 */
+  embedding?: number[]
 }
+
+/** 显式记忆类型（compile 按此分组，不再靠标签硬猜）。 */
+export type MemoryKind = 'identity' | 'preference' | 'fact' | 'decision' | 'gotcha' | 'session-summary'
 
 /** 变更流记录（changes/<date>.jsonl，驱动通知与裁决）。 */
 export interface ChangeRecord {
@@ -113,6 +130,12 @@ export interface MemoryConfig {
   consolidateMaxEntries: number
   /** 整理 LLM 调用超时（毫秒）。 */
   consolidateTimeoutMs: number
+  /** 是否记录 API 请求日志（默认 false；防 api.log 被面板轮询请求灌满）。 */
+  logApiRequests: boolean
+  /** 注入检索 top-k（当前任务相关记忆注入条数；identity/pinned/长期常驻不占此预算）。 */
+  injectTopK: number
+  /** 全局条目数上限（超限按 importance + recency 淘汰低分条目）。 */
+  entryLimit: number
 }
 
 /** 默认配置。 */
@@ -130,6 +153,9 @@ export const DEFAULT_CONFIG: MemoryConfig = {
   consolidateEnabled: true,
   consolidateMaxEntries: 200,
   consolidateTimeoutMs: 60_000,
+  logApiRequests: false,
+  injectTopK: 8,
+  entryLimit: 500,
 }
 
 /** LLM 整理操作（consolidate.ts 的 LLM 输出结构）。 */
@@ -180,4 +206,44 @@ export interface ExtractCandidate {
   scope: 'global' | 'project'
   tags: string[]
   importance: number
+}
+
+// ── 配置覆盖与公开视图（cordis.patch.yml 与 config.json 共用） ────────
+
+const CONFIG_NUMBER_KEYS = [
+  'extractEveryTurns', 'compileEveryTurns', 'compileThreshold', 'decayLambda',
+  'hitBonus', 'injectTokenBudget', 'injectRefreshSteps', 'extractMaxChars',
+  'minImportance', 'consolidateMaxEntries', 'consolidateTimeoutMs', 'injectTopK', 'entryLimit',
+] as const
+
+const CONFIG_BOOLEAN_KEYS = ['dailyCompileEnabled', 'consolidateEnabled', 'logApiRequests'] as const
+
+/** 应用配置覆盖（原地更新 config；返回实际应用的字段子集，供持久化）。 */
+export function applyConfigOverrides(config: MemoryConfig, candidate: unknown): Partial<MemoryConfig> {
+  const applied: Partial<MemoryConfig> = {}
+  if (candidate === null || typeof candidate !== 'object') return applied
+  const raw = candidate as Record<string, unknown>
+  for (const key of CONFIG_NUMBER_KEYS) {
+    const value = raw[key]
+    if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+      ;(config as unknown as Record<string, unknown>)[key] = value
+      ;(applied as unknown as Record<string, unknown>)[key] = value
+    }
+  }
+  for (const key of CONFIG_BOOLEAN_KEYS) {
+    const value = raw[key]
+    if (typeof value === 'boolean') {
+      ;(config as unknown as Record<string, unknown>)[key] = value
+      ;(applied as unknown as Record<string, unknown>)[key] = value
+    }
+  }
+  return applied
+}
+
+/** 面板可展示的公开配置视图（只暴露可调字段）。 */
+export function publicConfig(config: MemoryConfig): Partial<MemoryConfig> {
+  const out: Record<string, unknown> = {}
+  for (const key of CONFIG_NUMBER_KEYS) out[key] = config[key]
+  for (const key of CONFIG_BOOLEAN_KEYS) out[key] = config[key]
+  return out as Partial<MemoryConfig>
 }

@@ -11,53 +11,12 @@ import type { ConsolidateResult, MemoryConfig } from './types.js'
 import { projectHashOf, summarize, type MemoryStore } from './engine/store.js'
 import { workspaceHashOf } from './engine/compile.js'
 import { consolidateAll, consolidateScope } from './engine/consolidate.js'
+import { searchEntries, type RetrievalMode } from './engine/retrieval.js'
 
 /** 当前会话项目 hash（exec.agent 缺失时回退 null → global 或全部）。 */
 interface AgentLike {
   readonly id: string
   readonly session: { readonly id: string; readonly header?: { cwd?: string } }
-}
-
-/** 搜索可见条目视图。 */
-interface EntryView {
-  id: string
-  content: string
-  scope: 'global' | 'project'
-  projectHash: string | null
-  tags: string[]
-  pinned: boolean
-  importance: number
-  layer: 'short' | 'long'
-  updatedAt: string
-}
-
-function toView(entry: import('./types.ts').MemoryEntry): EntryView {
-  return {
-    id: entry.id,
-    content: entry.content,
-    scope: entry.scope,
-    projectHash: entry.projectHash,
-    tags: entry.tags,
-    pinned: entry.pinned,
-    importance: entry.importance,
-    layer: entry.layer,
-    updatedAt: entry.updatedAt,
-  }
-}
-
-/** 文本匹配：query 的每个非空词都命中 content 或 tags。 */
-function matchesQuery(entry: EntryView, query: string): boolean {
-  const terms = query.toLowerCase().split(/\s+/).filter(Boolean)
-  if (terms.length === 0) return true
-  const haystack = `${entry.content} ${entry.tags.join(' ')}`.toLowerCase()
-  return terms.every(term => haystack.includes(term))
-}
-
-/** 排序：pinned 优先，importance 降序，updatedAt 降序。 */
-function rank(a: EntryView, b: EntryView): number {
-  if (a.pinned !== b.pinned) return a.pinned ? -1 : 1
-  if (a.importance !== b.importance) return b.importance - a.importance
-  return b.updatedAt.localeCompare(a.updatedAt)
 }
 
 /** 注册全部记忆工具，返回合并 disposer。 */
@@ -71,12 +30,13 @@ export function registerMemoryTools(
   // ── memory_search ────────────────────────────────────────────────────
   disposers.push(ctx.tools.register(textTool({
     name: 'memory_search',
-    description: '搜索本地长期记忆（按内容/标签/项目）。用之前记住的决定、偏好、踩坑、项目上下文，或回答"我记得/之前说过"类问题时。',
+    description: '搜索本地长期记忆（语义相似度 + 关键词，支持按内容/标签/项目/范围过滤）。用之前记住的决定、偏好、踩坑、项目上下文，或回答"我记得/之前说过"类问题时。',
     parameters: {
-      query: { type: 'string', description: '搜索关键词（空格分隔多个词，全部命中才返回）。留空列出全部。' },
+      query: { type: 'string', description: '搜索关键词（空格分隔多个词）。留空列出全部。' },
       scope: { type: 'string', enum: ['global', 'project'], description: 'global=全局层（身份/偏好）；project=项目层。默认全部。' },
       project: { type: 'string', description: '项目标识（workspace 路径或 hash）。默认当前工作区项目。' },
       tag: { type: 'string', description: '按标签筛选。' },
+      mode: { type: 'string', enum: ['hybrid', 'keyword', 'semantic'], description: '检索模式：hybrid=相似度+精确命中（默认）；keyword=仅精确子串；semantic=预留（当前等同 hybrid）。' },
       limit: { type: 'integer', description: '返回条数上限（默认 10，最大 30）。' },
     },
     async execute(args, exec) {
@@ -86,27 +46,29 @@ export function registerMemoryTools(
       const projectFilter = typeof args.project === 'string' && args.project !== ''
         ? resolveProjectFilter(args.project)
         : currentHash
+      const query = typeof args.query === 'string' ? args.query : ''
+      const mode: RetrievalMode = args.mode === 'keyword' || args.mode === 'semantic' ? args.mode : 'hybrid'
 
-      const views = entries
-        .map(toView)
-        .filter(view => {
-          if (view.scope === 'project' && projectFilter !== null && view.projectHash !== projectFilter) return false
-          if (typeof args.scope === 'string' && view.scope !== args.scope) return false
-          if (typeof args.tag === 'string' && args.tag !== '' && !view.tags.includes(args.tag)) return false
-          if (typeof args.query === 'string' && !matchesQuery(view, args.query)) return false
-          return true
-        })
-        .sort(rank)
+      // 先做 scope/project/tag 硬过滤，再做检索排序。
+      const visible = entries.filter(entry => {
+        if (entry.scope === 'project' && projectFilter !== null && entry.projectHash !== projectFilter) return false
+        if (typeof args.scope === 'string' && entry.scope !== args.scope) return false
+        if (typeof args.tag === 'string' && args.tag !== '' && !entry.tags.includes(args.tag)) return false
+        return true
+      })
 
+      const matches = searchEntries(query, visible, mode)
       const limit = Math.max(1, Math.min(30, typeof args.limit === 'number' ? args.limit : 10))
-      const picked = views.slice(0, limit)
+      const picked = matches.slice(0, limit)
       if (picked.length === 0) return '没有找到匹配的记忆。'
-      const lines = picked.map(view => {
-        const head = view.pinned ? '📌' : ''
-        const scope = view.scope === 'global' ? '全局' : '项目'
-        const tags = view.tags.length > 0 ? ` [${view.tags.join(', ')}]` : ''
-        const layer = view.layer === 'long' ? '（长期）' : ''
-        return `${head}[${view.importance}] ${scope}${layer}: ${view.content}${tags}`
+      const lines = picked.map(({ entry, score }) => {
+        const head = entry.pinned ? '📌' : ''
+        const scope = entry.scope === 'global' ? '全局' : '项目'
+        const tags = entry.tags.length > 0 ? ` [${entry.tags.join(', ')}]` : ''
+        const layer = entry.layer === 'long' ? '（长期）' : ''
+        const verified = entry.verified ? '' : '〔待确认〕'
+        const rel = query.trim() !== '' ? `·相关${Math.round(score * 100)}%` : ''
+        return `${head}[${entry.importance}] ${scope}${layer}: ${entry.content}${verified}${rel}${tags}`
       })
       return lines.join('\n')
     },

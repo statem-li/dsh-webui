@@ -5,12 +5,15 @@
  */
 
 import { createHash, randomUUID } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { mkdir, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type {
   ChangeRecord,
+  MemoryConfig,
   MemoryEntry,
+  MemoryKind,
   ProjectMeta,
   RevisionMeta,
   StoreState,
@@ -107,8 +110,23 @@ const REVISION_KEEP = 20
 export class MemoryStore {
   readonly root: string
 
+  /** 回刷 debounce（毫秒）：合并短窗口内的多次写。 */
+  private static readonly FLUSH_DEBOUNCE_MS = 500
+
+  /** 内存态条目（权威副本；磁盘 entries.json 是它的节流回刷镜像）。 */
+  private entries: MemoryEntry[] = []
+  /** 内存态是否落后于磁盘（有待回刷）。 */
+  private dirty = false
+  /** 节流回刷计时器。 */
+  private flushTimer: ReturnType<typeof setTimeout> | null = null
+
   constructor(root = memoryHome()) {
     this.root = root
+    const data = readJsonSync<{ version: 1 | 2; entries: unknown }>(
+      this.entriesFile(),
+      { version: 2, entries: [] },
+    )
+    this.entries = migrateEntries(data.entries)
   }
 
   // ── 路径 ────────────────────────────────────────────────────────────
@@ -119,6 +137,20 @@ export class MemoryStore {
 
   stateFile(): string {
     return join(this.root, 'store', 'state.json')
+  }
+
+  configFile(): string {
+    return join(this.root, 'store', 'config.json')
+  }
+
+  /** 读运行时配置覆盖（config.json；缺失返回空）。 */
+  readConfigSync(): Partial<MemoryConfig> {
+    return readJsonSync<Partial<MemoryConfig>>(this.configFile(), {})
+  }
+
+  /** 写运行时配置覆盖（面板设置持久化）。 */
+  async writeConfig(config: Partial<MemoryConfig>): Promise<void> {
+    await atomicWriteJson(this.configFile(), config)
   }
 
   changesFile(date: string): string {
@@ -139,46 +171,48 @@ export class MemoryStore {
 
   // ── 条目 ────────────────────────────────────────────────────────────
 
-  /** 全量条目索引（缺失/损坏从空开始）。 */
+  /** 全量条目索引（内存快照的浅拷贝，避免外部误改内存态）。 */
   async readEntries(): Promise<MemoryEntry[]> {
-    const file = await readJson<{ version: 1; entries: MemoryEntry[] }>(
-      this.entriesFile(),
-      { version: 1, entries: [] },
-    )
-    return Array.isArray(file.entries) ? file.entries : []
+    return [...this.entries]
   }
 
-  async writeEntries(entries: MemoryEntry[]): Promise<void> {
-    await atomicWriteJson(this.entriesFile(), { version: 1, entries })
+  /** 节流回刷：标记 dirty 并在 debounce 后落盘（合并写放大）。 */
+  private scheduleFlush(): void {
+    this.dirty = true
+    if (this.flushTimer !== null) return
+    this.flushTimer = setTimeout(() => {
+      this.flushTimer = null
+      void this.flushNow().catch(() => undefined)
+    }, MemoryStore.FLUSH_DEBOUNCE_MS)
+  }
+
+  /** 立即落盘（幂等；dispose / 退出前调用）。 */
+  async flush(): Promise<void> {
+    if (this.flushTimer !== null) {
+      clearTimeout(this.flushTimer)
+      this.flushTimer = null
+    }
+    await this.flushNow()
+  }
+
+  private async flushNow(): Promise<void> {
+    if (!this.dirty) return
+    this.dirty = false
+    await atomicWriteJson(this.entriesFile(), { version: 2, entries: this.entries })
   }
 
   /**
-   * entries.json 写串行队列：所有「读-改-写」操作必须经此队列执行，
-   * 消除提取/注入命中刷新/API 裁决/每日编译之间的并发覆盖（read-modify-write 竞争）。
+   * 修改内存态条目（fn 原地修改传入数组或返回替换数组），随后节流回刷。
+   * 单线程下内存数组的同步操作天然原子，无需额外写串行队列。
    */
-  private writeQueue: Promise<void> = Promise.resolve()
-  private enqueueWrite<T>(task: () => Promise<T>): Promise<T> {
-    const result = this.writeQueue.then(task)
-    this.writeQueue = result.then(() => undefined, () => undefined)
+  async mutateEntries<T>(fn: (entries: MemoryEntry[]) => Promise<T> | T): Promise<T> {
+    const result = await fn(this.entries)
+    this.scheduleFlush()
     return result
   }
 
-  /**
-   * 原子化「读 entries → 修改 → 写回」。fn 原地修改传入数组（或返回替换数组）。
-   * @param fn - 接收当前 entries 快照，修改或返回新数组；返回值透传。
-   */
-  async mutateEntries<T>(fn: (entries: MemoryEntry[]) => Promise<T> | T): Promise<T> {
-    return this.enqueueWrite(async () => {
-      const entries = await this.readEntries()
-      const result = await fn(entries)
-      await this.writeEntries(entries)
-      return result
-    })
-  }
-
   async getEntry(id: string): Promise<MemoryEntry | undefined> {
-    const entries = await this.readEntries()
-    return entries.find(entry => entry.id === id)
+    return this.entries.find(entry => entry.id === id)
   }
 
   /**
@@ -195,6 +229,9 @@ export class MemoryStore {
     lastHitAt?: string | null
     layer?: 'short' | 'long'
     source?: 'extract' | 'manual'
+    kind?: MemoryKind
+    confidence?: number
+    provenance?: { sessionId?: string; turn?: number; snippet?: string }
   }): Promise<{ created: boolean; entry: MemoryEntry }> {
     return this.mutateEntries(entries => {
       const id = entryIdOf(next.content, next.scope, next.projectHash)
@@ -210,6 +247,7 @@ export class MemoryStore {
           importance: Math.max(existing.importance, next.importance ?? existing.importance),
           layer: next.layer ?? existing.layer,
           updatedAt: now,
+          version: existing.version + 1,
         }
         entries.splice(entries.indexOf(existing), 1, entry)
         return { created: false, entry }
@@ -227,6 +265,12 @@ export class MemoryStore {
         lastHitAt: null,
         layer: next.layer ?? 'short',
         source: next.source ?? 'extract',
+        version: 1,
+        confidence: next.confidence ?? (next.source === 'manual' ? 1 : 0.6),
+        verified: next.source === 'manual',
+        kind: next.kind ?? inferKind(next.tags),
+        provenance: next.provenance,
+        embedding: undefined,
       }
       entries.push(entry)
       return { created: true, entry }
@@ -243,6 +287,8 @@ export class MemoryStore {
         ...patch,
         id,
         updatedAt: nowIso(),
+        version: entries[index].version + 1,
+        verified: true,
       }
       if (updated.scope === 'global') updated.projectHash = null
       entries[index] = updated
@@ -276,12 +322,10 @@ export class MemoryStore {
 
   /** 原子替换全部条目（ticker 每日编译等批量场景；fn 返回新数组）。 */
   async replaceEntries(fn: (entries: MemoryEntry[]) => Promise<MemoryEntry[]> | MemoryEntry[]): Promise<MemoryEntry[]> {
-    return this.enqueueWrite(async () => {
-      const entries = await this.readEntries()
-      const next = await fn(entries)
-      await this.writeEntries(next)
-      return next
-    })
+    const next = await fn(this.entries)
+    this.entries = next
+    this.scheduleFlush()
+    return next
   }
 
   // ── 变更流 ──────────────────────────────────────────────────────────
@@ -317,20 +361,50 @@ export class MemoryStore {
 
   // ── ticker 状态 ─────────────────────────────────────────────────────
 
-  /** 插件错误日志（追加模式，供崩溃排查；DSH 控制台日志不落盘）。 */
-  async appendErrorLog(stage: string, message: string): Promise<void> {
-    const { appendFile } = await import('node:fs/promises')
-    const file = join(this.root, 'log', 'errors.log')
-    await mkdir(join(file, '..'), { recursive: true })
-    await appendFile(file, `[${nowIso()}] ${stage}: ${message}\n`, 'utf8')
+  /**
+   * 追加一行日志（按分类落独立文件 + 大小轮转，防无界增长）。
+   * kind: extract=提取诊断 / api=API 请求（默认关闭）/ error=插件错误。
+   * 轮转：当前文件 ≥ 10MB 时改名成带时间戳归档，只保留最近 5 个归档。
+   */
+  private async appendLog(kind: 'extract' | 'api' | 'error', line: string): Promise<void> {
+    const { appendFile, stat, rename, readdir, unlink } = await import('node:fs/promises')
+    const logDir = join(this.root, 'log')
+    const file = join(logDir, `${kind}.log`)
+    await mkdir(logDir, { recursive: true })
+    const maxBytes = 10 * 1024 * 1024
+    const keep = 5
+    try {
+      const info = await stat(file)
+      if (info.size >= maxBytes) {
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+        try { await rename(file, join(logDir, `${kind}.${stamp}.log`)) } catch { /* 忽略 */ }
+        try {
+          const names = (await readdir(logDir))
+            .filter(name => name.startsWith(`${kind}.`) && name.endsWith('.log'))
+            .sort()
+          const excess = names.slice(0, Math.max(0, names.length - keep))
+          for (const name of excess) {
+            try { await unlink(join(logDir, name)) } catch { /* 忽略 */ }
+          }
+        } catch { /* 忽略 */ }
+      }
+    } catch { /* 文件不存在，直接追加 */ }
+    await appendFile(file, `${line}\n`, 'utf8')
   }
 
-  /** 提取诊断日志（追加模式：开始/结束/耗时/候选数，排查提取卡死）。 */
+  /** 插件错误日志（本插件 async 任务失败；DSH 控制台日志不落盘）。 */
+  async appendErrorLog(stage: string, message: string): Promise<void> {
+    await this.appendLog('error', `[${nowIso()}] ${stage}: ${message}`)
+  }
+
+  /** 提取诊断日志（turn= 开始/结束/耗时/候选数，排查提取卡死）。 */
   async appendExtractLog(message: string): Promise<void> {
-    const { appendFile } = await import('node:fs/promises')
-    const file = join(this.root, 'log', 'extract.log')
-    await mkdir(join(file, '..'), { recursive: true })
-    await appendFile(file, `[${nowIso()}] ${message}\n`, 'utf8')
+    await this.appendLog('extract', `[${nowIso()}] ${message}`)
+  }
+
+  /** API 请求诊断日志（默认关闭；仅 config.logApiRequests 开启时由 api.ts 调用）。 */
+  async appendApiLog(message: string): Promise<void> {
+    await this.appendLog('api', `[${nowIso()}] ${message}`)
   }
 
   async readState(): Promise<StoreState> {
@@ -365,18 +439,16 @@ export class MemoryStore {
     return !cache.has(sessionId)
   }
 
-  /** 设置该会话的记忆注入开关（持久化到 state.json，走写串行队列）。 */
+  /** 设置该会话的记忆注入开关（持久化到 state.json；调用频率极低，直接写）。 */
   async setInjectEnabled(sessionId: string, enabled: boolean): Promise<void> {
     const cache = await this.ensureInjectCache()
     const next = new Set(cache)
     if (enabled) next.delete(sessionId)
     else next.add(sessionId)
     this.injectDisabledCache = next
-    await this.enqueueWrite(async () => {
-      const state = await this.readState()
-      state.injectDisabled = [...next]
-      await this.writeState(state)
-    })
+    const state = await this.readState()
+    state.injectDisabled = [...next]
+    await this.writeState(state)
   }
 
   // ── 项目 meta ───────────────────────────────────────────────────────
@@ -559,4 +631,64 @@ export function mergeTags(existing: string[], next: string[] | undefined, max = 
 export function summarize(content: string, max = 80): string {
   const flat = content.replace(/\s+/g, ' ').trim()
   return flat.length <= max ? flat : `${flat.slice(0, max - 1)}…`
+}
+
+// ── schema v1 → v2 迁移与记忆类型推断 ────────────────────────────────
+
+/** 同步读 JSON（构造时用，容错返回 fallback）。 */
+function readJsonSync<T>(file: string, fallback: T): T {
+  try {
+    return JSON.parse(readFileSync(file, 'utf8')) as T
+  } catch {
+    return fallback
+  }
+}
+
+/** 校验是否为合法 MemoryKind。 */
+function isMemoryKind(value: unknown): value is MemoryKind {
+  return value === 'identity' || value === 'preference' || value === 'fact'
+    || value === 'decision' || value === 'gotcha' || value === 'session-summary'
+}
+
+/** 由标签推断记忆类型（v1 无 kind 字段时的迁移兜底）。 */
+function inferKind(tags: string[] | undefined): MemoryKind {
+  const lower = (tags ?? []).map(tag => String(tag).toLowerCase())
+  if (lower.some(tag => tag === '身份' || tag === 'identity')) return 'identity'
+  if (lower.some(tag => tag === '偏好' || tag === 'preference' || tag === '风格' || tag === 'style' || tag === '习惯' || tag === 'habit')) return 'preference'
+  if (lower.some(tag => tag === '踩坑' || tag === 'gotcha' || tag === '坑')) return 'gotcha'
+  if (lower.some(tag => tag === '决策' || tag === 'decision')) return 'decision'
+  return 'fact'
+}
+
+/** v1 → v2 迁移：补 version/confidence/verified/kind（容错坏行）。 */
+function migrateEntries(entries: unknown): MemoryEntry[] {
+  if (!Array.isArray(entries)) return []
+  const out: MemoryEntry[] = []
+  for (const raw of entries) {
+    if (typeof raw !== 'object' || raw === null) continue
+    const entry = raw as Partial<MemoryEntry>
+    if (typeof entry.id !== 'string' || typeof entry.content !== 'string') continue
+    const source = entry.source === 'manual' ? 'manual' as const : 'extract' as const
+    out.push({
+      id: entry.id,
+      content: entry.content,
+      scope: entry.scope === 'global' ? 'global' : 'project',
+      projectHash: entry.scope === 'project' ? (typeof entry.projectHash === 'string' ? entry.projectHash : null) : null,
+      tags: Array.isArray(entry.tags) ? entry.tags.filter((tag): tag is string => typeof tag === 'string') : [],
+      pinned: entry.pinned === true,
+      createdAt: typeof entry.createdAt === 'string' ? entry.createdAt : nowIso(),
+      updatedAt: typeof entry.updatedAt === 'string' ? entry.updatedAt : nowIso(),
+      importance: typeof entry.importance === 'number' ? entry.importance : 10,
+      lastHitAt: typeof entry.lastHitAt === 'string' ? entry.lastHitAt : null,
+      layer: entry.layer === 'long' ? 'long' : 'short',
+      source,
+      version: typeof entry.version === 'number' ? entry.version : 1,
+      confidence: typeof entry.confidence === 'number' ? entry.confidence : (source === 'manual' ? 1 : 0.6),
+      verified: entry.verified === true || source === 'manual',
+      kind: isMemoryKind(entry.kind) ? entry.kind : inferKind(entry.tags),
+      provenance: entry.provenance,
+      embedding: Array.isArray(entry.embedding) ? entry.embedding : undefined,
+    })
+  }
+  return out
 }

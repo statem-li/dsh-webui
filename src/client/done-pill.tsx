@@ -461,12 +461,13 @@ function toggleFileExplorer(): void {
   window.dispatchEvent(new CustomEvent('dsh-file-explorer-toggle'))
 }
 
-/** 逐字符淡入的 keyframes（一次性注入）。 */
+/** 主文案整行淡入的 keyframes（一次性注入）：轻微上浮 + 由模糊到清晰，
+ *  不再逐字符蹦出（逐字符配合宽度向两侧扩展显得杂乱）。 */
 function ensurePillKeyframes(): void {
   if (document.getElementById('dsh-done-pill-kf') !== null) return
   const style = document.createElement('style')
   style.id = 'dsh-done-pill-kf'
-  style.textContent = '@keyframes dpCharIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}'
+  style.textContent = '@keyframes dpLineIn{from{opacity:0;transform:translateY(3px);filter:blur(3px)}to{opacity:1;transform:translateY(0);filter:none}}'
   document.head.appendChild(style)
 }
 
@@ -1123,6 +1124,9 @@ export function DonePill(props: DonePillProps): JSX.Element | null {
   const sinceRef = useRef(0)
   const wrapRef = useRef<HTMLDivElement | null>(null)
   const dragRef = useRef<DragState | null>(null)
+  // 「正在执行」面板的左缘锚点：运行中区块相对胶囊左缘的偏移（每渲染实测）。
+  const [runBlockLeft, setRunBlockLeft] = useState(0)
+  const runBlockRef = useRef<HTMLButtonElement | null>(null)
 
   // 设置开关：关闭即整体隐藏。
   useEffect(() => enabledStore.subscribe(setEnabled), [])
@@ -1410,20 +1414,18 @@ export function DonePill(props: DonePillProps): JSX.Element | null {
     ? `${unreadCount} 个对话完成 · ${truncate(latestLabel, 56)}`
     : funLine.text
 
-  // 面板定位：与胶囊**中心对齐**（整数像素），并做视口边界保护——
-  // 面板左/右缘都不超出视口，胶囊贴边时自动向内收。
-  const centeredPanelLeft = (panelW: number): number => {
-    const pillW = (shellWidth ?? 0) + 2
-    let left = Math.round((pillW - panelW) / 2)
-    if (pos !== null) {
-      const minLeft = Math.round(8 - pos.x)
-      const maxLeft = Math.round(window.innerWidth - 12 - pos.x - panelW)
-      left = Math.min(Math.max(left, minLeft), Math.max(minLeft, maxLeft))
-    }
-    return left
+  // 面板定位（整数像素）+ 视口边界保护：面板左/右缘都不超出视口，
+  // 胶囊贴边时自动向内收。
+  const clampPanelLeft = (panelW: number, left: number): number => {
+    if (pos === null) return left
+    const minLeft = Math.round(8 - pos.x)
+    const maxLeft = Math.max(minLeft, Math.round(window.innerWidth - 12 - pos.x - panelW))
+    return Math.min(Math.max(left, minLeft), maxLeft)
   }
-  const doneShift = centeredPanelLeft(DONE_PANEL_W)
-  const runShift = centeredPanelLeft(RUN_PANEL_W)
+  // 记录面板：与胶囊**中心对齐**。
+  const doneShift = clampPanelLeft(DONE_PANEL_W, Math.round(((shellWidth ?? 0) + 2 - DONE_PANEL_W) / 2))
+  // 「正在执行」面板：不居中展开，左缘与「运行中」区块左缘对齐。
+  const runShift = clampPanelLeft(RUN_PANEL_W, runBlockLeft)
 
   // 主文案：完整展示，不再截断（知识/话术全文）；超出由外壳 maxWidth + 省略号兜底。
   const displayText = pillLabel
@@ -1440,6 +1442,14 @@ export function DonePill(props: DonePillProps): JSX.Element | null {
       shellWidthRef.current = Math.round(total)
       setShellWidth(Math.round(total))
     }
+    // 「正在执行」面板锚点：运行中区块的 offsetLeft（相对 wrap 的 padding box，
+    // 即面板 absolute left 所需值）。胶囊宽度动画/内容变化后每渲染实测跟随；
+    // 值不变时返回原 state，React bail out，不会死循环。
+    const runEl = runBlockRef.current
+    if (runEl !== null) {
+      const runLeft = runEl.offsetLeft
+      setRunBlockLeft(prev => (Math.abs(runLeft - prev) >= 1 ? runLeft : prev))
+    }
     // 锁定模式下宽度变化后按中心锚点重放位置（向两侧对称伸缩）。
     // 拖拽进行中绝不重放——否则锚点会和拖拽对抗，把胶囊拽回去。
     if (dragRef.current !== null) return
@@ -1448,8 +1458,7 @@ export function DonePill(props: DonePillProps): JSX.Element | null {
 
   if (!enabled) return null
 
-  // 逐字符淡入：key = displayText，文本变化时 React 重建字符节点重放动画。
-  const chars = displayText.split('')
+  // 整行淡入：key = displayText，文本变化时 React 重建文本节点重放动画。
 
   return createPortal(
     <div
@@ -1476,6 +1485,7 @@ export function DonePill(props: DonePillProps): JSX.Element | null {
         {runningSessions.length > 0 && (
           <>
             <button
+              ref={runBlockRef}
               type="button"
               style={{ ...runningBlockStyle(true), cursor: 'inherit' }}
               aria-label={`正在执行中的任务 ${runningSessions.length} 个；悬停查看列表`}
@@ -1504,20 +1514,16 @@ export function DonePill(props: DonePillProps): JSX.Element | null {
           ) : (
             <span style={reminderIconStyle} aria-hidden><LineIcon kind={reminderLabel !== null ? reminderIcon : funLine.icon} size={Math.max(10, Math.round(13 * appearance.scale))} /></span>
           )}
-          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }} key={displayText}>
-            {chars.map((ch, i) => (
-              <span
-                key={`${i}-${ch}`}
-                style={{
-                  display: 'inline-block',
-                  whiteSpace: 'pre',
-                  opacity: 0,
-                  animation: `dpCharIn .22s ease ${i * 28}ms forwards`,
-                }}
-              >
-                {ch}
-              </span>
-            ))}
+          <span
+            key={displayText}
+            style={{
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              opacity: 0,
+              animation: 'dpLineIn .26s ease forwards',
+            }}
+          >
+            {displayText}
           </span>
         </button>
         {/* 分隔线 + 文件按钮：点击打开文件浏览器抽屉 */}

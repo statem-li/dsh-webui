@@ -1,170 +1,141 @@
 /**
- * automation — 执行计划编辑器（设计借鉴 openhanako 的 ScheduleEditor）。
+ * automation — ScheduleEditor：六模式调度编辑器（openhanako 同款）。
  *
- * 五种模式：间隔执行 / 每天 / 每周 / 每月 / 单次；按模式渲染对应字段
- * （原生 time/datetime-local/date 输入，color-scheme 跟随主题），
- * 底部实时显示人类可读预览（「每天 09:00」「每周一 09:30」…）。
+ * 模式：interval（每隔）/ daily / weekly / monthly / once / advanced(裸 cron)。
+ * 草稿与存储形态的双向转换在 schedule-draft.ts，本组件只管交互。
  */
 
-import { schedulePreview, storedFromDraft, WEEKDAY_NAMES,
-  type IntervalUnit,
-  type ScheduleDraft,
-  type ScheduleMode,
-} from './schedule.ts'
-import type { T } from './locales.ts'
+import type { ScheduleDraft, ScheduleMode, IntervalUnit } from './schedule-draft.ts'
+import { dayNames } from './schedule-draft.ts'
+import { t } from './locales.ts'
+import { TimePicker } from './TimePicker.tsx'
 
-const MODES: ScheduleMode[] = ['interval', 'daily', 'weekly', 'monthly', 'once']
-const UNITS: IntervalUnit[] = ['minutes', 'hours', 'days']
+const SCHEDULE_MODES: ScheduleMode[] = ['interval', 'daily', 'weekly', 'monthly', 'once', 'advanced']
+const INTERVAL_UNITS: IntervalUnit[] = ['minutes', 'hours', 'days']
 
-function weekdayNames(): readonly string[] {
-  try {
-    return document.documentElement.lang.toLowerCase().split('-')[0] === 'en' ? WEEKDAY_NAMES.en : WEEKDAY_NAMES.zh
-  } catch {
-    return WEEKDAY_NAMES.zh
-  }
-}
-
-export interface ScheduleEditorProps {
+export function ScheduleEditor({ draft, onChange }: {
   draft: ScheduleDraft
   onChange: (draft: ScheduleDraft) => void
-  t: T
-}
-
-/** 渲染执行计划编辑器（模式选择 + 动态字段 + 预览）。 */
-export function ScheduleEditor({ draft, onChange, t }: ScheduleEditorProps): JSX.Element {
-  const update = (patch: Partial<ScheduleDraft>): void => { onChange({ ...draft, ...patch }) }
-  const days = weekdayNames()
-  const modeLabel = (mode: ScheduleMode): string => t(`schedMode.${mode}` as never)
+}): JSX.Element {
+  const update = (patch: Partial<ScheduleDraft>): void => onChange({ ...draft, ...patch })
+  const days = dayNames()
 
   return (
-    <div className="auto-sched">
-      <div className="auto-field">
-        <label className="auto-field-label" htmlFor="auto-sched-mode">{t('schedLabel')}</label>
+    <div className="auto-schedule">
+      <label className="auto-field">
+        <span>{t('fieldSchedule')}</span>
         <select
-          id="auto-sched-mode"
           className="auto-select"
           value={draft.mode}
-          onChange={event => { update({ mode: event.currentTarget.value as ScheduleMode }) }}
+          onChange={event => update({ mode: event.target.value as ScheduleMode })}
         >
-          {MODES.map(mode => (
-            <option key={mode} value={mode}>{modeLabel(mode)}</option>
+          {SCHEDULE_MODES.map(mode => (
+            <option key={mode} value={mode}>{t(`mode.${mode}`)}</option>
           ))}
         </select>
-      </div>
+      </label>
 
-      {draft.mode === 'interval' && (
-        <div className="auto-sched-row">
-          <div className="auto-field auto-sched-grow">
-            <label className="auto-field-label" htmlFor="auto-sched-interval">{t('schedEvery')}</label>
+      {draft.mode === 'interval' ? (
+        <div className="auto-inline">
+          <label className="auto-field">
+            <span>{t('every')}</span>
             <input
-              id="auto-sched-interval"
               className="auto-input"
               type="number"
               min="1"
               step="1"
               value={draft.intervalValue}
-              onChange={event => { update({ intervalValue: event.currentTarget.value }) }}
+              onChange={event => update({ intervalValue: event.target.value })}
             />
-          </div>
-          <div className="auto-field">
-            <label className="auto-field-label" htmlFor="auto-sched-unit">{t('schedUnit')}</label>
+          </label>
+          <label className="auto-field">
+            <span>{t('unit')}</span>
             <select
-              id="auto-sched-unit"
               className="auto-select"
               value={draft.intervalUnit}
-              onChange={event => { update({ intervalUnit: event.currentTarget.value as IntervalUnit }) }}
+              onChange={event => update({ intervalUnit: event.target.value as IntervalUnit })}
             >
-              {UNITS.map(unit => (
-                <option key={unit} value={unit}>{t(`schedUnit.${unit}` as never)}</option>
+              {INTERVAL_UNITS.map(unit => (
+                <option key={unit} value={unit}>{t(`unit.${unit}`)}</option>
               ))}
             </select>
-          </div>
+          </label>
         </div>
-      )}
+      ) : null}
 
-      {draft.mode === 'daily' && (
+      {draft.mode === 'daily' ? (
         <div className="auto-field">
-          <label className="auto-field-label" htmlFor="auto-sched-time">{t('schedTime')}</label>
-          <input
-            id="auto-sched-time"
-            className="auto-input"
-            type="time"
-            value={draft.time}
-            onChange={event => { update({ time: event.currentTarget.value }) }}
-          />
+          <span>{t('time')}</span>
+          <TimePicker value={draft.time} onChange={time => update({ time })} />
         </div>
-      )}
+      ) : null}
 
-      {draft.mode === 'weekly' && (
-        <>
-          <div className="auto-field">
-            <label className="auto-field-label" htmlFor="auto-sched-weekday">{t('schedWeekday')}</label>
+      {draft.mode === 'weekly' ? (
+        <div className="auto-inline">
+          <label className="auto-field">
+            <span>{t('weekday')}</span>
             <select
-              id="auto-sched-weekday"
               className="auto-select"
               value={draft.weekday}
-              onChange={event => { update({ weekday: event.currentTarget.value }) }}
+              onChange={event => update({ weekday: event.target.value })}
             >
               {days.map((name, index) => (
-                <option key={index} value={String(index)}>{name}</option>
+                <option key={index} value={String(index)}>{`${t('weekPrefix')}${name}`}</option>
               ))}
             </select>
-          </div>
+          </label>
           <div className="auto-field">
-            <label className="auto-field-label" htmlFor="auto-sched-time-weekly">{t('schedTime')}</label>
-            <input
-              id="auto-sched-time-weekly"
-              className="auto-input"
-              type="time"
-              value={draft.time}
-              onChange={event => { update({ time: event.currentTarget.value }) }}
-            />
+            <span>{t('time')}</span>
+            <TimePicker value={draft.time} onChange={time => update({ time })} />
           </div>
-        </>
-      )}
+        </div>
+      ) : null}
 
-      {draft.mode === 'monthly' && (
-        <>
-          <div className="auto-field">
-            <label className="auto-field-label" htmlFor="auto-sched-monthday">{t('schedMonthDay')}</label>
+      {draft.mode === 'monthly' ? (
+        <div className="auto-inline">
+          <label className="auto-field">
+            <span>{t('monthDay')}</span>
             <input
-              id="auto-sched-monthday"
               className="auto-input"
               type="number"
               min="1"
               max="31"
               step="1"
               value={draft.monthDay}
-              onChange={event => { update({ monthDay: event.currentTarget.value }) }}
+              onChange={event => update({ monthDay: event.target.value })}
             />
-          </div>
+          </label>
           <div className="auto-field">
-            <label className="auto-field-label" htmlFor="auto-sched-time-monthly">{t('schedTime')}</label>
-            <input
-              id="auto-sched-time-monthly"
-              className="auto-input"
-              type="time"
-              value={draft.time}
-              onChange={event => { update({ time: event.currentTarget.value }) }}
-            />
+            <span>{t('time')}</span>
+            <TimePicker value={draft.time} onChange={time => update({ time })} />
           </div>
-        </>
-      )}
+        </div>
+      ) : null}
 
-      {draft.mode === 'once' && (
-        <div className="auto-field">
-          <label className="auto-field-label" htmlFor="auto-sched-datetime">{t('schedDateTime')}</label>
+      {draft.mode === 'once' ? (
+        <label className="auto-field">
+          <span>{t('dateTime')}</span>
           <input
-            id="auto-sched-datetime"
             className="auto-input"
             type="datetime-local"
             value={draft.dateTime}
-            onChange={event => { update({ dateTime: event.currentTarget.value }) }}
+            onChange={event => update({ dateTime: event.target.value })}
           />
-        </div>
-      )}
+        </label>
+      ) : null}
 
-      <div className="auto-sched-preview">{schedulePreview(storedFromDraft(draft))}</div>
+      {draft.mode === 'advanced' ? (
+        <label className="auto-field">
+          <span>{t('cronExpression')}</span>
+          <input
+            className="auto-input"
+            value={draft.cron}
+            spellCheck={false}
+            placeholder="0 9 * * *"
+            onChange={event => update({ cron: event.target.value })}
+          />
+        </label>
+      ) : null}
     </div>
   )
 }

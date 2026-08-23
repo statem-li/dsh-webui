@@ -1,25 +1,29 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { TrendTab } from './TrendTab'
 import { UsageTab } from './UsageTab'
+import { SignalTab } from './SignalTab'
 import { AccountsTab } from './AccountsTab'
 import { RangePicker } from './primitives/RangePicker'
 import { resolveRange, type DateRange, type RangePreset } from './range'
 import { modalStaggerClass } from '../../modal-animation'
 import { PopoverShell, type PopoverAnchor, type PopoverSize } from '../../popover-shell'
 
-export type TabKey = 'trend' | 'detail' | 'accounts'
+export type TabKey = 'trend' | 'detail' | 'signal' | 'accounts'
 
 const NAV: Array<{ key: TabKey; label: string }> = [
   { key: 'trend', label: '趋势' },
   { key: 'detail', label: '明细' },
+  { key: 'signal', label: '信号' },
   { key: 'accounts', label: '余额/配额' },
 ]
 
-/** 每个 tab 的理想卡片尺寸：切换时 width/height 以 240ms 平滑过渡（automation 同款）。 */
+/** 每个 tab 的理想卡片尺寸：切换时 width/height 以 240ms 平滑过渡（automation 同款）。
+ *  整体在原始设计上放大 1.5 倍；PopoverShell 会按视口自动夹紧不越界。 */
 const TAB_SIZES: Record<TabKey, PopoverSize> = {
-  trend: { width: 1120, height: 780 },
-  detail: { width: 1000, height: 720 },
-  accounts: { width: 820, height: 600 },
+  trend: { width: 1680, height: 1170 },
+  detail: { width: 1500, height: 1080 },
+  signal: { width: 1560, height: 1140 },
+  accounts: { width: 1230, height: 900 },
 }
 
 const css = {
@@ -85,6 +89,7 @@ export function Workbench({ onClose, closing = false, anchor = null, onCardMouse
   const tabContent: Record<TabKey, ReactNode> = {
     trend: <TrendTab range={range} rangeLabel={rangeLabel} onJumpAccounts={() => setTab('accounts')} />,
     detail: <UsageTab range={range} rangeLabel={rangeLabel} />,
+    signal: <SignalTab />,
     accounts: <AccountsTab />,
   }
   return (
@@ -101,7 +106,7 @@ export function Workbench({ onClose, closing = false, anchor = null, onCardMouse
             </button>
           ))}
         </div>
-        {tab !== 'accounts' && (
+        {tab !== 'accounts' && tab !== 'signal' && (
           <div style={{ marginLeft: 'auto' }}>
             <RangePicker
               preset={preset}

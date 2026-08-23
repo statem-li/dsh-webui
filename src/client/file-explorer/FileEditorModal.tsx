@@ -9,17 +9,25 @@ import { useEffect, useRef, useState } from 'react'
 import { basicSetup } from 'codemirror'
 import { EditorView } from '@codemirror/view'
 import { EditorState, type Extension } from '@codemirror/state'
-import { syntaxHighlighting } from '@codemirror/language'
-import { oneDarkHighlightStyle } from '@codemirror/theme-one-dark'
+// oneDark = 完整编辑器主题（activeLine/选区/gutter/光标暗色化 + 语法配色）；
+// 只用 oneDarkHighlightStyle 会让当前行高亮等 chrome 残留浅色默认值（白条）。
+import { oneDark } from '@codemirror/theme-one-dark'
 import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
-import { ApiError, rawFileUrl, readFile, readBinaryPreview, writeFile } from './api.ts'
+import { MarkstreamMarkdown } from '../markdown/renderer'
+import { ApiError, explorerSource, type FileReadSource, writeFile } from './api.ts'
 import { languageForPath } from './languages.ts'
 import type { FileExplorerLocaleKey } from './locales.ts'
 import { css } from './styles.ts'
 import { FeModal } from './FeModal.tsx'
+import { FileHistoryView } from './FileHistoryView.tsx'
 import { ImageViewer } from './ImageViewer.tsx'
 
 type T = (key: FileExplorerLocaleKey) => string
+
+/** 组件内统一经此取数：source 缺省时回退 file-explorer 默认源。 */
+function sourceOf(source: FileReadSource | undefined): FileReadSource {
+  return source ?? explorerSource
+}
 
 function fileNameOf(path: string): string {
   return path.split(/[\\/]/).pop() ?? path
@@ -27,19 +35,26 @@ function fileNameOf(path: string): string {
 
 const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|bmp|ico|cur|svg|avif)$/i
 
+/** Markdown 文件在卡片里默认渲染展示（可切源码编辑）。 */
+const MARKDOWN_EXT_RE = /\.(md|markdown|mdx)$/i
+
 function isImagePath(path: string): boolean {
   return IMAGE_EXT_RE.test(path)
 }
 
+function isMarkdownPath(path: string): boolean {
+  return MARKDOWN_EXT_RE.test(path)
+}
+
 /** Format a byte count for display. */
-function formatBytes(size: number): string {
+export function formatBytes(size: number): string {
   if (size < 1024) return `${size} B`
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`
   return `${(size / (1024 * 1024)).toFixed(2)} MB`
 }
 
 /** Render leading bytes as a classic hex dump (offset | hex | ascii). */
-function toHexDump(bytes: Uint8Array): string {
+export function toHexDump(bytes: Uint8Array): string {
   const lines: string[] = []
   for (let offset = 0; offset < bytes.length; offset += 16) {
     const chunk = bytes.subarray(offset, Math.min(offset + 16, bytes.length))
@@ -85,18 +100,22 @@ interface BinaryData {
 export interface FileEditorModalProps {
   open: boolean
   path: string
+  /** 当前会话 id：修改历史快照按会话存放，缺失时历史视图提示不可用。 */
+  sessionId?: string
+  /** 取数来源；缺省走 file-explorer（工作区校验），产物场景传 deliverableSource。 */
+  source?: FileReadSource
   onClose: () => void
   t: T
 }
 
-export function FileEditorModal({ open, path, onClose, t }: FileEditorModalProps): JSX.Element {
+export function FileEditorModal({ open, path, sessionId, source, onClose, t }: FileEditorModalProps): JSX.Element {
   if (isImagePath(path)) {
-    return <ImageViewer open={open} path={path} onClose={onClose} t={t} />
+    return <ImageViewer open={open} path={path} onClose={onClose} t={t} rawUrl={source?.rawUrl} />
   }
-  return <TextFileModal open={open} path={path} onClose={onClose} t={t} />
+  return <TextFileModal open={open} path={path} sessionId={sessionId} source={source} onClose={onClose} t={t} />
 }
 
-function TextFileModal({ open, path, onClose, t }: FileEditorModalProps): JSX.Element {
+function TextFileModal({ open, path, sessionId, source, onClose, t }: FileEditorModalProps): JSX.Element {
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const [loadState, setLoadState] = useState<LoadState>('loading')
@@ -108,6 +127,34 @@ function TextFileModal({ open, path, onClose, t }: FileEditorModalProps): JSX.El
   const [dirty, setDirty] = useState(false)
   const [saving, setSaving] = useState(false)
   const [conflict, setConflict] = useState(false)
+  // 「编辑 ↔ 历史」模式；历史模式下渲染时间线 + 双栏对比，编辑器暂离但草稿保留。
+  const [mode, setMode] = useState<'edit' | 'history'>('edit')
+  const draftRef = useRef<string | null>(null)
+  // 「渲染 ↔ 源码」视图：markdown 文件默认渲染展示，可切源码编辑；
+  // renderText 是渲染视图展示的内容（跟随编辑器当前文本，含未保存修改）。
+  const [view, setView] = useState<'render' | 'source'>('source')
+  const [renderText, setRenderText] = useState('')
+
+  const switchMode = (next: 'edit' | 'history'): void => {
+    if (next === mode) return
+    // 进历史前把未保存的编辑内容收进草稿，返回时原样恢复到编辑器。
+    if (next === 'history' && viewRef.current !== null) {
+      draftRef.current = viewRef.current.state.doc.toString()
+    }
+    setMode(next)
+  }
+
+  // 渲染 ↔ 源码切换：离开编辑器前把当前 doc 收进草稿位（与进历史同法），
+  // 往返切换不丢未保存修改；渲染视图展示的正是这份最新文本。
+  const switchView = (next: 'render' | 'source'): void => {
+    if (next === view) return
+    if (next === 'render') {
+      const text = viewRef.current?.state.doc.toString() ?? (draftRef.current ?? content)
+      draftRef.current = text
+      setRenderText(text)
+    }
+    setView(next)
+  }
 
   // Load the file when the target changes.
   useEffect(() => {
@@ -119,11 +166,19 @@ function TextFileModal({ open, path, onClose, t }: FileEditorModalProps): JSX.El
     setBinary(null)
     setDirty(false)
     setConflict(false)
-    readFile(path).then(
+    setMode('edit')
+    draftRef.current = null
+    const markdown = isMarkdownPath(path)
+    setView(markdown ? 'render' : 'source')
+    setRenderText('')
+    const src = sourceOf(source)
+    src.content(path).then(
       (file) => {
         if (!current) return
         setContent(file.content)
         setVersion(file.version)
+        // 渲染视图的初始内容 = 磁盘内容（此后切换视图时跟随编辑器文本）。
+        if (markdown) setRenderText(file.content)
         setLoadState('ready')
       },
       async (error: unknown) => {
@@ -131,7 +186,7 @@ function TextFileModal({ open, path, onClose, t }: FileEditorModalProps): JSX.El
         // 二进制文件：拉头部字节做十六进制预览，任何类型都能打开看点内容。
         if (error instanceof ApiError && error.code === 'FS_NOT_TEXT') {
           try {
-            const preview = await readBinaryPreview(path)
+            const preview = await src.binaryPreview(path)
             if (!current) return
             const bytes = Uint8Array.from(atob(preview.base64), char => char.charCodeAt(0))
             setBinary({ dump: toHexDump(bytes), size: preview.size, truncated: preview.truncated })
@@ -147,11 +202,11 @@ function TextFileModal({ open, path, onClose, t }: FileEditorModalProps): JSX.El
       },
     )
     return () => { current = false }
-  }, [open, path, t])
+  }, [open, path, source, t])
 
-  // Mount / destroy the CodeMirror editor.
+  // Mount / destroy the CodeMirror editor. 历史模式或渲染视图暂离时销毁，返回时以草稿重建。
   useEffect(() => {
-    if (!open || loadState !== 'ready') {
+    if (!open || loadState !== 'ready' || mode !== 'edit' || view !== 'source') {
       viewRef.current?.destroy()
       viewRef.current = null
       return
@@ -160,12 +215,13 @@ function TextFileModal({ open, path, onClose, t }: FileEditorModalProps): JSX.El
     if (host === null) return
 
     const language = languageForPath(path)
-    const extensions: Extension[] = [basicSetup, syntaxHighlighting(oneDarkHighlightStyle)]
+    const extensions: Extension[] = [basicSetup, oneDark]
     if (language !== null) extensions.push(language)
 
-    const view = new EditorView({
+    // 局部名用 editor：外层 view 是「渲染/源码」视图 state，避免遮蔽。
+    const editor = new EditorView({
       state: EditorState.create({
-        doc: content,
+        doc: draftRef.current ?? content,
         extensions: [
           ...extensions,
           EditorView.updateListener.of((update) => {
@@ -175,13 +231,13 @@ function TextFileModal({ open, path, onClose, t }: FileEditorModalProps): JSX.El
       }),
       parent: host,
     })
-    viewRef.current = view
+    viewRef.current = editor
 
     return () => {
       viewRef.current?.destroy()
       viewRef.current = null
     }
-  }, [open, loadState, path, content])
+  }, [open, loadState, mode, view, path, content])
 
   const save = (): void => {
     const view = viewRef.current
@@ -194,6 +250,7 @@ function TextFileModal({ open, path, onClose, t }: FileEditorModalProps): JSX.El
         setDirty(false)
         setConflict(false)
         setSaving(false)
+        draftRef.current = null
       },
       (error: unknown) => {
         setSaving(false)
@@ -205,13 +262,36 @@ function TextFileModal({ open, path, onClose, t }: FileEditorModalProps): JSX.El
   }
 
   const downloadButton = (
-    <a className={css.downloadLink} href={rawFileUrl(path, true)} download>{t('download')}</a>
+    <a className={css.downloadLink} href={sourceOf(source).rawUrl(path, true)} download>{t('download')}</a>
   )
+
+  // 历史对比入口：仅文本内容就绪时开放（历史视图是文本对比）。
+  const historyToggle = loadState === 'ready' ? (
+    <Button
+      variant="outline"
+      disabled={saving}
+      onClick={() => { switchMode(mode === 'edit' ? 'history' : 'edit') }}
+    >
+      {mode === 'edit' ? t('historyBtn') : t('histBack')}
+    </Button>
+  ) : null
+
+  // 渲染 ↔ 源码切换入口：仅 markdown 文件、编辑模式、内容就绪时开放。
+  const viewToggle = loadState === 'ready' && mode === 'edit' && isMarkdownPath(path) ? (
+    <Button
+      variant="outline"
+      disabled={saving}
+      onClick={() => { switchView(view === 'render' ? 'source' : 'render') }}
+    >
+      {view === 'render' ? t('sourceView') : t('renderedView')}
+    </Button>
+  ) : null
 
   let footer = (
     <div className={css.editorFooter}>
       <span className={css.editorStatus}>{''}</span>
       <span style={{ flex: 1 }} />
+      {historyToggle}
       <Button variant="outline" onClick={onClose}>{t('close')}</Button>
     </div>
   )
@@ -222,14 +302,18 @@ function TextFileModal({ open, path, onClose, t }: FileEditorModalProps): JSX.El
           {conflict ? t('staleConflict') : dirty ? t('unsaved') : ''}
         </span>
         <span style={{ flex: 1 }} />
+        {viewToggle}
+        {historyToggle}
         <Button variant="outline" disabled={saving} onClick={onClose}>{t('cancel')}</Button>
-        <Button
-          variant="primary"
-          disabled={(!dirty && !conflict) || saving}
-          onClick={save}
-        >
-          {conflict ? t('overwrite') : t('save')}
-        </Button>
+        {mode === 'edit' && (
+          <Button
+            variant="primary"
+            disabled={(!dirty && !conflict) || saving}
+            onClick={save}
+          >
+            {conflict ? t('overwrite') : t('save')}
+          </Button>
+        )}
       </div>
     )
   } else if (loadState === 'binary') {
@@ -253,7 +337,12 @@ function TextFileModal({ open, path, onClose, t }: FileEditorModalProps): JSX.El
     )
   }
 
-  const titlePrefix = loadState === 'ready' || loadState === 'loading' ? t('editorTitle') : t('viewTitle')
+  const historyMode = mode === 'history' && loadState === 'ready'
+  const titlePrefix = historyMode
+    ? t('histModalTitle')
+    : loadState !== 'ready' && loadState !== 'loading'
+      ? t('viewTitle')
+      : mode === 'edit' && view === 'render' ? t('viewTitle') : t('editorTitle')
 
   return (
     <FeModal
@@ -262,18 +351,31 @@ function TextFileModal({ open, path, onClose, t }: FileEditorModalProps): JSX.El
       closeLabel={t('close')}
       title={`${titlePrefix} · ${fileNameOf(path)}`}
       className={css.editorModal}
-      width="min(960px, 92vw)"
+      width={historyMode ? 'min(1180px, 96vw)' : 'min(960px, 92vw)'}
+      maximizable
+      forceMaximized={historyMode}
       footer={footer}
     >
-      {loadState === 'loading' && <div className={css.status}>{t('loading')}</div>}
-      {loadState === 'error' && <div className={css.statusError}>{loadError}</div>}
-      {loadState === 'binary' && (
-        <div className={css.binaryCard}>
-          <div className={css.binaryHint}>{t('binaryPeekNote')}</div>
-          <pre className={css.hexDump}>{binary?.dump ?? ''}</pre>
-        </div>
+      {historyMode ? (
+        <FileHistoryView sessionId={sessionId} path={path} t={t} />
+      ) : (
+        <>
+          {loadState === 'loading' && <div className={css.status}>{t('loading')}</div>}
+          {loadState === 'error' && <div className={css.statusError}>{loadError}</div>}
+          {loadState === 'binary' && (
+            <div className={css.binaryCard}>
+              <div className={css.binaryHint}>{t('binaryPeekNote')}</div>
+              <pre className={css.hexDump}>{binary?.dump ?? ''}</pre>
+            </div>
+          )}
+          {loadState === 'ready' && view === 'source' && <div className={css.editorHost} ref={hostRef} />}
+          {loadState === 'ready' && view === 'render' && (
+            <div className={css.markdownBody}>
+              <MarkstreamMarkdown text={renderText} streaming={false} />
+            </div>
+          )}
+        </>
       )}
-      {loadState === 'ready' && <div className={css.editorHost} ref={hostRef} />}
     </FeModal>
   )
 }

@@ -114,7 +114,7 @@ const SHEET = `
 .dsh-memory-split{flex:1;min-height:0;display:flex;align-items:stretch;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.12));border-radius:12px;overflow:hidden}
 
 /* 左列：紧凑条目列表 */
-.dsh-memory-list-pane{flex:none;width:272px;box-sizing:border-box;margin:0;padding:6px;list-style:none;overflow-y:auto;border-right:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.08));display:flex;flex-direction:column;gap:2px}
+.dsh-memory-list-pane{flex:none;width:320px;box-sizing:border-box;margin:0;padding:6px;list-style:none;overflow-y:auto;border-right:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.08));display:flex;flex-direction:column;gap:2px}
 .dsh-memory-list-section{padding:10px 10px 4px;font-size:11px;font-weight:500;line-height:16px;color:var(--dsw-alias-label-tertiary,#888)}
 .dsh-memory-item{display:flex;align-items:flex-start;gap:8px;width:100%;box-sizing:border-box;padding:8px 10px;border:none;border-left:2px solid transparent;border-radius:8px;background:transparent;color:inherit;font-family:inherit;text-align:left;cursor:pointer}
 .dsh-memory-item:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.06))}

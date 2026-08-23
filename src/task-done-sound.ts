@@ -182,6 +182,7 @@ export function applyTaskDoneSound(ctx: any, config: TaskDoneSoundConfig = {}): 
         // 非法 body 视为默认（开），不影响卡片
       }
       if (config.cardEnabled !== false) spawnCard({ sound, sessionLabel: sessionTitle, sessionId })
+      else if (sound) playSoundOnly() // 卡片禁用时降级为仅提示音（2026-08 用户反馈桌面卡片烦人）
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' })
       res.end(JSON.stringify({ ok: true, sound }))
     },
