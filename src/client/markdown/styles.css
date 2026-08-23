@@ -365,6 +365,49 @@
   background: rgba(127, 127, 127, .1);
 }
 
+/* mermaid 围栏降级视图（stub parse 失败后的内置源码模式）—— markstream 给它
+   单独硬编码了 slate-900/gray-800 蓝黑配色，不在 .code-block 体系里，需同款去蓝化。 */
+.dsh-better-markdown__markdown .mermaid-block {
+  background: rgba(127, 127, 127, .07);
+  border: 1px solid var(--dsw-alias-border-base, rgba(127, 127, 127, .18));
+  box-shadow: none;
+}
+
+.dsh-better-markdown__markdown .mermaid-block-header {
+  background: transparent;
+  border-bottom: 1px solid var(--dsw-alias-border-l3, rgba(127, 127, 127, .14));
+  color: var(--dsw-alias-label-secondary);
+}
+
+.dsh-better-markdown__markdown .mermaid-block-header .text-gray-400,
+.dsh-better-markdown__markdown .mermaid-block-header .hover\:text-gray-200:hover {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.dsh-better-markdown__markdown .mermaid-block .bg-gray-700 {
+  background: var(--dsw-alias-interactive-bg-hover, rgba(127, 127, 127, .12));
+}
+
+.dsh-better-markdown__markdown .mermaid-block .bg-gray-600 {
+  background: var(--dsw-alias-interactive-bg-hover, rgba(127, 127, 127, .18));
+  color: var(--dsw-alias-label-primary);
+}
+
+.dsh-better-markdown__markdown .mermaid-block .mermaid-action-btn:hover {
+  background: var(--dsw-alias-interactive-bg-hover, rgba(127, 127, 127, .12));
+  color: var(--dsw-alias-label-primary);
+}
+
+.dsh-better-markdown__markdown .mermaid-block pre,
+.dsh-better-markdown__markdown .mermaid-block pre.shiki-fallback {
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+}
+
+.dsh-better-markdown__markdown .mermaid-block [class*="min-h-"] {
+  background: transparent;
+}
+
 /* ============================================================
    丰富的 Markdown 排版（全部用主题 token，深浅主题自适应）
    ============================================================ */
