@@ -69,7 +69,7 @@ function smoothPath(pts: Array<{ x: number; y: number }>): string {
 }
 
 /** 1/2/5×10^n 步长的 nice 刻度（0 → 略高于 max），Y 轴网格与标签共用。 */
-function niceTicks(max: number, count = 4): number[] {
+export function niceTicks(max: number, count = 4): number[] {
   if (max <= 0) return [0, 1]
   const raw = max / count
   const mag = Math.pow(10, Math.floor(Math.log10(raw)))
@@ -82,7 +82,7 @@ function niceTicks(max: number, count = 4): number[] {
 }
 
 /** X 轴标签：小时（含冒号，如 "14:00"/"08-21 14:00"）原样；YYYY-MM-DD → MM-DD；YYYY-MM → YY-MM。 */
-function axisLabel(label: string): string {
+export function axisLabel(label: string): string {
   if (label.includes(':')) return label
   if (label.length >= 8) return label.slice(5)
   if (label.length === 7) return label.slice(2)

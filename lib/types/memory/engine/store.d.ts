@@ -3,7 +3,7 @@
  * 各层 md 产物。所有写入走「tmp + rename」原子写，防止半写损坏。
  * 数据根：${DSH_HOME:-~/.dsh}/memories/dsh-memory/（与 memory-evolve 遗留数据同根目录、不同前缀，互不读写）。
  */
-import type { ChangeRecord, MemoryEntry, ProjectMeta, RevisionMeta, StoreState } from '../types.js';
+import type { ChangeRecord, MemoryConfig, MemoryEntry, MemoryKind, ProjectMeta, RevisionMeta, StoreState } from '../types.js';
 /** 数据根目录。 */
 export declare function memoryHome(): string;
 /** workspace 路径 → 项目目录 hash（sha1 前 12 位）。 */
@@ -31,25 +31,36 @@ export declare function readJsonl<T>(file: string): Promise<T[]>;
  */
 export declare class MemoryStore {
     readonly root: string;
+    /** 回刷 debounce（毫秒）：合并短窗口内的多次写。 */
+    private static readonly FLUSH_DEBOUNCE_MS;
+    /** 内存态条目（权威副本；磁盘 entries.json 是它的节流回刷镜像）。 */
+    private entries;
+    /** 内存态是否落后于磁盘（有待回刷）。 */
+    private dirty;
+    /** 节流回刷计时器。 */
+    private flushTimer;
     constructor(root?: string);
     entriesFile(): string;
     stateFile(): string;
+    configFile(): string;
+    /** 读运行时配置覆盖（config.json；缺失返回空）。 */
+    readConfigSync(): Partial<MemoryConfig>;
+    /** 写运行时配置覆盖（面板设置持久化）。 */
+    writeConfig(config: Partial<MemoryConfig>): Promise<void>;
     changesFile(date: string): string;
     globalDir(): string;
     projectDir(hash: string): string;
     dailyFile(date: string): string;
-    /** 全量条目索引（缺失/损坏从空开始）。 */
+    /** 全量条目索引（内存快照的浅拷贝，避免外部误改内存态）。 */
     readEntries(): Promise<MemoryEntry[]>;
-    writeEntries(entries: MemoryEntry[]): Promise<void>;
+    /** 节流回刷：标记 dirty 并在 debounce 后落盘（合并写放大）。 */
+    private scheduleFlush;
+    /** 立即落盘（幂等；dispose / 退出前调用）。 */
+    flush(): Promise<void>;
+    private flushNow;
     /**
-     * entries.json 写串行队列：所有「读-改-写」操作必须经此队列执行，
-     * 消除提取/注入命中刷新/API 裁决/每日编译之间的并发覆盖（read-modify-write 竞争）。
-     */
-    private writeQueue;
-    private enqueueWrite;
-    /**
-     * 原子化「读 entries → 修改 → 写回」。fn 原地修改传入数组（或返回替换数组）。
-     * @param fn - 接收当前 entries 快照，修改或返回新数组；返回值透传。
+     * 修改内存态条目（fn 原地修改传入数组或返回替换数组），随后节流回刷。
+     * 单线程下内存数组的同步操作天然原子，无需额外写串行队列。
      */
     mutateEntries<T>(fn: (entries: MemoryEntry[]) => Promise<T> | T): Promise<T>;
     getEntry(id: string): Promise<MemoryEntry | undefined>;
@@ -67,6 +78,13 @@ export declare class MemoryStore {
         lastHitAt?: string | null;
         layer?: 'short' | 'long';
         source?: 'extract' | 'manual';
+        kind?: MemoryKind;
+        confidence?: number;
+        provenance?: {
+            sessionId?: string;
+            turn?: number;
+            snippet?: string;
+        };
     }): Promise<{
         created: boolean;
         entry: MemoryEntry;
@@ -100,7 +118,7 @@ export declare class MemoryStore {
     private ensureInjectCache;
     /** 该会话是否启用记忆注入（默认开启）。 */
     isInjectEnabled(sessionId: string): Promise<boolean>;
-    /** 设置该会话的记忆注入开关（持久化到 state.json，走写串行队列）。 */
+    /** 设置该会话的记忆注入开关（持久化到 state.json；调用频率极低，直接写）。 */
     setInjectEnabled(sessionId: string, enabled: boolean): Promise<void>;
     readProjectMeta(hash: string): Promise<ProjectMeta | undefined>;
     writeProjectMeta(hash: string, meta: ProjectMeta): Promise<void>;

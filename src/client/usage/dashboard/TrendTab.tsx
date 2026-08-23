@@ -21,7 +21,7 @@ import {
 } from './range'
 import { formatExact, formatHitRate, formatUnits, formatWorkDuration, formatYiExact } from './format'
 import { providerPalette } from './theme'
-import { AreaChart } from './charts/AreaChart'
+import { BarChart } from './charts/BarChart'
 import { DonutChart } from './charts/DonutChart'
 import { RankBars } from './charts/RankBars'
 import { ErrorCard } from './primitives/ErrorCard'
@@ -31,6 +31,8 @@ export interface TrendTabProps {
   range: DateRange
   rangeLabel: string
   onJumpAccounts: () => void
+  /** 跳转信号 tab（异常日柱点击联动）。 */
+  onJumpSignal?: () => void
   refreshTick?: number
 }
 
@@ -114,7 +116,7 @@ export function modelRank(days: UsageDay[]): Array<{ label: string; value: numbe
 
 const GRAIN_NAME = { hour: '按小时', day: '按日', week: '按周', month: '按月' } as const
 
-export function TrendTab({ range, rangeLabel, onJumpAccounts, refreshTick }: TrendTabProps): JSX.Element {
+export function TrendTab({ range, rangeLabel, onJumpAccounts, onJumpSignal, refreshTick }: TrendTabProps): JSX.Element {
   const [usage, setUsage] = useState<UsageDay[] | null>(null)
   const [hours, setHours] = useState<UsageHour[]>([])
   const [providers, setProviders] = useState<ProviderInfo[]>([])
@@ -158,6 +160,22 @@ export function TrendTab({ range, rangeLabel, onJumpAccounts, refreshTick }: Tre
   const showTrend = series.length >= 2
   const rank = modelRank(filtered)
 
+  // 异常日（仅日粒度）：范围内 tokens > 活跃日中位数 ×3 的天，柱顶红点 + 点击跳信号 tab。
+  const anomalyMap = (() => {
+    if (grain !== 'day' || filtered.length === 0) return null
+    const actives = filtered.map(d => d.tokens ?? 0).filter(v => v > 0).sort((a, b) => a - b)
+    if (actives.length === 0) return null
+    const mid = Math.floor(actives.length / 2)
+    const median = actives.length % 2 === 1 ? actives[mid] : (actives[mid - 1] + actives[mid]) / 2
+    if (!(median > 0)) return null
+    const map = new Map<string, { multiple: number; tokens: number }>()
+    for (const d of filtered) {
+      const tokens = d.tokens ?? 0
+      if (tokens > median * 3) map.set(d.date, { multiple: tokens / median, tokens })
+    }
+    return map.size > 0 ? map : null
+  })()
+
   const share = providerShare(filtered).slice(0, 8)
   const palette = providerPalette()
   const donutSlices = share.map((s, i) => ({ label: s.provider, value: s.tokens, color: palette[i % palette.length] }))
@@ -187,10 +205,10 @@ export function TrendTab({ range, rangeLabel, onJumpAccounts, refreshTick }: Tre
       <div style={rowCard}>
         <CardHead
           name={showTrend ? '用量趋势' : '模型消耗排行'}
-          meta={showTrend ? `${rangeLabel} · ${GRAIN_NAME[grain]}` : rangeLabel}
+          meta={showTrend ? `${rangeLabel} · ${GRAIN_NAME[grain]}${anomalyMap !== null ? ` · ${anomalyMap.size} 个异常日` : ''}` : rangeLabel}
         />
         {showTrend
-          ? <AreaChart data={series} />
+          ? <BarChart data={series} anomalies={anomalyMap ?? undefined} onSelectAnomaly={anomalyMap !== null && onJumpSignal !== undefined ? () => onJumpSignal() : undefined} />
           : rank.length > 0
             ? <RankBars rows={rank} nameWidth={180} />
             : emptyHint(`${rangeLabel}暂无用量`)}

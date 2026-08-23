@@ -251,6 +251,21 @@ html[${GLASS_ATTRIBUTE}] [class*="dsh-peak-card"] {
   backdrop-filter: var(--dsh-glass-blur);
   -webkit-backdrop-filter: var(--dsh-glass-blur);
 }
+/* ===== AI 浏览器 hover 权限卡片（.dsh-browser-gate）=====
+ * 标准毛玻璃（对齐 done-pill 任务面板）：半透明纱 + 高斯模糊。
+ * 该卡片是 absolute 浮层本体、内部无 fixed 后代（展开期间按钮 Tooltip 被
+ * 条件卸载），可安全直加 backdrop-filter；类名不含 panel/modal/drawer 子串，
+ * 不会被浮层总选择器命中，故在此单列。玻璃关闭时不模糊，回到原生实色卡
+ * （--dsw-alias-bg-overlay）；特异性高于 browser/styles.ts 的单类规则，
+ * 与注入顺序无关。 */
+html[${GLASS_ATTRIBUTE}] .dsh-browser-gate {
+  background-color: rgba(22,23,28,.55);
+  backdrop-filter: var(--dsh-glass-blur);
+  -webkit-backdrop-filter: var(--dsh-glass-blur);
+}
+html[${GLASS_ATTRIBUTE}] body:not([data-ds-dark-theme]) .dsh-browser-gate {
+  background-color: rgba(255,255,255,.62);
+}
 /* 对话输入框卡片：淡版玻璃（表面纱比浮层面板轻一档，保留官方细边框与
  * 投影的卡片形态）。
  * ⚠ 绝不能加 backdrop-filter：卡片是布局容器且内含 ContextMeter 等控件的

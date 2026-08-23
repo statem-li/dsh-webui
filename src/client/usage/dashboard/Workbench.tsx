@@ -87,7 +87,7 @@ export function Workbench({ onClose, closing = false, anchor = null, onCardMouse
   }, [])
 
   const tabContent: Record<TabKey, ReactNode> = {
-    trend: <TrendTab range={range} rangeLabel={rangeLabel} onJumpAccounts={() => setTab('accounts')} />,
+    trend: <TrendTab range={range} rangeLabel={rangeLabel} onJumpAccounts={() => setTab('accounts')} onJumpSignal={() => setTab('signal')} />,
     detail: <UsageTab range={range} rangeLabel={rangeLabel} />,
     signal: <SignalTab />,
     accounts: <AccountsTab />,

@@ -8,7 +8,7 @@
  * - webServer → /api/dsh-memory/*（面板数据 + 裁决操作）
  */
 import type { Context } from '@deepseek-ai/cordis';
-import type { MemoryConfig } from './types.js';
+import { type MemoryConfig } from './types.js';
 /** Stable Cordis plugin name。 */
 export declare const name = "dsh-memory";
 /** 硬依赖服务。 */

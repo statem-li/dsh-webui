@@ -934,10 +934,11 @@ export const BrowserSeat = memo(function BrowserSeat({ sessionId, input, inputAc
   const engaged = info !== undefined
   const [open, setOpen] = useState(false)
 
-  // ---- 悬停权限卡片：「禁止 AI 使用浏览器」----------------------------
+  // ---- 悬停权限卡片：「禁止 AI 使用浏览器」+「提速模式」------------------
   // allow=true 允许（host 默认）；false=禁止（host 拦截 browser_*）；null=加载中。
-  // 每次展开卡片时重新拉取，保证与设置页开关的最终一致。
   const [allow, setAllow] = useState<boolean | null>(null)
+  // speed=true 注入网页操作提速策略（host 默认）；false=不注入；null=加载中。
+  const [speed, setSpeed] = useState<boolean | null>(null)
   const [gateOpen, setGateOpen] = useState(false)
   const gateHideTimer = useRef<number | null>(null)
 
@@ -945,6 +946,13 @@ export const BrowserSeat = memo(function BrowserSeat({ sessionId, input, inputAc
     fetch('/api/dsh-browser/allow', { cache: 'no-store' })
       .then((r) => r.json())
       .then((r: any) => { if (r && typeof r.allow === 'boolean') setAllow(r.allow as boolean) })
+      .catch(() => {})
+  }, [])
+
+  const refreshSpeed = useCallback((): void => {
+    fetch('/api/dsh-browser/speed', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((r: any) => { if (r && typeof r.enabled === 'boolean') setSpeed(r.enabled as boolean) })
       .catch(() => {})
   }, [])
 
@@ -956,7 +964,8 @@ export const BrowserSeat = memo(function BrowserSeat({ sessionId, input, inputAc
     }
     setGateOpen(true)
     refreshAllow()
-  }, [refreshAllow])
+    refreshSpeed()
+  }, [refreshAllow, refreshSpeed])
 
   /** hover 移出：延迟 0.12 秒再收起，给鼠标跨过按钮↔卡片的间隙留时间。 */
   const scheduleGateHide = useCallback((): void => {
@@ -971,7 +980,7 @@ export const BrowserSeat = memo(function BrowserSeat({ sessionId, input, inputAc
     if (gateHideTimer.current !== null) window.clearTimeout(gateHideTimer.current)
   }, [])
 
-  /** 切换「禁止」开关：写回 allow 取反值（与设置页同一 POST 接口）。 */
+  /** 切换「禁止」开关：写回 allow 取反值。 */
   const toggleDeny = useCallback((): void => {
     if (allow === null) return
     const next = !allow
@@ -982,6 +991,18 @@ export const BrowserSeat = memo(function BrowserSeat({ sessionId, input, inputAc
       body: JSON.stringify({ allow: next }),
     }).catch(() => {})
   }, [allow])
+
+  /** 切换「提速模式」：写回 enabled 取反值（host 按开关注入系统提示词策略）。 */
+  const toggleSpeed = useCallback((): void => {
+    if (speed === null) return
+    const next = !speed
+    setSpeed(next)
+    fetch('/api/dsh-browser/speed', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ enabled: next }),
+    }).catch(() => {})
+  }, [speed])
 
   // 最新草稿：选取结果要追加到「当前」草稿尾部，用 ref 避免回调闭包旧值。
   const draftRef = useRef(input.draft)
@@ -1038,7 +1059,7 @@ export const BrowserSeat = memo(function BrowserSeat({ sessionId, input, inputAc
           <div className="dsh-browser-gate__row">
             <div className="dsh-browser-gate__copy">
               <span className="dsh-browser-gate__label">禁止 AI 使用浏览器</span>
-              <span className="dsh-browser-gate__desc">开启后 AI 调用浏览器工具将被拒绝；与设置页「允许 AI 使用浏览器」同步。</span>
+              <span className="dsh-browser-gate__desc">开启后 AI 调用浏览器工具将被拒绝。</span>
             </div>
             <button
               type="button"
@@ -1048,6 +1069,23 @@ export const BrowserSeat = memo(function BrowserSeat({ sessionId, input, inputAc
               className="dsh-browser-gate__switch"
               disabled={allow === null}
               onClick={toggleDeny}
+            >
+              <span className="dsh-browser-gate__knob" />
+            </button>
+          </div>
+          <div className="dsh-browser-gate__row">
+            <div className="dsh-browser-gate__copy">
+              <span className="dsh-browser-gate__label">提速模式</span>
+              <span className="dsh-browser-gate__desc">自动注入网页操作提速策略（批量 evaluate/batch、直达 URL、少截快照），表单类任务从数分钟压到数十秒。下一轮对话生效。</span>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={speed === true}
+              aria-label="浏览器提速模式"
+              className="dsh-browser-gate__switch"
+              disabled={speed === null || denied}
+              onClick={toggleSpeed}
             >
               <span className="dsh-browser-gate__knob" />
             </button>

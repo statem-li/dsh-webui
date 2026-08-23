@@ -4,7 +4,7 @@
  * LLM 失败/超时一律跳过本轮，绝不阻塞对话。
  */
 import type { Context } from '@deepseek-ai/cordis';
-import type { ExtractCandidate, MemoryConfig } from '../types.js';
+import type { ExtractCandidate, MemoryConfig, MemoryEntry } from '../types.js';
 /** 插件用最小 agent 面（避免深层类型依赖）。 */
 export interface MinimalAgent {
     readonly id: string;
@@ -48,3 +48,5 @@ export declare function transcriptFromEvents(events: Array<{
 export declare function textOfContent(content: unknown): string;
 /** 变更流摘要（供 change 记录）。 */
 export declare function candidateSummary(candidate: ExtractCandidate): string;
+/** 候选内容是否与某条已有记忆高度重复（提取去重）。 */
+export declare function isDuplicateContent(content: string, existing: MemoryEntry[], threshold?: number): boolean;

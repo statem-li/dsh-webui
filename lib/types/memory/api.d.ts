@@ -5,7 +5,7 @@
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Context } from '@deepseek-ai/cordis';
-import type { MemoryConfig } from './types.js';
+import { type MemoryConfig } from './types.js';
 import { mergeTags, type MemoryStore } from './engine/store.js';
 /** Minimal service-shaped view of the webserver route register. */
 declare module '@deepseek-ai/cordis' {

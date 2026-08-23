@@ -27,6 +27,7 @@ import { applyDonePill } from './done-pill.js'
 import { applyUpdater } from './updater.js'
 import { applyProxy } from './proxy.js'
 import { applyBrowser } from './browser/index.js'
+import { applyBrowserSpeed } from './browser/speed.js'
 import { applyMemory } from './memory/index.js'
 import { applyFileExplorer } from './file-explorer.js'
 import { applyWorkspaceDirPicker } from './workspace-dir-picker.js'
@@ -266,6 +267,8 @@ export async function apply(ctx: Context, config: WebuiConfig = {}): Promise<voi
       chromePath: '', port: 0, screenshotDir: '',
       ...config.browser,
     })
+    // 浏览器提速策略：系统提示词注入 + /api/dsh-browser/speed 开关（随浏览器模块联动）。
+    applyBrowserSpeed(ctx)
   }
 
   // 8) 本地记忆引擎（自 dsh-memory 合并；config.memory 可选覆盖）。
