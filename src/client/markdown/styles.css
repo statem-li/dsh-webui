@@ -365,6 +365,20 @@
   background: rgba(127, 127, 127, .1);
 }
 
+/* markstream 部分代码块变体的最外层容器（bg-gray-900 硬编码、不分主题）与
+   流式降级 pre（shiki-fallback）——同样换中性配色，让容器底透出统一灰面。 */
+.dsh-better-markdown__markdown .code-block-container {
+  background: rgba(127, 127, 127, .07);
+  border: 1px solid var(--dsw-alias-border-base, rgba(127, 127, 127, .18));
+  box-shadow: none;
+}
+
+.dsh-better-markdown__markdown pre.shiki-fallback,
+.dsh-better-markdown__markdown .code-fallback-plain {
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+}
+
 /* mermaid 围栏降级视图（stub parse 失败后的内置源码模式）—— markstream 给它
    单独硬编码了 slate-900/gray-800 蓝黑配色，不在 .code-block 体系里，需同款去蓝化。 */
 .dsh-better-markdown__markdown .mermaid-block {
