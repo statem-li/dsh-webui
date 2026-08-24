@@ -14,13 +14,12 @@ import { usageApi } from './dashboard/api'
 import { sumTokens } from './dashboard/aggregate'
 import { formatUnits } from './dashboard/format'
 import { ensureModalAnimStyles, useModalClose } from '../modal-animation'
-import { NavButton, NavPortal, ensureNavMount, ensureNavStyles, useRail } from '../sidebar-nav'
+import { NavButton, NavPortal, ensureNavMount, ensureNavStyles, navAnchorFrom, useRail } from '../sidebar-nav'
 import { ensureShellStyles, type PopoverAnchor } from '../popover-shell'
 
-/** 从点击事件取锚点：按钮右缘 +8、顶缘 -6（与 automation openCard 同款）。 */
-function anchorFromEvent(e: React.MouseEvent<HTMLButtonElement>): PopoverAnchor {
-  const rect = e.currentTarget.getBoundingClientRect()
-  return { left: rect.right + 8, top: rect.top - 6 }
+/** 从点击事件取锚点：所在导航行右缘 +8、按钮顶缘 -6（合并行统一滑出位）。 */
+function anchorFromEvent(e: React.MouseEvent<HTMLButtonElement>): PopoverAnchor | null {
+  return navAnchorFrom(e.currentTarget)
 }
 
 // ── 今日总用量 ───────────────────────────────────────────────────────────

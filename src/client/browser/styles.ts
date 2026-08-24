@@ -31,8 +31,10 @@ const SHEET = `
 .dsh-browser-gate{
   position:absolute;left:-4px;bottom:calc(100% + 10px);z-index:60;
   width:276px;box-sizing:border-box;padding:12px 14px;border-radius:12px;
-  border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.10));
-  background:var(--dsw-alias-bg-overlay,#1c1f26);
+  /* 材质对齐官方下拉浮层（Menu 原语/ModelSelect 菜单）：specific-menu 面 +
+     inverted 边框；fallback 才退回旧的 overlay 底色。 */
+  border:1px solid var(--dsw-alias-border-inverted,rgba(255,255,255,.06));
+  background:var(--dsw-specific-menu,var(--dsw-alias-bg-overlay,#1c1f26));
   box-shadow:var(--dsw-shadow-lv3,0 16px 44px rgba(0,0,0,.35));
   color:var(--dsw-alias-label-primary,#eee);
   text-align:left;

@@ -12,7 +12,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import { PshHead, PopoverShell, ensureShellStyles } from '../popover-shell.js'
-import { NavButton, useRail } from '../sidebar-nav.js'
+import { NavButton, navAnchorFrom, useRail } from '../sidebar-nav.js'
 import { ensureAutomationStyles } from './styles.ts'
 import { t } from './locales.ts'
 import {
@@ -216,12 +216,8 @@ export function AutomationApp({ ctx }: { ctx: ClientContext }): JSX.Element {
     else showToast(t('suggestRejected'))
   }
 
-  const anchor = useMemo<{ left: number, top: number } | null>(() => {
-    const wrap = wrapRef.current
-    if (wrap === null) return null
-    const rect = wrap.getBoundingClientRect()
-    return { left: rect.right + 8, top: rect.top }
-  }, [open])
+  /** 卡片锚点：所在导航行右缘 +8、按钮顶缘 -6（合并行统一滑出位，与记忆一致）。 */
+  const anchor = useMemo(() => navAnchorFrom(wrapRef.current), [open])
 
   return (
     <>
@@ -240,6 +236,12 @@ export function AutomationApp({ ctx }: { ctx: ClientContext }): JSX.Element {
           onClick={() => { if (open || closing) close(); else setOpen(true) }}
         />
       </div>
+
+      {/* 合并行槽位（技能/记忆）：由 React 随本树渲染，与按钮同生共死——
+          外部 append 会与 React 首次提交竞态（槽位被清后 portal 失联，
+          入口永久消失），故 sidebar-nav 的 ensureAutoRowSlots 仅作兜底。 */}
+      <div data-nav-slot="skills" />
+      <div data-nav-slot="memory" />
 
       {(open || closing) && createPortal(
         <PopoverShell closing={closing} onClose={close} anchor={anchor} width={520} ariaLabel={t('title')}>

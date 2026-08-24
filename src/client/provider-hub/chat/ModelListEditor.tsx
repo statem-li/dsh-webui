@@ -135,6 +135,11 @@ export function ensureProviderFieldStyles(): void {
     '.dsh-webui-primary-btn:hover:not(:disabled){background:var(--dsw-alias-button-primary-hover,var(--dsw-alias-button-primary-fill))}',
     '.dsh-webui-secondary-btn:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover-solid,rgba(0,0,0,0.05))}',
     '.dsh-webui-danger-btn:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover-danger)}',
+    '/* 供应商导航行：状态一律用底色表达，任何来源的描边/外圈一律压掉 */',
+    '.dsh-webui-provider-nav-row{border:0 !important;outline:0 !important;-webkit-tap-highlight-color:transparent}',
+    '.dsh-webui-provider-nav-row:focus,.dsh-webui-provider-nav-row:focus-visible,.dsh-webui-provider-nav-row:active{border:0 !important;outline:0 !important}',
+    '.dsh-webui-provider-nav-row:hover:not([aria-current="true"]){background:var(--dsw-alias-interactive-bg-hover,rgba(65,118,230,0.08))}',
+    '.dsh-webui-provider-nav-row:focus-visible:not([aria-current="true"]){background:var(--dsw-alias-interactive-bg-hover,rgba(65,118,230,0.08))}',
   ].join('\n')
   document.head.append(style)
 }

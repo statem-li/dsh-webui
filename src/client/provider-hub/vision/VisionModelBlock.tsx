@@ -1,41 +1,26 @@
 /**
  * VisionModelBlock — 辅助视觉模型区块。
- * 可视化编辑「降级方案」：有序列表（第一个为当前使用），支持上移/下移/删除/添加。
+ *
+ * 可视化编辑「降级方案」：有序行卡片列表（第一条为首选，向下依次回退），
+ * 支持上移/下移/删除/添加。版式走 {@link ../blocks/shared.tsx} 的统一外壳：
+ * 标题行带当前生效胶囊 + 说明默认折叠，列表用行卡片而非裸文本行。
+ *
  * 复用 dsh-vision-helper 的 HTTP 接口：/api/vision-helper/providers + /config。
  */
 import { useEffect, useState } from 'react'
+import type { ReactNode } from 'react'
+import {
+  BlockShell, CAPSULE_BTN, CAPSULE_BTN_DISABLED, FILL_PANEL, IconButton,
+  MONO, ROW_CARD, SelectField, StateHint,
+} from '../blocks/shared.tsx'
 
 interface ModelInfo { id: string; name: string; input: string[] | null }
 interface ProviderInfo { id: string; name: string; models: ModelInfo[] }
 interface VisionItem { provider: string; model: string }
 
-const BLOCK_TITLE: React.CSSProperties = { fontSize: 14, fontWeight: 600, marginBottom: 6, color: 'var(--dsw-alias-label-primary)' }
-const HINT: React.CSSProperties = { fontSize: 12, color: 'var(--dsw-alias-label-secondary)', marginBottom: 10 }
-const ROW: React.CSSProperties = { display: 'flex', gap: 8, alignItems: 'center', marginBottom: 10 }
-/* 官方 .input/.selectInput 规格：32px 高、14px 字、8px 圆角、自定义 chevron。 */
-const SELECT: React.CSSProperties = {
-  boxSizing: 'border-box',
-  height: 32,
-  padding: '0 32px 0 10px',
-  borderRadius: 8,
-  border: '1px solid var(--dsw-alias-border-l2)',
-  backgroundImage: 'url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'12\' height=\'12\' viewBox=\'0 0 12 12\' fill=\'none\'%3E%3Cpath d=\'M3 4.5L6 7.5L9 4.5\' stroke=\'%2381858C\' stroke-width=\'1.5\' stroke-linecap=\'round\' stroke-linejoin=\'round\'/%3E%3C/svg%3E")',
-  backgroundRepeat: 'no-repeat',
-  backgroundPosition: 'right 12px center',
-  backgroundSize: '12px 12px',
-  appearance: 'none',
-  color: 'var(--dsw-alias-label-primary)', fontSize: 14, lineHeight: '22px', cursor: 'pointer',
-}
-const ACTIVE_HINT: React.CSSProperties = { fontSize: 12, color: 'var(--dsw-alias-label-secondary)' }
-const SMALL_BTN: React.CSSProperties = {
-  padding: '2px 9px', fontSize: 12, lineHeight: '18px', borderRadius: 8, cursor: 'pointer',
-  border: '1px solid var(--dsw-alias-border-l2)',
-  background: 'var(--dsw-alias-bg-layer-2, transparent)',
-  color: 'var(--dsw-alias-label-primary)',
-}
-const SMALL_BTN_DISABLED: React.CSSProperties = { ...SMALL_BTN, opacity: 0.45, cursor: 'default' }
-const LIST_ROW: React.CSSProperties = { display: 'flex', gap: 8, alignItems: 'center', padding: '5px 0' }
-const TAG: React.CSSProperties = { fontSize: 13, fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace' }
+const DESCRIPTION = 'vision_describe 使用的模型（图片 → 文本描述）。从上到下依次尝试，'
+  + '第一个成功的即返回，可自定义降级方案。标注「视觉」的模型声明了图片输入；'
+  + '对话模型是否支持识图，可在上方供应商的模型设置中开启「识图」。'
 
 function isVisionModel(m: ModelInfo): boolean {
   return Array.isArray(m.input) && m.input.includes('image')
@@ -43,7 +28,7 @@ function isVisionModel(m: ModelInfo): boolean {
 
 function keyOf(item: VisionItem): string { return `${item.provider}/${item.model}` }
 
-export function VisionModelBlock(): React.ReactElement {
+export function VisionModelBlock(): ReactNode {
   const [providers, setProviders] = useState<ProviderInfo[]>([])
   const [list, setList] = useState<VisionItem[]>([])
   const [active, setActive] = useState('')
@@ -100,13 +85,14 @@ export function VisionModelBlock(): React.ReactElement {
     save(next)
   }
 
-  const remove = (index: number): void => {
-    save(list.filter((_, i) => i !== index))
-  }
+  const remove = (index: number): void => { save(list.filter((_, i) => i !== index)) }
 
   const add = (): void => {
     if (!addProvider || !addModel) return
-    if (list.some(x => x.provider === addProvider && x.model === addModel)) { setError('该模型已在降级列表中'); return }
+    if (list.some(x => x.provider === addProvider && x.model === addModel)) {
+      setError('该模型已在降级列表中')
+      return
+    }
     save([...list, { provider: addProvider, model: addModel }])
     setAddModel('')
   }
@@ -117,49 +103,94 @@ export function VisionModelBlock(): React.ReactElement {
     return (m && m.name) || item.model
   }
 
+  const canAdd = !saving && addProvider !== '' && addModel !== ''
+
   return (
-    <div>
-      <div style={BLOCK_TITLE}>辅助视觉模型</div>
-      <div style={HINT}>vision_describe 使用的模型（图片→文本描述）。从上到下依次尝试，第一个成功的即返回（可自定义降级方案）。标注「视觉」的模型声明了图片输入；对话模型是否支持识图，可在上方供应商的模型设置中开启「识图」。</div>
-      {error && <div style={{ color: 'var(--dsw-alias-state-error-primary)', marginBottom: 8 }}>{error}</div>}
-      {providers.length === 0 && !error
-        ? <div style={{ color: 'var(--dsw-alias-label-tertiary)' }}>加载中…</div>
+    <BlockShell title="辅助视觉模型" activeText={active} description={DESCRIPTION}>
+      {error !== null ? <StateHint text={error} tone="error" /> : null}
+      {providers.length === 0 && error === null
+        ? <StateHint text="加载中…" />
         : (
           <>
             {list.length === 0
-              ? <div style={{ color: 'var(--dsw-alias-label-tertiary)', marginBottom: 8 }}>尚未配置降级方案，请从下方添加模型。</div>
-              : list.map((item, index) => (
-                <div key={keyOf(item) + '-' + index} style={LIST_ROW}>
-                  <span style={{ fontSize: 12, color: 'var(--dsw-alias-label-secondary)', width: 18, flex: 'none' }}>{index + 1}</span>
-                  <span style={TAG}>{item.provider}/{item.model}</span>
-                  <span style={{ fontSize: 12, color: 'var(--dsw-alias-label-secondary)' }}>{modelName(item)}</span>
-                  <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, flex: 'none' }}>
-                    <button style={saving || index === 0 ? SMALL_BTN_DISABLED : SMALL_BTN} disabled={saving || index === 0} onClick={() => move(index, -1)}>↑</button>
-                    <button style={saving || index === list.length - 1 ? SMALL_BTN_DISABLED : SMALL_BTN} disabled={saving || index === list.length - 1} onClick={() => move(index, 1)}>↓</button>
-                    <button style={saving ? SMALL_BTN_DISABLED : SMALL_BTN} disabled={saving} onClick={() => remove(index)}>✕</button>
-                  </div>
+              ? <StateHint text="尚未配置降级方案，从下方添加第一个模型。" />
+              : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {list.map((item, index) => (
+                    <div key={keyOf(item) + '-' + index} style={ROW_CARD}>
+                      <span style={{
+                        flexShrink: 0, width: 20, height: 20, borderRadius: '50%',
+                        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: 11, fontWeight: 600,
+                        background: index === 0
+                          ? 'var(--dsw-alias-state-business-primary, #4176e6)'
+                          : 'var(--dsw-alias-bg-module-platform, #f2f3f5)',
+                        color: index === 0 ? '#fff' : 'var(--dsw-alias-label-tertiary)',
+                      }}>{index + 1}</span>
+                      <span style={{ display: 'flex', flexDirection: 'column', gap: 1, flex: 1, minWidth: 0 }}>
+                        <span style={{
+                          fontSize: 13, lineHeight: '20px', fontWeight: 500,
+                          color: 'var(--dsw-alias-label-primary)',
+                          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                        }}>{modelName(item)}</span>
+                        <span style={{
+                          ...MONO, color: 'var(--dsw-alias-label-tertiary)',
+                          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                        }}>{keyOf(item)}</span>
+                      </span>
+                      {index === 0
+                        ? (
+                          <span style={{
+                            flexShrink: 0, padding: '1px 6px', borderRadius: 4,
+                            fontSize: 11, lineHeight: '16px',
+                            border: '1px solid var(--dsw-alias-border-l3, #c9cdd4)',
+                            color: 'var(--dsw-alias-label-secondary)',
+                          }}>首选</span>
+                        )
+                        : null}
+                      <span style={{ display: 'inline-flex', gap: 2, flexShrink: 0 }}>
+                        <IconButton label="上移" glyph="↑" disabled={saving || index === 0} onClick={() => { move(index, -1) }} />
+                        <IconButton label="下移" glyph="↓" disabled={saving || index === list.length - 1} onClick={() => { move(index, 1) }} />
+                        <IconButton label="移除" glyph="✕" danger disabled={saving} onClick={() => { remove(index) }} />
+                      </span>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            <div style={{ ...ROW, marginTop: 10 }}>
-              <select style={SELECT} aria-label="添加供应商" value={addProvider}
-                onChange={(e) => { setAddProvider(e.target.value); setAddModel('') }}>
+              )}
+
+            <div style={FILL_PANEL}>
+              <SelectField
+                label="供应商"
+                value={addProvider}
+                onChange={(v) => { setAddProvider(v); setAddModel('') }}
+              >
                 <option value="">选择供应商</option>
                 {providers.map(p => <option key={p.id} value={p.id}>{p.name || p.id}</option>)}
-              </select>
-              <select style={SELECT} aria-label="添加模型" value={addModel}
-                disabled={!addProvider || addModels.length === 0}
-                onChange={(e) => setAddModel(e.target.value)}>
-                <option value="">{addModels.length === 0 ? '无模型' : '选择模型'}</option>
+              </SelectField>
+              <SelectField
+                label="模型"
+                value={addModel}
+                width={220}
+                disabled={addProvider === '' || addModels.length === 0}
+                onChange={setAddModel}
+              >
+                <option value="">{addModels.length === 0 ? '无可用模型' : '选择模型'}</option>
                 {addModels.map(m => (
                   <option key={m.id} value={m.id}>{m.name || m.id}{isVisionModel(m) ? '（视觉）' : ''}</option>
                 ))}
-              </select>
-              <button style={saving || !addProvider || !addModel ? SMALL_BTN_DISABLED : SMALL_BTN}
-                disabled={saving || !addProvider || !addModel} onClick={add}>+ 添加</button>
+              </SelectField>
+              <button
+                type="button"
+                className="dsh-webui-capsule-btn"
+                style={canAdd ? CAPSULE_BTN : CAPSULE_BTN_DISABLED}
+                disabled={!canAdd}
+                onClick={add}
+              >
+                + 添加
+              </button>
             </div>
-            {active && <div style={ACTIVE_HINT}>当前生效：{active}</div>}
           </>
         )}
-    </div>
+    </BlockShell>
   )
 }

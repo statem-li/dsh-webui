@@ -269,21 +269,47 @@ export async function clearViewport(session: CdpSession): Promise<void> {
   try { await conn.send('Emulation.clearDeviceMetricsOverride', {}, sessionId) } catch { /* 未覆写则忽略 */ }
 }
 
+/** 截图裁剪区（CSS px，相对布局视口；scale 为输出缩放，默认 1）。 */
+export interface ShotClip {
+  x: number
+  y: number
+  width: number
+  height: number
+  scale?: number
+}
+
 /** 页面截图（默认 jpeg；format 可传 png 无损，适合文字/卡片）。
  *  fromSurface=true 截合成器表面（视图可见时画质最佳）；detached/不可见视图
  *  可能等不到合成帧（命令会超时），调用方应降级重试 fromSurface=false
- *  （直接向 renderer 要一帧，不依赖 compositor）。 */
+ *  （直接向 renderer 要一帧，不依赖 compositor）。
+ *  clip 传入时只截取该矩形区域（元素范围截图的基础）。 */
 export async function captureScreenshot(
   session: CdpSession,
   quality = 90,
   format: 'jpeg' | 'png' = 'jpeg',
   fromSurface = true,
   timeoutMs = 8000,
+  clip?: ShotClip,
 ): Promise<string> {
   const { conn, sessionId } = session
   const shot: any = await conn.send(
     'Page.captureScreenshot',
-    { format, ...(format === 'jpeg' ? { quality } : {}), fromSurface },
+    {
+      format,
+      ...(format === 'jpeg' ? { quality } : {}),
+      fromSurface,
+      ...(clip ? {
+        clip: {
+          x: Math.max(0, clip.x),
+          y: Math.max(0, clip.y),
+          width: Math.max(1, clip.width),
+          height: Math.max(1, clip.height),
+          scale: clip.scale ?? 1,
+        },
+        // 允许截取视口外区域：scrollIntoView 后通常已在视口内，此开关只是兜底
+        captureBeyondViewport: true,
+      } : {}),
+    },
     sessionId,
     timeoutMs,
   )
@@ -301,6 +327,22 @@ export async function captureScreenshotSafe(session: CdpSession, quality = 90, f
     return await captureScreenshot(session, quality, format, true, fromSurfaceTimeoutMs)
   } catch {
     return await captureScreenshot(session, quality, format, false, fromSurfaceTimeoutMs)
+  }
+}
+
+/** 元素范围截图（带降级）：clip 模式下同样 surface 失败再试 renderer。
+ *  注意 renderer 路径不支持 captureBeyondViewport 之外的差异——参数一致透传。 */
+export async function captureScreenshotSafeClip(
+  session: CdpSession,
+  quality: number,
+  format: 'jpeg' | 'png',
+  clip: ShotClip,
+  fromSurfaceTimeoutMs = 8000,
+): Promise<string> {
+  try {
+    return await captureScreenshot(session, quality, format, true, fromSurfaceTimeoutMs, clip)
+  } catch {
+    return await captureScreenshot(session, quality, format, false, fromSurfaceTimeoutMs, clip)
   }
 }
 

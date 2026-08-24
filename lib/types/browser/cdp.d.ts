@@ -72,17 +72,29 @@ export declare function navigateHistory(session: CdpSession, delta: number): Pro
 export declare function setViewport(session: CdpSession, width: number, height: number, deviceScaleFactor?: number): Promise<void>;
 /** 清除视口覆写，恢复跟随真实窗口/视图（选取模式结束后调用）。 */
 export declare function clearViewport(session: CdpSession): Promise<void>;
+/** 截图裁剪区（CSS px，相对布局视口；scale 为输出缩放，默认 1）。 */
+export interface ShotClip {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    scale?: number;
+}
 /** 页面截图（默认 jpeg；format 可传 png 无损，适合文字/卡片）。
  *  fromSurface=true 截合成器表面（视图可见时画质最佳）；detached/不可见视图
  *  可能等不到合成帧（命令会超时），调用方应降级重试 fromSurface=false
- *  （直接向 renderer 要一帧，不依赖 compositor）。 */
-export declare function captureScreenshot(session: CdpSession, quality?: number, format?: 'jpeg' | 'png', fromSurface?: boolean, timeoutMs?: number): Promise<string>;
+ *  （直接向 renderer 要一帧，不依赖 compositor）。
+ *  clip 传入时只截取该矩形区域（元素范围截图的基础）。 */
+export declare function captureScreenshot(session: CdpSession, quality?: number, format?: 'jpeg' | 'png', fromSurface?: boolean, timeoutMs?: number, clip?: ShotClip): Promise<string>;
 /**
  * 截图（带降级）：surface 截图失败/超时 → 自动改用 renderer 截图。
  * fromSurfaceTimeoutMs 只作用于第一次 surface 尝试——detached（不合成）视图
  * 等不到合成帧，会卡满该超时；预览抽屉的画面兜底传更短的值以快速降级。
  */
 export declare function captureScreenshotSafe(session: CdpSession, quality?: number, format?: 'jpeg' | 'png', fromSurfaceTimeoutMs?: number): Promise<string>;
+/** 元素范围截图（带降级）：clip 模式下同样 surface 失败再试 renderer。
+ *  注意 renderer 路径不支持 captureBeyondViewport 之外的差异——参数一致透传。 */
+export declare function captureScreenshotSafeClip(session: CdpSession, quality: number, format: 'jpeg' | 'png', clip: ShotClip, fromSurfaceTimeoutMs?: number): Promise<string>;
 /** 启动 CDP screencast：Chrome 持续推送 JPEG 帧（仅变化时），供内嵌面板实时展示 + 交互。 */
 export declare function startScreencast(session: CdpSession, width: number, height: number, quality?: number): Promise<void>;
 /** 停止 screencast（幂等）。 */

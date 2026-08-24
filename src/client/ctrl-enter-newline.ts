@@ -39,6 +39,8 @@ function insertNewline(el: HTMLTextAreaElement): void {
 function onKeyDownCapture(e: KeyboardEvent): void {
   if (e.key !== 'Enter') return
   if (!e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return
+  // 键盘自动重复（按住不放触发 OS key repeat）只认首次按下，否则一次按键连插多行。
+  if (e.repeat) return
   if (!isEditableComposerTextarea(e.target)) return
   // IME 组合中不拦截（keyCode 229 为遗留的组合信号）。
   // oxlint-disable-next-line typescript/no-deprecated

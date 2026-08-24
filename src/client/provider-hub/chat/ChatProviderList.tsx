@@ -1,25 +1,26 @@
 /**
- * 「对话供应商」区块：整页行卡片列表（对齐官方 ui-settings-models 的
- * ModelsSection 布局——行卡片 + 行内展开编辑器，而非左右分栏）。
+ * 「对话供应商」左栏导航：分组列表（已配置 / 目录预设）+ 底部「+ 添加自定义提供方」。
  *
- * 行卡片显示：显示名、自定义/未配置标签、凭据状态点、右侧编辑/配置按钮；
- * 选中行的卡片内展开详情（由父组件 renderDetail 提供，包在官方 editor 填充面里）。
- * 已配置行 → 编辑；目录预设行 → 配置（创建）；底部「添加自定义提供方」。
+ * 分栏布局（对齐常见网关控制台）：本组件只渲染导航列——图标 + 名称 + 凭据状态点；
+ * 选中项的编辑详情由父组件 {@link ../ProviderHubSection.tsx} 渲染在右侧详情面板，
+ * 因此这里不再承担行内展开编辑器、能力标签与基准测试入口。
+ *
+ * 「Developer Role 兼容」检测条（{@link DevRoleProbeBar}）也由父组件放到分栏之外的
+ * 全宽区域——它的结果面板需要整页宽度。
  */
 
 import { useEffect, useRef, useState } from 'react'
-import type { ReactNode } from 'react'
-import type { CSSProperties } from 'react'
+import type { ReactNode, CSSProperties } from 'react'
 import { getPath } from '@deepseek-ai/dsh-client-schema-form'
 import { chatCopy, ensureProviderFieldStyles } from './ModelListEditor.tsx'
-import { PerfBenchModal } from '../perf/PerfBenchModal.tsx'
+import { ProviderIcon } from '../provider-icons.tsx'
 import type { ModelsSettingsState, ProviderRow } from './store.ts'
 
 /** {@link ChatProviderList} 的 props。 */
 export interface ChatProviderListProps {
   /** 当前页面快照（由父组件注入，父组件负责 load）。 */
   state: ModelsSettingsState
-  /** 当前选中的提供方 route id（详情正在编辑的那个）。 */
+  /** 当前选中的提供方 route id（右侧详情正在编辑的那个）。 */
   selected: string | undefined
   /** 点击一行提供方（已配置或目录预设）。 */
   onSelect: (provider: string) => void
@@ -27,99 +28,43 @@ export interface ChatProviderListProps {
   onAddCustom: () => void
   /** 整页加载失败后的重试。 */
   onRetry: () => void
-  /** 选中行卡片内展开的详情内容（父组件渲染，含关闭）。 */
-  renderDetail?: (provider: string) => ReactNode
 }
 
-/** 一行提供方解析出的 profile 中 `models` 数组的长度（无则 0）。 */
-export function modelsCountOf(state: ModelsSettingsState, row: ProviderRow): number {
-  const namespace = state.namespaces.get(row.entry.settingsNs)
-  if (namespace === undefined) return 0
-  const models = getPath(namespace.value, [...row.entry.settingsPath, 'models'])
-  return Array.isArray(models) ? models.length : 0
-}
-
-/** 一行提供方的 models 数组（无则 []）。 */
-function modelsOf(state: ModelsSettingsState, row: ProviderRow): readonly Record<string, unknown>[] {
+/** 一行提供方的 models 数组（无则 []）；父组件的性能基准测试弹窗用它取模型清单。 */
+export function modelsOf(state: ModelsSettingsState, row: ProviderRow): readonly Record<string, unknown>[] {
   const namespace = state.namespaces.get(row.entry.settingsNs)
   if (namespace === undefined) return []
   const models = getPath(namespace.value, [...row.entry.settingsPath, 'models'])
   return Array.isArray(models) ? models.filter((m): m is Record<string, unknown> => typeof m === 'object' && m !== null) : []
 }
 
-/** 一行提供方的能力统计：{ vision, image, video } 各支持几个模型。 */
-export interface CapabilityCounts { vision: number; image: number; video: number }
-
-export function capabilityCountsOf(
-  state: ModelsSettingsState,
-  row: ProviderRow,
-  capabilities: Record<string, string[]>,
-): CapabilityCounts {
-  const counts: CapabilityCounts = { vision: 0, image: 0, video: 0 }
-  for (const model of modelsOf(state, row)) {
-    const input = model['input']
-    if (Array.isArray(input) && (input as string[]).includes('image')) counts.vision++
-    const id = typeof model['id'] === 'string' ? model['id'] : ''
-    if (!id) continue
-    const caps = capabilities[`${row.entry.provider}/${id}`] ?? []
-    if (caps.includes('image')) counts.image++
-    if (caps.includes('video')) counts.video++
-  }
-  return counts
-}
-
 /**
- * 渲染「对话供应商」区块。
+ * 渲染「对话供应商」左栏导航。
  * @param props - 快照、选中态与回调。
- * @returns 行卡片列表。
+ * @returns 导航栏（分组列表 + 添加按钮）。
  */
 export function ChatProviderList(props: ChatProviderListProps): ReactNode {
-  const { state, selected, onSelect, onAddCustom, onRetry, renderDetail } = props
+  const { state, selected, onSelect, onAddCustom, onRetry } = props
   const configured = state.rows.filter(row => row.configured)
   const addable = state.rows.filter(row => !row.configured && row.entry.settingsNs !== '')
 
-  // 模型能力声明（model-router.json capabilities），用于行卡片显示能力标签。
-  const [capabilities, setCapabilities] = useState<Record<string, string[]>>({})
-  // 当前打开基准测试弹窗的供应商行（null = 关闭）。
-  const [benchRow, setBenchRow] = useState<ProviderRow | null>(null)
   // 行内小胶囊按钮的 hover 态样式（与展开编辑器共用同一注入块）。
   useEffect(() => { ensureProviderFieldStyles() }, [])
-  useEffect(() => {
-    let alive = true
-    const load = (): void => {
-      fetch('/api/model-capabilities', { cache: 'no-store' })
-        .then((r) => r.json())
-        .then((d: any) => {
-          if (!alive) return
-          if (d && typeof d.capabilities === 'object' && d.capabilities !== null) {
-            setCapabilities(d.capabilities as Record<string, string[]>)
-          }
-        })
-        .catch(() => { /* 接口不可用则无标签 */ })
-    }
-    load()
-    // 模型行勾选/取消生图/生视频后，实时刷新能力标签（无需刷新页面）
-    window.addEventListener('dsh-webui:model-capabilities-changed', load)
-    return () => {
-      alive = false
-      window.removeEventListener('dsh-webui:model-capabilities-changed', load)
-    }
-  }, [])
 
   if (state.status === 'loading' && state.rows.length === 0) {
     return (
-      <section style={sectionStyle}>
-        <SectionTitle />
+      <section style={navColStyle}>
+        <p style={titleStyle}>{chatCopy.chatTitle}</p>
         <p style={hintStyle}>加载中…</p>
       </section>
     )
   }
   if (state.status === 'error') {
     return (
-      <section style={sectionStyle}>
-        <SectionTitle />
+      <section style={navColStyle}>
+        <p style={titleStyle}>{chatCopy.chatTitle}</p>
         <p style={errorStyle}>{`${chatCopy.loadFailed}: ${state.error ?? ''}`}</p>
-        <button type="button" className="dsh-webui-capsule-btn" style={smButtonStyle} onClick={onRetry}>
+        <button type="button" className="dsh-webui-capsule-btn" style={addBtnStyle} onClick={onRetry}>
           {chatCopy.retry}
         </button>
       </section>
@@ -127,57 +72,38 @@ export function ChatProviderList(props: ChatProviderListProps): ReactNode {
   }
 
   return (
-    <section style={sectionStyle}>
-      {benchRow !== null
-        ? (
-          <PerfBenchModal
-            provider={benchRow.entry.provider}
-            models={modelsOf(state, benchRow).map(m => ({ id: String(m['id'] ?? ''), name: typeof m['name'] === 'string' ? m['name'] : undefined }))}
-            onClose={() => { setBenchRow(null) }}
-          />
-        )
-        : null}
-      <SectionTitle />
-      <DevRoleProbeBar />
-      {!state.writable && state.status === 'ready' ? <p style={hintStyle}>{chatCopy.readOnly}</p> : null}
+    <section style={navColStyle}>
+      <p style={titleStyle}>{chatCopy.chatTitle}</p>
 
-      <p style={groupLabelStyle}>{chatCopy.configuredGroup}</p>
-      {configured.length === 0 ? <p style={hintStyle}>暂无已配置的提供方。</p> : null}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={navScrollStyle}>
+        <p style={groupLabelStyle}>{chatCopy.configuredGroup}</p>
+        {configured.length === 0 ? <p style={hintStyle}>暂无已配置的提供方。</p> : null}
         {configured.map(row => (
-          <ProviderRowCard
+          <NavRow
             key={row.entry.provider}
             row={row}
-            count={modelsCountOf(state, row)}
-            counts={capabilityCountsOf(state, row, capabilities)}
             selected={selected === row.entry.provider}
             onSelect={() => { onSelect(row.entry.provider) }}
-            onBench={() => { setBenchRow(row) }}
-            renderDetail={renderDetail}
           />
         ))}
-      </div>
 
-      <p style={groupLabelStyle}>{chatCopy.presetGroup}</p>
-      {addable.length === 0 ? <p style={hintStyle}>目录中暂无其他提供方。</p> : null}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <p style={{ ...groupLabelStyle, marginTop: 8 }}>{chatCopy.presetGroup}</p>
+        {addable.length === 0 ? <p style={hintStyle}>目录中暂无其他提供方。</p> : null}
         {addable.map(row => (
-          <ProviderRowCard
+          <NavRow
             key={row.entry.provider}
             row={row}
             preset
-            count={modelsCountOf(state, row)}
-            counts={capabilityCountsOf(state, row, capabilities)}
             selected={selected === row.entry.provider}
             onSelect={() => { onSelect(row.entry.provider) }}
-            renderDetail={renderDetail}
           />
         ))}
       </div>
 
       <button
         type="button"
-        style={addButtonStyle}
+        className="dsh-webui-capsule-btn"
+        style={addBtnStyle}
         disabled={!state.writable}
         onClick={onAddCustom}
       >
@@ -185,6 +111,139 @@ export function ChatProviderList(props: ChatProviderListProps): ReactNode {
       </button>
     </section>
   )
+}
+
+/** 左栏导航行：官方图标 + 名称 + 凭据状态点；选中行以填充面高亮。 */
+function NavRow({
+  row, preset, selected, onSelect,
+}: {
+  row: ProviderRow
+  /** 目录预设行（未配置）：名称降级为次级文字色。 */
+  preset?: boolean
+  selected: boolean
+  onSelect: () => void
+}): ReactNode {
+  return (
+    <div
+      className="dsh-webui-provider-nav-row"
+      style={selected ? navRowSelectedStyle : navRowStyle}
+      role="button"
+      tabIndex={0}
+      aria-current={selected ? 'true' : undefined}
+      title={row.entry.displayName}
+      onClick={onSelect}
+      onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onSelect() } }}
+    >
+      <ProviderIcon provider={row.entry.provider} name={row.entry.displayName} size={18} />
+      <span style={preset === true ? navNamePresetStyle : navNameStyle}>{row.entry.displayName}</span>
+      {preset !== true ? <CredentialDot row={row} /> : null}
+    </div>
+  )
+}
+
+/** 凭据状态点：绿=已配置，红=缺失（无引用时不显示）。 */
+function CredentialDot({ row }: { row: ProviderRow }): ReactNode {
+  const configured = row.credential?.configured === true
+  const missing = !configured && row.apiKeyEnv !== undefined && row.credential?.configured === false
+  if (configured) {
+    return (
+      <span
+        role="img"
+        aria-label={chatCopy.credentialConfigured}
+        title={chatCopy.credentialConfigured}
+        style={{
+          width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
+          background: 'var(--dsw-alias-state-success-primary, #00b42a)',
+        }}
+      />
+    )
+  }
+  if (missing) {
+    return (
+      <span
+        role="img"
+        aria-label={chatCopy.credentialMissing}
+        title={chatCopy.credentialMissing}
+        style={{
+          width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
+          background: 'var(--dsw-alias-state-error-primary, #d54941)',
+        }}
+      />
+    )
+  }
+  return null
+}
+
+/* ---------- 内联样式（对齐官方 ModelsSection.module.css 规格） ---------- */
+
+/* 左栏：窄导航列（给右侧详情留出主要宽度）。 */
+const navColStyle: CSSProperties = {
+  display: 'flex', flexDirection: 'column', gap: 8,
+  width: 200, flex: 'none', minWidth: 0,
+}
+
+const titleStyle: CSSProperties = {
+  margin: 0, fontSize: 14, fontWeight: 600,
+  color: 'var(--dsw-alias-label-primary, #1f2329)',
+}
+
+const groupLabelStyle: CSSProperties = {
+  margin: '2px 0 0', fontSize: 12,
+  color: 'var(--dsw-alias-label-tertiary, #8f959e)',
+}
+
+const hintStyle: CSSProperties = {
+  margin: 0, fontSize: 12, color: 'var(--dsw-alias-label-tertiary, #8f959e)',
+}
+
+const errorStyle: CSSProperties = {
+  margin: 0, fontSize: 12, color: 'var(--dsw-alias-state-error-primary, #d54941)',
+}
+
+/* 列表滚动区：目录很长时栏内自滚，「+ 添加」按钮始终钉在栏底可见。 */
+const navScrollStyle: CSSProperties = {
+  display: 'flex', flexDirection: 'column', gap: 4,
+  overflowY: 'auto', minHeight: 0, maxHeight: 464,
+  paddingRight: 2, marginLeft: -4, paddingLeft: 4,
+}
+
+/* 导航行：无描边，仅靠底色区分状态——描边（哪怕 transparent）会被主题/全局
+ * 规则染色，在点过的行上留下外圈；状态一律用 background 表达。 */
+const navRowStyle: CSSProperties = {
+  display: 'flex', alignItems: 'center', gap: 8,
+  padding: '8px 10px', borderRadius: 10, cursor: 'pointer',
+  minWidth: 0,
+}
+
+/* 选中态：填充面 + 左侧品牌色指示条（用 boxShadow inset 画，不占布局、不成描边）。 */
+const navRowSelectedStyle: CSSProperties = {
+  ...navRowStyle,
+  background: 'var(--dsw-alias-bg-module-platform, #f2f3f5)',
+  boxShadow: 'inset 3px 0 0 0 var(--dsw-alias-state-business-primary, #4176e6)',
+}
+
+const navNameStyle: CSSProperties = {
+  fontSize: 13, lineHeight: '20px', fontWeight: 500, flex: 1, minWidth: 0,
+  color: 'var(--dsw-alias-label-primary, #1f2329)',
+  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+}
+
+const navNamePresetStyle: CSSProperties = {
+  ...navNameStyle,
+  fontWeight: 400,
+  color: 'var(--dsw-alias-label-secondary, #4e5969)',
+}
+
+/* 官方行内小胶囊（Button .sm）：28px 高、14px 圆角、12px 字。 */
+const addBtnStyle: CSSProperties = {
+  boxSizing: 'border-box',
+  alignSelf: 'flex-start',
+  height: 28, padding: '0 10px', flexShrink: 0,
+  border: '1px solid var(--dsw-alias-border-l2, #dcdfe6)',
+  borderRadius: 14,
+  background: 'transparent',
+  color: 'var(--dsw-alias-label-primary, #1f2329)',
+  fontSize: 12, lineHeight: '18px', cursor: 'pointer',
 }
 
 /**
@@ -212,7 +271,8 @@ interface DevRoleState {
   items: DevRoleItem[]
 }
 
-function DevRoleProbeBar(): ReactNode {
+/** 渲染 Developer Role 兼容检测条（父组件放在分栏之外的全宽区域）。 */
+export function DevRoleProbeBar(): ReactNode {
   const [busy, setBusy] = useState(false)
   const [state, setState] = useState<DevRoleState | null>(null)
   const timer = useRef<number | undefined>(undefined)
@@ -318,242 +378,6 @@ function DevRoleProbeBar(): ReactNode {
         : null}
     </div>
   )
-}
-
-/** 区块标题。 */
-function SectionTitle(): ReactNode {
-  return <p style={titleStyle}>{chatCopy.chatTitle}</p>
-}
-
-/** 分组小标题。 */
-function GroupLabel({ children }: { children: ReactNode }): ReactNode {
-  return <p style={groupLabelStyle}>{children}</p>
-}
-
-/** 一行提供方卡片（已配置行或目录预设行），选中时卡片内展开详情。 */
-function ProviderRowCard({
-  row, preset, count, counts, selected, onSelect, onBench, renderDetail,
-}: {
-  row: ProviderRow
-  /** 目录预设行（未配置）时加「未配置」标记并显示「配置」按钮。 */
-  preset?: boolean
-  /** 该 profile 当前的模型数。 */
-  count: number
-  /** 该 profile 的能力统计（视觉/生图/生视频各几个模型）。 */
-  counts: CapabilityCounts
-  selected: boolean
-  onSelect: () => void
-  /** 打开推理性能基准测试弹窗。 */
-  onBench?: () => void
-  renderDetail?: (provider: string) => ReactNode
-}): ReactNode {
-  const capTags: Array<{ key: string; label: string; n: number }> = [
-    { key: 'vision', label: '视觉', n: counts.vision },
-    { key: 'image', label: '生图', n: counts.image },
-    { key: 'video', label: '生视频', n: counts.video },
-  ].filter(item => item.n > 0)
-  return (
-    <div style={selected ? rowCardSelectedStyle : rowCardStyle}>
-      <div
-        style={rowHeadStyle}
-        role="button"
-        tabIndex={0}
-        aria-expanded={selected}
-        onClick={onSelect}
-        onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onSelect() } }}
-      >
-        <span style={rowIdentityStyle}>
-          <span style={rowNameStyle}>{row.entry.displayName}</span>
-          {row.entry.declared === true
-            ? <span style={tagStyle}>{chatCopy.customTag}</span>
-            : null}
-          {preset === true ? <span style={tagStyle}>{chatCopy.unconfigured}</span> : null}
-          {preset !== true ? <CredentialDot row={row} /> : null}
-          <span style={countBadgeStyle} title={`${count} 模型`}>{count}</span>
-          {capTags.map(item => (
-            <span key={item.key} style={capabilityTagStyle} title={`${item.label}：${item.n} 个模型`}>
-              {item.label} {item.n}
-            </span>
-          ))}
-        </span>
-        <span style={rowActionsStyle}>
-          {preset !== true && onBench !== undefined
-            ? (
-              <button
-                type="button"
-                className="dsh-webui-capsule-btn"
-                style={smButtonStyle}
-                onClick={(event) => { event.stopPropagation(); onBench() }}
-              >
-                测试
-              </button>
-            )
-            : null}
-          <button
-            type="button"
-            className="dsh-webui-capsule-btn"
-            style={smButtonStyle}
-            onClick={(event) => { event.stopPropagation(); onSelect() }}
-          >
-            {preset === true ? '配置' : '编辑'}
-          </button>
-        </span>
-      </div>
-      {selected && renderDetail !== undefined
-        ? (
-          <div style={editorStyle}>
-            {renderDetail(row.entry.provider)}
-          </div>
-        )
-        : null}
-    </div>
-  )
-}
-
-/** 凭据状态点：绿=已配置，红=缺失（无引用时不显示）。 */
-function CredentialDot({ row }: { row: ProviderRow }): ReactNode {
-  const configured = row.credential?.configured === true
-  const missing = !configured && row.apiKeyEnv !== undefined && row.credential?.configured === false
-  if (configured) {
-    return (
-      <span
-        role="img"
-        aria-label={chatCopy.credentialConfigured}
-        title={chatCopy.credentialConfigured}
-        style={{
-          width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
-          background: 'var(--dsw-alias-state-success-primary, #00b42a)',
-        }}
-      />
-    )
-  }
-  if (missing) {
-    return (
-      <span
-        role="img"
-        aria-label={chatCopy.credentialMissing}
-        title={chatCopy.credentialMissing}
-        style={{
-          width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
-          background: 'var(--dsw-alias-state-error-primary, #d54941)',
-        }}
-      />
-    )
-  }
-  return null
-}
-
-/* ---------- 内联样式（对齐官方 ModelsSection.module.css） ---------- */
-
-const sectionStyle: CSSProperties = {
-  display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0, maxWidth: 760,
-}
-
-const titleStyle: CSSProperties = {
-  margin: 0, fontSize: 14, fontWeight: 600,
-  color: 'var(--dsw-alias-label-primary, #1f2329)',
-}
-
-const groupLabelStyle: CSSProperties = {
-  margin: '6px 0 0', fontSize: 12,
-  color: 'var(--dsw-alias-label-tertiary, #8f959e)',
-}
-
-const hintStyle: CSSProperties = {
-  margin: 0, fontSize: 12, color: 'var(--dsw-alias-label-tertiary, #8f959e)',
-}
-
-const errorStyle: CSSProperties = {
-  margin: 0, fontSize: 12, color: 'var(--dsw-alias-state-error-primary, #d54941)',
-}
-
-/* 官方 .rowCard：细边框、12px 圆角、无底色，面板上以描边呈现。 */
-const rowCardStyle: CSSProperties = {
-  border: '1px solid var(--dsw-alias-border-l2, #dcdfe6)',
-  borderRadius: 12,
-  padding: '12px 14px',
-  display: 'flex',
-  flexDirection: 'column',
-  gap: 12,
-}
-
-const rowCardSelectedStyle: CSSProperties = {
-  ...rowCardStyle,
-  borderColor: 'var(--dsw-alias-state-business-primary, #4176e6)',
-}
-
-/* 官方 .rowHead。 */
-const rowHeadStyle: CSSProperties = {
-  display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', minWidth: 0,
-}
-
-const rowIdentityStyle: CSSProperties = {
-  display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0, flex: 1,
-}
-
-/* 官方 .rowName：14px / 500。 */
-const rowNameStyle: CSSProperties = {
-  fontSize: 14, lineHeight: '22px', fontWeight: 500,
-  color: 'var(--dsw-alias-label-primary, #1f2329)',
-  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-}
-
-/* 官方 .rowTag：细边框小标签。 */
-const tagStyle: CSSProperties = {
-  flexShrink: 0, padding: '1px 6px',
-  border: '1px solid var(--dsw-alias-border-l3, #c9cdd4)',
-  borderRadius: 4, fontSize: 11, lineHeight: '16px',
-  color: 'var(--dsw-alias-label-secondary, #4e5969)',
-}
-
-const countBadgeStyle: CSSProperties = {
-  flexShrink: 0, minWidth: 20, padding: '1px 5px',
-  fontSize: 11, borderRadius: 10, textAlign: 'center',
-  background: 'var(--dsw-alias-interactive-bg-hover, rgba(65,118,230,0.08))',
-  color: 'var(--dsw-alias-label-tertiary, #8f959e)',
-}
-
-/* 能力标签：视觉/生图/生视频，标注该供应商下支持各能力的模型数。 */
-const capabilityTagStyle: CSSProperties = {
-  flexShrink: 0, padding: '1px 6px',
-  fontSize: 11, lineHeight: '16px', borderRadius: 4,
-  background: 'var(--dsw-alias-state-business-primary, #4176e6)',
-  color: '#fff',
-}
-
-const rowActionsStyle: CSSProperties = {
-  display: 'inline-flex', alignItems: 'center', gap: 6, flex: 'none',
-}
-
-/* 官方行内小胶囊（Button .sm）：28px 高、14px 圆角、12px 字、0 10 内边距。 */
-const smButtonStyle: CSSProperties = {
-  boxSizing: 'border-box',
-  height: 28, padding: '0 10px',
-  border: '1px solid var(--dsw-alias-border-l2, #dcdfe6)',
-  borderRadius: 14,
-  background: 'transparent',
-  color: 'var(--dsw-alias-label-primary, #1f2329)',
-  fontSize: 12, lineHeight: '18px', cursor: 'pointer',
-}
-
-/* 官方 .addButton：36px 高、18px 圆角胶囊。 */
-const addButtonStyle: CSSProperties = {
-  alignSelf: 'flex-start',
-  boxSizing: 'border-box',
-  height: 36, padding: '0 14px', marginTop: 4,
-  border: '1px solid var(--dsw-alias-border-l2, #dcdfe6)',
-  borderRadius: 18,
-  background: 'transparent',
-  color: 'var(--dsw-alias-label-primary, #1f2329)',
-  fontSize: 14, lineHeight: '22px', cursor: 'pointer',
-}
-
-/* 官方 .editor：填充面。 */
-const editorStyle: CSSProperties = {
-  borderRadius: 12,
-  background: 'var(--dsw-alias-bg-module-platform, #f2f3f5)',
-  padding: '14px 16px',
-  display: 'flex', flexDirection: 'column', gap: 12,
 }
 
 /* Developer Role 一键检测：容器 / 主按钮 / 结果面板。 */

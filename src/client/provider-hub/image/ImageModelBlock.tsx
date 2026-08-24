@@ -1,37 +1,27 @@
 /**
  * ImageModelBlock — 生图模型区块。
- * 交互：两级下拉——先选供应商，再选该供应商下的模型。
+ *
+ * 交互：两级下拉——先选供应商，再选该供应商下的模型；选中即保存。
+ * 版式走 {@link ../blocks/shared.tsx} 的统一外壳：标题行带当前生效胶囊、
+ * 说明默认折叠，两个下拉并排在同一填充面里各带小标签。
+ *
  * 复用 dsh-vision-helper 的 HTTP 接口：/api/image-gen/snapshot + /config。
  */
 import { useEffect, useState } from 'react'
+import type { ReactNode } from 'react'
+import { BlockShell, FILL_PANEL, SelectField, StateHint } from '../blocks/shared.tsx'
 
 interface ModelInfo { id: string; name: string; outputs?: string[] }
 interface ProviderInfo { id: string; name: string; models: ModelInfo[] }
 
-const BLOCK_TITLE: React.CSSProperties = { fontSize: 14, fontWeight: 600, marginBottom: 6, color: 'var(--dsw-alias-label-primary)' }
-const HINT: React.CSSProperties = { fontSize: 12, color: 'var(--dsw-alias-label-secondary)', marginBottom: 10 }
-const ROW: React.CSSProperties = { display: 'flex', gap: 8, alignItems: 'center', marginBottom: 10 }
-/* 官方 .input/.selectInput 规格：32px 高、14px 字、8px 圆角、自定义 chevron。 */
-const SELECT: React.CSSProperties = {
-  boxSizing: 'border-box',
-  height: 32,
-  padding: '0 32px 0 10px',
-  borderRadius: 8,
-  border: '1px solid var(--dsw-alias-border-l2)',
-  backgroundImage: 'url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'12\' height=\'12\' viewBox=\'0 0 12 12\' fill=\'none\'%3E%3Cpath d=\'M3 4.5L6 7.5L9 4.5\' stroke=\'%2381858C\' stroke-width=\'1.5\' stroke-linecap=\'round\' stroke-linejoin=\'round\'/%3E%3C/svg%3E")',
-  backgroundRepeat: 'no-repeat',
-  backgroundPosition: 'right 12px center',
-  backgroundSize: '12px 12px',
-  appearance: 'none',
-  color: 'var(--dsw-alias-label-primary)', fontSize: 14, lineHeight: '22px', cursor: 'pointer',
-}
-const ACTIVE_HINT: React.CSSProperties = { fontSize: 12, color: 'var(--dsw-alias-label-secondary)' }
+const DESCRIPTION = 'generate_image 使用的模型（提示词 → 图片生成）。标注「生图」的模型声明了图片生成能力，可在供应商的模型设置中开启「生图」。'
 
-function isImageModel(m: ModelInfo): boolean {
+/** 该模型是否声明了生图能力（outputs 含 image）。 */
+function isCapable(m: ModelInfo): boolean {
   return Array.isArray(m.outputs) && m.outputs.includes('image')
 }
 
-export function ImageModelBlock(): React.ReactElement {
+export function ImageModelBlock(): ReactNode {
   const [providers, setProviders] = useState<ProviderInfo[]>([])
   const [active, setActive] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -77,41 +67,29 @@ export function ImageModelBlock(): React.ReactElement {
   }
 
   return (
-    <div>
-      <div style={BLOCK_TITLE}>生图模型</div>
-      <div style={HINT}>generate_image 使用的模型（提示词 → 图片生成）。标注「生图」的模型声明了图片生成能力（可在供应商的模型设置中开启「生图」）。</div>
-      {error && <div style={{ color: 'var(--dsw-alias-state-error-primary)', marginBottom: 8 }}>{error}</div>}
-      {providers.length === 0 && !error
-        ? <div style={{ color: 'var(--dsw-alias-label-tertiary)' }}>加载中…</div>
+    <BlockShell title="生图模型" activeText={active} description={DESCRIPTION}>
+      {error !== null ? <StateHint text={error} tone="error" /> : null}
+      {providers.length === 0 && error === null
+        ? <StateHint text="加载中…" />
         : (
-          <>
-            <div style={ROW}>
-              <select
-                style={SELECT}
-                value={currentProvider}
-                aria-label="供应商"
-                onChange={(e) => { setSelectedProvider(e.target.value) }}
-              >
-                {providers.map(p => (
-                  <option key={p.id} value={p.id}>{p.name || p.id}</option>
-                ))}
-              </select>
-              <select
-                style={SELECT}
-                value={modelValue}
-                aria-label="模型"
-                disabled={saving || currentModels.length === 0}
-                onChange={(e) => { if (e.target.value) pick(`${currentProvider}/${e.target.value}`) }}
-              >
-                <option value="">{currentModels.length === 0 ? '无模型' : '选择模型'}</option>
-                {currentModels.map(m => (
-                  <option key={m.id} value={m.id}>{m.name || m.id}{isImageModel(m) ? '（生图）' : ''}</option>
-                ))}
-              </select>
-            </div>
-            {active && <div style={ACTIVE_HINT}>当前：{active}</div>}
-          </>
+          <div style={FILL_PANEL}>
+            <SelectField label="供应商" value={currentProvider} onChange={setSelectedProvider}>
+              {providers.map(p => <option key={p.id} value={p.id}>{p.name || p.id}</option>)}
+            </SelectField>
+            <SelectField
+              label="模型"
+              value={modelValue}
+              width={240}
+              disabled={saving || currentModels.length === 0}
+              onChange={(v) => { if (v !== '') pick(`${currentProvider}/${v}`) }}
+            >
+              <option value="">{currentModels.length === 0 ? '无可用模型' : '选择模型'}</option>
+              {currentModels.map(m => (
+                <option key={m.id} value={m.id}>{m.name || m.id}{isCapable(m) ? '（生图）' : ''}</option>
+              ))}
+            </SelectField>
+          </div>
         )}
-    </div>
+    </BlockShell>
   )
 }

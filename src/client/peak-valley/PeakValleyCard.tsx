@@ -1,6 +1,7 @@
 /**
  * DeepSeek 峰谷时刻卡片（sidebar.footer.action，order 0，独占首行）。
  * 展开态显示状态点 + 标题 + 高峰窗口 + 距下一次切换的倒计时；
+ * 末行右下角显示今天周几（北京时区）。
  * 收起态（rail）退化为一个着色状态点。颜色走 DSH 主题令牌。
  */
 import { useEffect, useState, type CSSProperties } from 'react'
@@ -78,10 +79,26 @@ const windowLine: CSSProperties = {
 }
 
 const countdownLine: CSSProperties = {
+  display: 'flex',
+  alignItems: 'baseline',
+  justifyContent: 'space-between',
+  gap: 8,
+  minWidth: 0,
   fontSize: 11,
   lineHeight: '15px',
   color: 'var(--dsw-alias-label-secondary, #bbb)',
 }
+
+/** 今日周几标签（右下角，次要文字色，比左侧倒计时淡一档）。 */
+const weekdayLabel: CSSProperties = {
+  flex: 'none',
+  fontSize: 11,
+  lineHeight: '15px',
+  color: 'var(--dsw-alias-label-secondary, #999)',
+}
+
+/** 北京时区星期名（下标 = BeijingClock.day，0=周日）。 */
+const WEEKDAY_NAMES = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'] as const
 
 const railDot: CSSProperties = {
   flex: 'none',
@@ -143,8 +160,11 @@ export function PeakValleyCard({ wide }: PeakValleyCardProps): JSX.Element {
           {weekendFlat ? '周末全天空闲价（半价）· 周一恢复计峰' : '高峰 · 工作日 09:00–12:00 / 14:00–18:00'}
         </div>
         <div style={countdownLine}>
-          {peak ? '距谷时 ' : '距峰时 '}
-          {countdown}
+          <span>
+            {peak ? '距谷时 ' : '距峰时 '}
+            {countdown}
+          </span>
+          <span style={weekdayLabel}>{WEEKDAY_NAMES[clock.day]}</span>
         </div>
       </div>
       {open && <BillingModal closing={closing} onClose={requestClose} />}

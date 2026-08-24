@@ -4,9 +4,10 @@
  * 「自动化」菜单项必须出现在「新会话」按钮正下方（sidebar.workspaces 是
  * single 插槽，无法再注册条目），因此沿用 DOM 注入契约：
  *  - 锚点 = `[data-slot="sidebar.workspaces"]`（slots 渲染器的稳定锚 div）；
- *  - host div（#dsh-automation-menu-host）插到该容器之前——host 内由
- *    sidebar-nav 维护 skills / memory 合并行槽位（与自动化按钮同行），
- *    用量/PlanWeave 等其余导航行排在 host 之后；
+ *  - host div（#dsh-automation-menu-host）插到该容器之前——AutomationApp
+ *    在 host 内随 React 树渲染 skills / memory 合并行槽位（与自动化按钮
+ *    同行，见 AutomationApp），用量/PlanWeave 等其余导航行排在 host 之后；
+ *    外部脚本不往 host 里 append 节点（会与 React 首次提交竞态）；
  *  - 低频轮询兜底：侧边栏整体重挂（HMR/插件重载）后自动重新插入。
  */
 
@@ -28,6 +29,7 @@ const LEGACY_STORAGE_KEYS = [
 let root: Root | null = null
 let host: HTMLDivElement | null = null
 let pollTimer = 0
+let retryTimer = 0
 
 /** 清理旧版 localStorage 遗留（幂等、静默）。 */
 function purgeLegacyStorage(): void {
@@ -57,6 +59,21 @@ function ensureHostPlaced(ctx: ClientContext): boolean {
 }
 
 /**
+ * 首屏快速就位：anchor 由框架 slots 渲染器稍后给出时，以 100ms 步进重试
+ * ~1.5s；期间仍未就位再交给低频轮询兜底。避免干等下一个 1.5s tick。
+ */
+function placeWithRetry(ctx: ClientContext): void {
+  window.clearTimeout(retryTimer)
+  let tries = 0
+  const step = (): void => {
+    tries += 1
+    if (ensureHostPlaced(ctx)) return
+    if (tries < 15) retryTimer = window.setTimeout(step, 100)
+  }
+  step()
+}
+
+/**
  * 挂载自动化模块（幂等）。返回清理函数（停轮询、卸载 React 树、移除 host）。
  */
 export function mountAutomation(ctx: ClientContext): () => void {
@@ -64,13 +81,14 @@ export function mountAutomation(ctx: ClientContext): () => void {
   if (root !== null) return () => {}
 
   purgeLegacyStorage()
-  ensureHostPlaced(ctx)
+  placeWithRetry(ctx)
   // 低频轮询兜底：侧边栏整体重挂（HMR / 插件热重载）导致 host 失联后自动补位。
   pollTimer = window.setInterval(() => {
     if (host === null || !host.isConnected) ensureHostPlaced(ctx)
   }, 1500)
 
   return () => {
+    window.clearTimeout(retryTimer)
     window.clearInterval(pollTimer)
     pollTimer = 0
     host?.remove()

@@ -7,10 +7,10 @@
  *    与 automation mount.tsx 同一契约），host 插在浏览区容器之前；
  *  - host 内含固定顺序的槽位容器（usage / planweave）：各入口经 useNavSlot
  *    轮询拿到自己的槽位后 portal 进去——顺序确定、互不覆盖；
- *  - 「技能」「记忆」两个入口的槽位由本模块维护在「自动化」host 内部
- *    （AUTO_ROW_SLOTS），与自动化按钮合成一行（见 SHEET 合并行规则）；
- *  - 自动化 host 尚未挂载时技能/记忆暂不渲染，轮询检测到后自动补槽
- *    （各模块 apply 时序无关紧要）；
+ *  - 「技能」「记忆」两个入口的槽位（AUTO_ROW_SLOTS）由 AutomationApp 的
+ *    React 树渲染在「自动化」host 内部，与自动化按钮合成一行（见 SHEET
+ *    合并行规则）——外部脚本不 append 槽位，避免与 React 首次提交竞态；
+ *    useNavSlot 持续校验兜住任何失联场景；
  *  - rail 折叠态由 useRail 观察 data-shell-overlay 框架容器的属性切换
  *    （与 AutomationApp 相同的 DOM 契约），rail 下导航行收缩为图标钮、
  *    合并行恢复纵向排列（纯 CSS :has 跟随）。
@@ -41,27 +41,6 @@ export type NavSlotName = (typeof SLOT_NAMES | typeof AUTO_ROW_SLOTS)[number]
 let started = false
 let pollTimer = 0
 
-/**
- * 确保「自动化」host 内的合并行槽位（skills → memory）按序存在（幂等）。
- * React unmount（HMR/插件热重载）会清空 host，此时重建槽位，portal 侧的
- * 轮询会自动重新挂入。返回 automation host 是否已就绪。
- */
-function ensureAutoRowSlots(): boolean {
-  const auto = document.getElementById(AUTO_HOST_ID)
-  if (auto === null) return false
-  const existing = Array.from(auto.querySelectorAll<HTMLElement>(':scope > [data-nav-slot]'))
-  const names = existing.map(el => el.getAttribute('data-nav-slot'))
-  if (names.length === AUTO_ROW_SLOTS.length
-    && AUTO_ROW_SLOTS.every((name, index) => names[index] === name)) return true
-  for (const el of existing) el.remove()
-  for (const name of AUTO_ROW_SLOTS) {
-    const slot = document.createElement('div')
-    slot.dataset.navSlot = name
-    auto.appendChild(slot)
-  }
-  return true
-}
-
 /** 确保 host 已创建并插到「自动化」菜单下方（幂等）；返回是否已就位。 */
 function ensureHostPlaced(): boolean {
   const anchor = document.querySelector(ANCHOR_SELECTOR)
@@ -87,8 +66,6 @@ function ensureHostPlaced(): boolean {
   if (!inPlace) {
     parent.insertBefore(host, auto !== null ? (auto.nextElementSibling ?? anchor) : anchor)
   }
-  // 自动化 host 已出现时维护其内的合并行槽位（技能/记忆）。
-  ensureAutoRowSlots()
   return true
 }
 
@@ -115,15 +92,23 @@ export function ensureNavMount(): () => void {
  *
  * 槽位可能位于 nav host（usage / planweave）或自动化 host（skills / memory
  * 合并行），因此全局按 data-nav-slot 查找——槽位名由本模块统一创建，唯一。
+ *
+ * **永不停止**：未就位时 100ms 阶梯快查（10 次后退 400ms）；找到后退化为
+ * 800ms 慢速校验——同一节点 setSlot 被 React 直接跳过，零渲染开销。这样
+ * 槽位一旦被移除/替换（HMR、React 重建 host、竞态清空等），portal 会自动
+ * 迁到新槽；否则会攥着游离的旧槽引用把入口「弄丢」且不再恢复。
  */
 export function useNavSlot(name: NavSlotName): HTMLElement | null {
   const [slot, setSlot] = useState<HTMLElement | null>(null)
   useEffect(() => {
     let timer = 0
+    let tries = 0
     const poll = (): void => {
       const found = document.querySelector<HTMLElement>(`[data-nav-slot='${name}']`)
+      if (found !== null) tries = 0
+      else tries += 1
       setSlot(found)
-      if (found === null) timer = window.setTimeout(poll, 400)
+      timer = window.setTimeout(poll, found !== null ? 800 : tries <= 10 ? 100 : 400)
     }
     poll()
     return () => { window.clearTimeout(timer) }
@@ -255,4 +240,20 @@ export function NavPortal({ name, children }: { name: NavSlotName; children: Rea
   const slot = useNavSlot(name)
   if (slot === null) return null
   return createPortal(children, slot)
+}
+
+/** 「导航行右缘」滑出锚点（PopoverShell 用）。
+ *
+ * 合并行之后各入口按钮的右缘不再贴侧栏边——若仍以「按钮右缘 +8」定位，
+ * 自动化/技能的卡片会叠在侧边栏上方。统一取按钮所在导航行容器（自动化
+ * 合并行 host，或 nav host 的独立行）右缘 +8 作水平位；top 取按钮顶缘 -6
+ * （与记忆面板既有效果一致）。rail 窄条下行容器即窄条本身，行为不变。
+ */
+export function navAnchorFrom(el: Element | null): PopoverAnchor | null {
+  if (el === null) return null
+  const row = el.closest(`#${AUTO_HOST_ID}`) ?? el.closest(`#${HOST_ID}`)
+  if (row === null) return null
+  const rowRect = row.getBoundingClientRect()
+  const btnRect = el.getBoundingClientRect()
+  return { left: Math.round(rowRect.right + 8), top: Math.round(btnRect.top - 6) }
 }

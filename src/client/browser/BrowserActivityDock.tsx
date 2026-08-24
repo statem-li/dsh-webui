@@ -823,7 +823,9 @@ function BrowserDrawer({ sessionId, onClose, onPickElement }: {
           <span className="dsh-browser-drawer__title">
             <BrowserIcon size={16} /> AI 浏览器{running ? ' · 操作中' : ''}
           </span>
-          <TabsBar tabs={detail?.tabs ?? []} sessionId={sessionId} onChanged={() => { void refreshDetail() }} />
+          {/* 标签动作后除刷新列表外还须重新贴合原生视图：壳子 create-tab 只建视图
+    不挂载，switch/close 也只改服务端 activeTabId——不重挂的话画面区仍是旧标签 */}
+        <TabsBar tabs={detail?.tabs ?? []} sessionId={sessionId} onChanged={() => { void refreshDetail(); syncViewBounds() }} />
           <button
             type="button"
             className={picking ? 'dsh-browser-drawer__pick dsh-browser-drawer__pick--on' : 'dsh-browser-drawer__pick'}
@@ -837,7 +839,8 @@ function BrowserDrawer({ sessionId, onClose, onPickElement }: {
           <button type="button" className="dsh-browser-drawer__close" onClick={requestClose} aria-label="关闭">✕</button>
         </header>
         <div className="dsh-browser-drawer__urlrow">
-          <SitesBar sessionId={sessionId} currentUrl={detail?.url ?? ''} onChanged={() => { void refreshDetail() }} />
+          {/* 快捷站点 = 新开标签打开：同样需要重挂原生视图才能看到新标签画面 */}
+        <SitesBar sessionId={sessionId} currentUrl={detail?.url ?? ''} onChanged={() => { void refreshDetail(); syncViewBounds() }} />
           <UrlCopyBar url={detail?.tabs?.find((t) => t.active)?.url ?? detail?.url ?? ''} />
         </div>
         <div className="dsh-browser-drawer__body">

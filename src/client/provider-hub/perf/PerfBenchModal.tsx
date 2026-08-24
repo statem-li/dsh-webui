@@ -35,15 +35,21 @@ interface BenchStateShape {
 
 const OVERLAY: React.CSSProperties = {
   position: 'fixed', inset: 0, zIndex: 1200,
-  background: 'rgba(0,0,0,0.38)',
+  background: 'rgba(0,0,0,0.32)',
   display: 'flex', alignItems: 'center', justifyContent: 'center',
   opacity: 0, transition: 'opacity 260ms ease',
 }
+/* 玻璃卡：backdrop-filter 只直加浮层本体（dsh-webui 玻璃铁律）；本卡经
+ * createPortal 挂 body、内部无 fixed 后代，不会被钉进局部坐标系。
+ * 底色用 color-mix 半透明的 bg-layer-1 —— 浅色下透白纱、深色下透深纱，
+ * 文字对比度由 72% 不透明度兜底，随主题自动切换。 */
 const CARD_BASE: React.CSSProperties = {
   boxSizing: 'border-box',
   display: 'flex', flexDirection: 'column',
   borderRadius: 14,
-  background: 'var(--dsw-alias-bg-layer-1, #fff)',
+  background: 'color-mix(in srgb, var(--dsw-alias-bg-layer-1, #fff) 72%, transparent)',
+  backdropFilter: 'blur(24px) saturate(1.5)',
+  WebkitBackdropFilter: 'blur(24px) saturate(1.5)',
   border: '1px solid var(--dsw-alias-border-l2, #dcdfe6)',
   boxShadow: '0 18px 48px rgba(0,0,0,0.28)',
   overflow: 'hidden',
@@ -121,16 +127,18 @@ export function PerfBenchModal({ provider, models, onClose }: {
     return () => window.clearInterval(iv)
   }, [phase])
 
-  // 挂载时恢复可能仍在后台跑的测试。
+  // 挂载时恢复可能仍在后台跑的测试——仅限同一供应商：全局单例是跨供应商
+  // 共享的，切到别家打开应停留在「选择模型」初始卡，而不是别人家的进度/报告。
   useEffect(() => {
     fetch('/api/perf-bench', { cache: 'no-store' })
       .then((r) => r.json())
       .then((d: any) => {
-        if (d?.ok && d.state && d.state.running) {
+        if (!d?.ok || !d.state || d.state.provider !== provider) return
+        if (d.state.running) {
           setState(d.state)
           setModelId(d.state.model)
           setPhase('running')
-        } else if (d?.ok && d.state && !d.state.running && Date.now() - (d.state.finishedAt ?? 0) < 60_000) {
+        } else if (Date.now() - (d.state.finishedAt ?? 0) < 60_000) {
           setState(d.state)
           setModelId(d.state.model)
           setPhase('done')
@@ -138,7 +146,7 @@ export function PerfBenchModal({ provider, models, onClose }: {
       })
       .catch(() => { /* 无状态则停在 select */ })
     return () => { if (pollRef.current !== null) window.clearInterval(pollRef.current) }
-  }, [])
+  }, [provider])
 
   const pollOnce = async (): Promise<void> => {
     try {

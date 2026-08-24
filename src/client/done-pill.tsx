@@ -34,6 +34,9 @@ interface DoneEntry {
 
 /** 轮询间隔（ms）。 */
 const POLL_MS = 3000
+/** 形变共同节奏：外壳宽度伸缩、位置滑动、主文案淡入三者同速，
+ *  对称拉伸才严丝合缝；偏慢一档显得从容不抢眼。 */
+const MORPH_DUR = '.65s'
 /** 内存保留条目上限。 */
 const MAX_ENTRIES = 100
 /** localStorage 已读 id 上限。 */
@@ -333,7 +336,7 @@ const FUN_LINES: FunLine[] = [
 ]
 
 /** 轮播间隔（ms）。 */
-const FUN_INTERVAL_MS = 15000
+const FUN_INTERVAL_MS = 30000
 
 // ---- 胶囊外观（大小缩放 + 字体风格）----
 
@@ -461,13 +464,14 @@ function toggleFileExplorer(): void {
   window.dispatchEvent(new CustomEvent('dsh-file-explorer-toggle'))
 }
 
-/** 主文案整行淡入的 keyframes（一次性注入）：轻微上浮 + 由模糊到清晰，
- *  不再逐字符蹦出（逐字符配合宽度向两侧扩展显得杂乱）。 */
+/** 主文案整行淡入的 keyframes（一次性注入）：纯 opacity 淡入。
+ *  不做位移/模糊——上浮 + blur 会在每次轮播换文案时让胶囊看起来
+ *  「蹦一下」，非常出戏；安静地淡入替代。 */
 function ensurePillKeyframes(): void {
   if (document.getElementById('dsh-done-pill-kf') !== null) return
   const style = document.createElement('style')
   style.id = 'dsh-done-pill-kf'
-  style.textContent = '@keyframes dpLineIn{from{opacity:0;transform:translateY(3px);filter:blur(3px)}to{opacity:1;transform:translateY(0);filter:none}}'
+  style.textContent = '@keyframes dpLineIn{from{opacity:0}to{opacity:1}}'
   document.head.appendChild(style)
 }
 
@@ -493,7 +497,25 @@ const wrapStyle = (dragging: boolean, pos: PillPos | null, scale: number, fontSt
   // 底部内衬：面板贴着它定位（top:100%），胶囊与面板之间的 8px 视觉缝隙
   // 落在容器内，鼠标滑过去不会触发 mouseleave。
   paddingBottom: 'calc(8px * var(--dps))',
+  // 核心动画：left 与外壳 width 同节奏（.18s ease）过渡。位置按目标宽
+  // 一步算准（见 applyAnchor/recenter），Δw 的过渡期里左缘滑动的量恒为
+  // ∓Δw/2，与右缘对称——胶囊呈「两侧拉伸 / 两侧收窄」，而不是先单边
+  // 伸缩、再瞬移回中。拖拽中必须关闭，否则位置被过渡拖着走、毫无跟手性。
+  ...(dragging ? {} : { transition: `left ${MORPH_DUR} ease` }),
 } as unknown as CSSProperties)
+
+/** 胶囊外壳最大宽度（px）：与 pillShellStyle 的 maxWidth 同源——
+ *  居中/锚定计算要复刻同一钳制规则，超宽胶囊的位置才算得准。 */
+const SHELL_MAX_W = 720
+
+/** 居中/锚定计算用的「实际渲染宽」：优先取受控目标宽（宽度过渡的终点，
+ *  用它算出的坐标才与宽度动画同时抵达），并复刻外壳 maxWidth 的钳制；
+ *  尚无目标宽（首帧）时回退实测宽度。 */
+function effectiveShellWidth(target: number | null, el: HTMLDivElement | null): number {
+  const maxW = Math.min(SHELL_MAX_W, window.innerWidth - 48)
+  if (target !== null && target > 0) return Math.min(target, maxW)
+  return el !== null ? el.getBoundingClientRect().width : 160
+}
 
 /** 胶囊外壳：透明背景、无外圈线条（融入页面，hover 光影由样式表
  * .dsh-done-pill-shell 提供），宽度受控 + 过渡。 */
@@ -501,7 +523,7 @@ const pillShellStyle = (unread: number, width: number | null): CSSProperties => 
   display: 'flex',
   alignItems: 'stretch',
   height: 'calc(30px * var(--dps))',
-  maxWidth: 'min(720px, calc(100vw - 48px))',
+  maxWidth: `min(${SHELL_MAX_W}px, calc(100vw - 48px))`,
   ...(width !== null ? { width } : {}),
   borderRadius: 'calc(15px * var(--dps))',
   border: 'none',
@@ -512,7 +534,8 @@ const pillShellStyle = (unread: number, width: number | null): CSSProperties => 
   fontWeight: unread > 0 ? 500 : 400,
   whiteSpace: 'nowrap',
   overflow: 'hidden',
-  transition: 'width .28s ease',
+  // 宽度伸缩与位置滑动/文字淡入同节奏（MORPH_DUR）。
+  transition: `width ${MORPH_DUR} ease`,
 })
 
 /** 胶囊主体（点击 = 进入最新完成的会话；按住拖动 = 移动胶囊）。 */
@@ -1164,8 +1187,10 @@ export function DonePill(props: DonePillProps): JSX.Element | null {
     if (autoCenterRef.current) return
     const anchor = anchorRef.current
     if (anchor === null) return
-    const el = shellRef.current
-    const w = el !== null ? el.getBoundingClientRect().width : 160
+    // 按受控**目标宽**计算（而非实测）：实测值在宽度过渡期间是中间值，
+    // 算出的位置永远追着动画尾巴；目标宽一步到位，left 过渡与 width
+    // 过渡同一时刻抵达终点，合成对称伸缩。
+    const w = effectiveShellWidth(shellWidthRef.current, shellRef.current)
     const next = anchorToPos(anchor, w)
     // 相等性检查：位置没变就不产生新 state（否则每渲染循环 setPos 无限重渲染）。
     setPos(prev => (prev !== null && prev.x === next.x && prev.y === next.y ? prev : next))
@@ -1181,9 +1206,12 @@ export function DonePill(props: DonePillProps): JSX.Element | null {
     if (el === null) return
     const recenter = (): void => {
       if (!autoCenterRef.current) return
-      const rect = el.getBoundingClientRect()
-      if (rect.width <= 0) return
-      const x = Math.max(8, Math.round((window.innerWidth - rect.width) / 2))
+      // 与 applyAnchor 同理：按受控目标宽求终点坐标，ResizeObserver 只是
+      // 触发器——过渡期间反复触发也得到同一个 x（setPos 相等即 bail out），
+      // 不会打断/叠加 left 过渡。
+      const w = effectiveShellWidth(shellWidthRef.current, el)
+      if (w <= 0) return
+      const x = Math.max(8, Math.round((window.innerWidth - w) / 2))
       setPos(prev => {
         const next = { x, y: prev?.y ?? 40 }
         return prev !== null && prev.x === next.x && prev.y === next.y ? prev : next
@@ -1230,7 +1258,7 @@ export function DonePill(props: DonePillProps): JSX.Element | null {
           sinceRef.current = Math.max(sinceRef.current, typeof data.version === 'number' ? data.version : 0)
           mergeEntries(data.items.filter(item => item !== null && typeof item === 'object' && typeof item.id === 'string'))
           if (Array.isArray(data.running)) {
-            const next: Record<string, { since: number; question: string }> = {}
+            const next: Record<string, { since: number; question: string; title: string }> = {}
             for (const entry of data.running) {
               if (entry !== null && typeof entry === 'object'
                 && typeof entry.sessionId === 'string' && typeof entry.since === 'number') {
@@ -1520,7 +1548,7 @@ export function DonePill(props: DonePillProps): JSX.Element | null {
               overflow: 'hidden',
               textOverflow: 'ellipsis',
               opacity: 0,
-              animation: 'dpLineIn .26s ease forwards',
+              animation: `dpLineIn ${MORPH_DUR} ease forwards`,
             }}
           >
             {displayText}

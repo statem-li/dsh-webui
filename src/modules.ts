@@ -29,6 +29,7 @@ export const WEBUI_MODULE_KEYS = [
   'donePill',          // 对话完成胶囊 + 记录面板
   'approvalNotify',    // 审批等待 toast 提醒
   'ctrlEnter',         // 输入框 Ctrl+Enter 换行
+  'continueBtn',       // 一键继续（中断态下发送键/Enter 自动代填恢复任务）
   'sessionMotion',     // 会话切换柔和过渡
   'sessionPin',        // 会话置顶 / 归档 / 右键菜单
   'rewind',            // 对话退回（文件回退 + 上下文分支）

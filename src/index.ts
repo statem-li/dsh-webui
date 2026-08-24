@@ -265,7 +265,7 @@ export async function apply(ctx: Context, config: WebuiConfig = {}): Promise<voi
   // 同步到 Web GUI 右侧滑出的预览抽屉（只读观看）。
   if (modules.browser) {
     applyBrowser(ctx, {
-      chromePath: '', port: 0, screenshotDir: '',
+      chromePath: '', port: 0, screenshotDir: '', loginGroup: 'shared',
       ...config.browser,
     })
     // 浏览器提速策略：系统提示词注入 + /api/dsh-browser/speed 开关（随浏览器模块联动）。

@@ -29,6 +29,7 @@ import {
 import { ModelListEditor, ensureProviderFieldStyles, modelDrafts, validateModels } from './ModelListEditor.tsx'
 import type { ModelDraft, T } from './ModelListEditor.tsx'
 import { chatCopy, t as chatT } from './ModelListEditor.tsx'
+import { ProviderIcon } from '../provider-icons.tsx'
 import { deriveKeyRef, messageOf, protocolChoices } from './store.ts'
 import type { ModelsSettingsState } from './store.ts'
 
@@ -443,9 +444,20 @@ export function ChatProviderDetail(props: ChatProviderDetailProps): ReactNode {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12, flex: 1, minWidth: 0 }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
-        <span style={{ fontSize: 14, lineHeight: '22px', fontWeight: 500, color: 'var(--dsw-alias-label-primary, #1f2329)' }}>
-          {target.mode === 'custom' ? chatCopy.addCustom : target.displayName}
-        </span>
+        {target.mode === 'custom'
+          ? (
+            <span style={{ fontSize: 14, lineHeight: '22px', fontWeight: 500, color: 'var(--dsw-alias-label-primary, #1f2329)' }}>
+              {chatCopy.addCustom}
+            </span>
+          )
+          : (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+              <ProviderIcon provider={target.provider} name={target.displayName} size={18} />
+              <span style={{ fontSize: 14, lineHeight: '22px', fontWeight: 500, color: 'var(--dsw-alias-label-primary, #1f2329)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {target.displayName}
+              </span>
+            </span>
+          )}
         {target.mode !== 'custom' && target.provider !== target.displayName
           ? <span style={{ fontSize: 12, lineHeight: '18px', color: 'var(--dsw-alias-label-tertiary, #8f959e)' }}>{target.provider}</span>
           : null}

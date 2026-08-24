@@ -30,6 +30,8 @@ import {
   waitForPageReady,
   captureScreenshot,
   captureScreenshotSafe,
+  captureScreenshotSafeClip,
+  type ShotClip,
   fetchBrowserWsUrl,
   evaluateJson,
   inspectElementAt,
@@ -78,12 +80,15 @@ export interface Config {
   port: number
   /** 截图输出目录（空 = Chrome profile 目录下 screenshots/） */
   screenshotDir: string
+  /** 登录组：所有会话共用该组的持久分区——登录一次处处可用；空串 = 每会话隔离（旧行为） */
+  loginGroup: string
 }
 
 export const Config = z.object({
   chromePath: z.string().default(''),
   port: z.number().default(0),
   screenshotDir: z.string().default(''),
+  loginGroup: z.string().default('shared'),
 })
 
 const MAX_LOG = 200
@@ -101,6 +106,7 @@ const SETTLE_IDLE_MS = 150
 const SETTLE_TIMEOUT_MS = 2000
 // browser_see 视觉描述的默认提示词（聚焦「可操作」元素，服务网页操作场景）
 const DEFAULT_SEE_PROMPT = '描述当前浏览器页面可见区域：整体布局（顶部导航/侧边栏/主内容区）、所有可见的按钮、输入框、链接及它们的文字，以及当前是否有弹窗/对话框。用于辅助网页操作，请具体到可点击/可输入元素，看不清就直说。'
+
 
 /** 单个会话的浏览器运行态（CDP 连接 + 进程 + 截图目录）。 */
 interface SessionBrowserState {
@@ -126,6 +132,12 @@ interface SessionBrowserState {
   activeTabId: string | null
   /** 最近一次 attach 的视口尺寸（CSS px）；选取模式 detach 时用 Emulation 覆写固定，避免 detach 后 innerWidth 归零。 */
   viewport: { width: number; height: number } | null
+  /** 登录组键（config.loginGroup；空串=每会话隔离）。create-tab 时透传给壳子决定 partition。 */
+  loginKey: string
+  /** 抽屉是否正贴合原生视图（view-bounds show=true 置位、detach 复位）——标签切换/新建后据此立即重挂，画面才跟手。 */
+  attachedToDrawer: boolean
+  /** 最近一次贴合的壳内视图矩形（DIP），重挂新标签时复用同一位置。 */
+  drawerBounds: { x: number; y: number; w: number; h: number } | null
 }
 
 /** 一次浏览器操作在时间线上的记录（供 Web GUI 内嵌面板展示）。 */
@@ -226,6 +238,9 @@ export function applyBrowser(ctx: PluginContext, config: Config): void {
         tabTargets: new Map(),
         activeTabId: null,
         viewport: null,
+        attachedToDrawer: false,
+        drawerBounds: null,
+        loginKey: config.loginGroup.trim(),
       }
       sessions.set(sessionId, st)
     }
@@ -333,6 +348,16 @@ export function applyBrowser(ctx: PluginContext, config: Config): void {
     }
   }
 
+  /** 标签切换/新建/关闭后：若抽屉正贴合原生视图，立即把激活标签的视图挂上——
+   *  壳子 create-tab 只创建视图不挂载，不重挂的话画面区会停留在旧标签。 */
+  async function reattachActiveTab(st: SessionBrowserState): Promise<void> {
+    if (!st.shellMode || !st.attachedToDrawer || st.drawerBounds == null) return
+    if (st.activeTabId == null || !st.tabTargets.has(st.activeTabId)) return
+    try {
+      await bvPost('/view/attach', { sessionKey: st.bvKey, tabId: st.activeTabId, ...st.drawerBounds }, 3000)
+    } catch { /* 壳不在了等场景忽略；client 的 view-bounds 轮询兜底 */ }
+  }
+
   /** 服务重启后 CDP 重连：壳内视图还活着，用 window.name 标记重建 tabId↔target 映射。
    *  用本轮实际命中的映射**整体替换**旧 Map：任何残留的死 targetId（如 stop 后残留）
    *  都会被洗掉；返回值也只看本轮命中数，绝不能拿累积 Map 判定。 */
@@ -365,7 +390,7 @@ export function applyBrowser(ctx: PluginContext, config: Config): void {
     const conn = st.conn
     if (!conn?.connected) throw new Error('壳内 CDP 未连接')
     const tabId = 't' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5)
-    await bvPost('/view/create-tab', { sessionKey: st.bvKey, tabId }, 3000)
+    await bvPost('/view/create-tab', { sessionKey: st.bvKey, tabId, loginKey: st.loginKey }, 3000)
     let targetId: string | null = null
     for (let i = 0; i < 50; i++) {
       try {
@@ -385,6 +410,7 @@ export function applyBrowser(ctx: PluginContext, config: Config): void {
     try { await evaluateJson(s, `window.name = ${JSON.stringify(`dshbv-${st.bvKey}/${tabId}`)}`, false) } catch { /* 标记失败不致命 */ }
     st.activeTabId = tabId
     await syncActiveTabSession(st)
+    await reattachActiveTab(st)
     if (navigateUrl != null && navigateUrl !== '') {
       await navigateAndWait(st.session!, navigateUrl, NAV_TIMEOUT_MS)
     }
@@ -451,7 +477,7 @@ export function applyBrowser(ctx: PluginContext, config: Config): void {
       }
       // 全新会话：创建第一个标签页
       const tabId = 't' + Date.now().toString(36)
-      await bvPost('/view/create-tab', { sessionKey: st.bvKey, tabId }, 3000)
+      await bvPost('/view/create-tab', { sessionKey: st.bvKey, tabId, loginKey: st.loginKey }, 3000)
       let targetId: string | null = null
       for (let i = 0; i < 50; i++) {
         try {
@@ -1076,16 +1102,64 @@ export function applyBrowser(ctx: PluginContext, config: Config): void {
     }),
     defineTool({
       name: 'browser_screenshot',
-      description: '截图保存为文件并返回路径。需要看页面画面（图表/验证码/布局）时，用 vision_describe 读取该路径。',
-      parameters: {},
+      description: '截图保存为文件并返回路径。可选传 selector（CSS 选择器）只截取目标元素/DIV 区域——元素会先自动滚动到视口中央再按其实际范围裁剪。需要看某个按钮/卡片/图表的视觉细节时优先用 selector 模式，图更小更聚焦。',
+      parameters: {
+        selector: { type: 'string', description: '可选。目标元素的 CSS 选择器；传入后只截该元素区域（DIV 范围截图）。不传则整视口截图。' },
+        padding: { type: 'integer', description: 'selector 模式下元素四周额外留白像素（默认 8，上限 120）。' },
+        format: { type: 'string', enum: ['jpeg', 'png'], description: 'selector 模式的图片格式：jpeg 体积小（默认）；png 无损适合文字密集区域。' },
+      },
       output: { schema: { type: 'json' }, render: (_a: unknown, v: unknown) => [{ type: 'text', text: JSON.stringify(v, null, 2) }] },
-      async execute(_args: unknown, exec: any): Promise<any> {
+      async execute(args: any, exec: any): Promise<any> {
         const sessionId = sessionIdOf(exec)
-        const step = beginActivity(sessionId, 'browser_screenshot', '截取页面截图', '')
+        const selector = args != null && typeof args.selector === 'string' ? args.selector.trim() : ''
+        const step = beginActivity(sessionId, 'browser_screenshot', selector !== '' ? '截取元素截图' : '截取页面截图', selector)
         try {
           const session = await requireSession(sessionId)
           const st = ensureState(sessionId)
-          const base64 = await screenshotWithFallback(session, sessionId)
+          let base64: string
+          if (selector !== '') {
+            // ── DIV 范围模式：scrollIntoView + getBoundingClientRect + clip 截图 ──
+            const padding = Math.max(0, Math.min(120, typeof args?.padding === 'number' ? Math.round(args.padding) : 8))
+            const format = args?.format === 'png' ? 'png' as const : 'jpeg' as const
+            const probeJs = '(() => {' +
+              'const el = document.querySelector(' + JSON.stringify(selector) + ');' +
+              'if (!el) return null;' +
+              "el.scrollIntoView({ block: 'center', inline: 'nearest' });" +
+              'const r = el.getBoundingClientRect();' +
+              'return JSON.stringify({ x: r.x, y: r.y, w: r.width, h: r.height, vw: window.innerWidth, vh: window.innerHeight })' +
+              '})()'
+            const raw = await evaluateJson(session, probeJs, false)
+            if (raw === null || raw === undefined || raw === '') {
+              return { ok: false, error: '页面上找不到匹配元素：' + selector + '。可用 browser_snapshot/browser_evaluate 确认元素存在与选择器写法。' }
+            }
+            let rect: any
+            try { rect = typeof raw === 'string' ? JSON.parse(raw) : raw } catch { return { ok: false, error: '元素矩形解析失败' } }
+            if (!rect || !(Number(rect.w) > 0) || !(Number(rect.h) > 0)) {
+              return { ok: false, error: '目标元素尺寸为零（可能 display:none 或未渲染）：' + selector }
+            }
+            // 裁剪区 clamp 进视口，避免黑边
+            const x = Math.max(0, Number(rect.x) - padding)
+            const y = Math.max(0, Number(rect.y) - padding)
+            const w = Math.min(Number(rect.vw) - x, Number(rect.w) + padding * 2 + (Number(rect.x) - x))
+            const h = Math.min(Number(rect.vh) - y, Number(rect.h) + padding * 2 + (Number(rect.y) - y))
+            base64 = await captureScreenshotSafeClip(session, 90, format, { x, y, width: w, height: h })
+            const ext = format === 'png' ? 'png' : 'jpg'
+            const file = path.join(st.screenshotDir, `element-${Date.now()}.${ext}`)
+            fs.writeFileSync(file, Buffer.from(base64, 'base64'))
+            st.lastScreenshotPath = file
+            log(sessionId, 'screenshot', `${file} (selector=${selector} ${Math.round(w)}x${Math.round(h)})`)
+            const fileName = path.basename(file)
+            return {
+              ok: true,
+              selector,
+              rect: { x: Math.round(x), y: Math.round(y), width: Math.round(w), height: Math.round(h) },
+              path: file,
+              imageUrl: `/api/dsh-browser/screenshot?sessionId=${encodeURIComponent(sessionId)}&file=${encodeURIComponent(fileName)}`,
+              bytes: fs.statSync(file).size,
+              hint: '元素区域截图完成；如需看图内容，调用 vision_describe，image 参数传此路径',
+            }
+          }
+          base64 = await screenshotWithFallback(session, sessionId)
           const file = path.join(st.screenshotDir, `shot-${Date.now()}.jpg`)
           fs.writeFileSync(file, Buffer.from(base64, 'base64'))
           st.lastScreenshotPath = file
@@ -1456,6 +1530,7 @@ export function applyBrowser(ctx: PluginContext, config: Config): void {
                 } catch { /* 截图失败则画面保持上一帧 */ }
               }
               await bvPost('/view/detach', { sessionKey: st.bvKey })
+              st.attachedToDrawer = false
               // detach 后 WebContentsView 视口可能归零（初始未 attach 场景），用最近
               // attach 尺寸 Emulation 覆写兜底，确保 elementFromPoint 命中。
               if (body.keepViewport === true && st.viewport) {
@@ -1480,6 +1555,8 @@ export function applyBrowser(ctx: PluginContext, config: Config): void {
               h: vh,
             }, 3000)
             st.viewport = { width: vw, height: vh }
+            st.attachedToDrawer = true
+            st.drawerBounds = { x: Math.round(cx / dpr), y: Math.round(cy / dpr), w: vw, h: vh }
             return respond(200, { ok: true, hidden: false, uiH: 0 })
           }
           const win: any = await st.conn.send('Browser.getWindowForTarget', { targetId: st.session.targetId })
@@ -1737,6 +1814,7 @@ export function applyBrowser(ctx: PluginContext, config: Config): void {
             if (!st.tabTargets.has(tabId)) return respond(404, { ok: false, error: '标签不存在' })
             st.activeTabId = tabId
             await syncActiveTabSession(st)
+            await reattachActiveTab(st)
             log(sessionId, 'switch-tab', tabId)
             return respond(200, { ok: true, activeTabId: tabId })
           }
@@ -1753,6 +1831,8 @@ export function applyBrowser(ctx: PluginContext, config: Config): void {
               st.activeTabId = st.tabTargets.keys().next().value ?? null
             }
             await syncActiveTabSession(st)
+            // 关的是激活标签：壳子已把它从窗口摘除，画面区空了——立即挂上新的激活标签
+            await reattachActiveTab(st)
             log(sessionId, 'close-tab', `${tabId} (remaining=${st.tabTargets.size})`)
             // 全部关闭：等同停止浏览器
             if (st.tabTargets.size === 0) {

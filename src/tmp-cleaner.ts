@@ -28,6 +28,7 @@ import { dirname, join, resolve, sep } from 'node:path'
 import { homedir } from 'node:os'
 import z from '@deepseek-ai/schemastery'
 import { defineTool } from '@deepseek-ai/dsh-tools'
+import { getWebuiMemoryStore } from './memory-store-singleton.js'
 
 /** 注入服务均为运行时动态注册，类型上放宽为 any。 */
 type PluginContext = any
@@ -143,8 +144,8 @@ const TMP_CONVENTION_INSTRUCTION =
   '【工作区临时文件约定】凡是为完成当前任务而临时创建的一次性脚本、探针、数据抓取结果等中间产物，一律写入当前工作区根下的 _tmp/ 目录（不存在就先创建它），不要散落在工作区其他位置；这些文件无需你手动删除，系统会定期自动清理。正式的项目代码与文档不要放进 _tmp/。'
 
 /** 取 memory 模块共享的单例 store（未启用 memory 模块时为 undefined）。 */
-function memoryStoreOf(ctx: PluginContext): any | undefined {
-  return (ctx as any).webuiMemoryStore
+function memoryStoreOf(_ctx: PluginContext): any | undefined {
+  return getWebuiMemoryStore()
 }
 
 /**

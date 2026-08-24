@@ -63,9 +63,9 @@ import { applyRewindClient } from './rewind'
 import { applyCtrlEnterNewline } from './ctrl-enter-newline'
 // 单条消息截图（樱花主题）：assistant 消息 actions 行的截图按钮。
 import { applyMessageScreenshot } from './screenshot'
-// 会话产物大卡片：assistant 消息 actions 行「产物」按钮（左清单右预览，
-// 数据为 host 端 fs 写入记账，服务重启后仍可回看）。
-import { applyMessageDeliverables } from './message-deliverables'
+// 会话产物大卡片已下线：文件浏览器统一弹窗（历史 + 页内编辑）覆盖其全部能力。
+// host 端 /api/webui-deliverables 记账与路由保留——产物 chip 点击预览、
+// workspace 外产物的读取授权仍依赖它；卡片本体（message-deliverables/）留档不挂载。
 // 移动端响应式：手机断点识别 + DSH 设置面板单列化等全局覆盖。
 import { injectResponsiveStyles } from './responsive'
 // 壳子窗口控制按钮共存：详情面板头部为右上角「最小化/最大化/关闭」让位。
@@ -74,6 +74,8 @@ import { injectShellTitlebarStyles } from './shell-titlebar'
 import { apply as applySkillSource } from './skill-source'
 // 提示词优化：对话框供应商左侧的「自动优化提示词」图标（用选中模型优化草稿）。
 import { applyPromptOptimize } from './prompt-optimize'
+// 一键继续：中断态下发送键/Enter 自动代填继续文字（服务重启 / API 超时恢复）。
+import { applyContinueBtn } from './continue-btn'
 // 左侧悬浮侧边栏：热区悬停展开/移出折叠（overlay）+「启动服务时默认折叠」设置行。
 import { applySidebarFloat } from './sidebar-float'
 import { applySidebarFloatSetting } from './sidebar-float-row'
@@ -240,14 +242,16 @@ export function apply(ctx: ClientContext): void {
   // ---- 单条消息截图（樱花主题）：assistant 消息 actions 行截图按钮 -----------
   if (on('screenshot')) applyMessageScreenshot(ctx)
 
-  // ---- 会话产物大卡片：消息 actions 行「产物」按钮（重启后仍可回看）----------
-  applyMessageDeliverables(ctx)
+  // ---- 会话产物大卡片：已下线（见文件头注释），产物入口收敛到文件浏览器 ------
 
   // ---- 技能 slash 源（替代内核 ui-skill）：输入 / 先选集合再选技能 ----------
   if (on('skills')) applySkillSource(ctx)
 
   // ---- 提示词优化：供应商左侧图标，点击后用选中模型优化草稿 ---------------
   if (on('promptOptimize')) applyPromptOptimize(ctx)
+
+  // ---- 一键继续：中断态下点发送键/按 Enter 自动代填继续文字恢复任务 -------
+  if (on('continueBtn')) applyContinueBtn(ctx)
 
   // ---- 左侧悬浮侧边栏：热区悬停展开/移出折叠 + 默认态设置 ----------------
   if (on('sidebarFloat')) {

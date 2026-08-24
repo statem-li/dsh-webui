@@ -49,8 +49,12 @@ export const css = {
   histTlTitle: 'fe-hist-tl-title',
   histTlList: 'fe-hist-tl-list',
   histTlItem: 'fe-hist-tl-item',
+  histTlCurrent: 'fe-hist-tl-current',
   histTlTime: 'fe-hist-tl-time',
   histTlMeta: 'fe-hist-tl-meta',
+  histTlChips: 'fe-hist-tl-chips',
+  histTlChipAdd: 'fe-hist-tl-chip-add',
+  histTlChipDel: 'fe-hist-tl-chip-del',
   histTlMore: 'fe-hist-tl-more',
   histDiff: 'fe-hist-diffcol',
   histSame: 'fe-hist-same',
@@ -71,6 +75,7 @@ export const css = {
   histNo: 'fe-hist-no',
   histText: 'fe-hist-text',
   histMoreRows: 'fe-hist-more-rows',
+  histEditor: 'fe-hist-editor',
 } as const
 
 const STYLE_ID = 'dsh-file-explorer-styles'
@@ -181,8 +186,17 @@ const SHEET = `
 .fe-hist-tl-item{display:flex;flex-direction:column;align-items:flex-start;gap:1px;width:100%;box-sizing:border-box;padding:7px 10px;border:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.08));border-radius:10px;background:transparent;cursor:pointer;text-align:left;font-family:inherit}
 .fe-hist-tl-item:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.06))}
 .fe-hist-tl-item[data-active='true']{border-color:var(--dsw-alias-state-business-primary,#4a9eff);background:rgba(74,158,255,.1)}
+/* 「当前内容」恒置顶条目：绿点 = 磁盘上的活文件 */
+.fe-hist-tl-current .fe-hist-tl-time::before{content:'';display:inline-block;width:6px;height:6px;border-radius:50%;background:#34c77b;margin-right:6px;vertical-align:1px}
 .fe-hist-tl-time{font-size:13px;line-height:18px;color:var(--dsw-alias-label-primary,#eee)}
 .fe-hist-tl-meta{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary,#888);font-family:ui-monospace,'JetBrains Mono','Cascadia Code',Menlo,Consolas,monospace}
+/* 选中时点上的迷你增删色块（数据来自当前对比统计），点击在 diff 里循环跳转 */
+.fe-hist-tl-chips{display:inline-flex;gap:4px;margin-top:3px}
+.fe-hist-tl-chip-add,.fe-hist-tl-chip-del{display:inline-flex;align-items:center;height:16px;padding:0 7px;border:none;border-radius:8px;padding-top:0;font-size:10px;line-height:16px;font-weight:600;color:#fff;cursor:pointer;font-family:ui-monospace,'JetBrains Mono','Cascadia Code',Menlo,Consolas,monospace}
+.fe-hist-tl-chip-add{background:#3d8bff}
+.fe-hist-tl-chip-add:hover{background:#5b9dff}
+.fe-hist-tl-chip-del{background:#ff5a5f}
+.fe-hist-tl-chip-del:hover{background:#ff7076}
 .fe-hist-tl-more{padding:4px 10px;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary,#888)}
 .fe-hist-diffcol{flex:1;min-width:0;display:flex;flex-direction:column;gap:8px}
 .fe-hist-same{flex:1;display:flex;align-items:center;justify-content:center;font-size:13px;line-height:20px;color:var(--dsw-alias-label-tertiary,#888)}
@@ -190,8 +204,12 @@ const SHEET = `
 .fe-hist-head-side{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .fe-hist-head-side:last-child{text-align:right}
 .fe-hist-head-stats{flex:none;display:inline-flex;align-items:center;gap:8px;font-family:ui-monospace,'JetBrains Mono','Cascadia Code',Menlo,Consolas,monospace}
-.fe-hist-stat-add{font-weight:600;color:#34c77b}
-.fe-hist-stat-del{font-weight:600;color:#ff5a5f}
+/* 增删统计 = 可点击实底色块（蓝=新增、红=删除），点击循环跳到下一处对应修改 */
+.fe-hist-stat-add,.fe-hist-stat-del{display:inline-flex;align-items:center;height:20px;padding:0 9px;border:none;border-radius:10px;font-size:11px;line-height:20px;font-weight:600;color:#fff;cursor:pointer;font-family:inherit}
+.fe-hist-stat-add{background:#3d8bff}
+.fe-hist-stat-add:hover{background:#5b9dff}
+.fe-hist-stat-del{background:#ff5a5f}
+.fe-hist-stat-del:hover{background:#ff7076}
 .fe-hist-stat-note{font-style:normal;font-family:inherit;font-size:11px;color:var(--dsw-alias-label-tertiary,#888)}
 /* 网格：wrapper 宽 = max-content 保证所有行等宽，两半格各 50% 严格对齐，
    纵向/横向滚动都在同一个容器里，左右天然同步。 */
@@ -201,12 +219,23 @@ const SHEET = `
 .fe-hist-cell{box-sizing:border-box;width:50%;flex:none;display:flex;align-items:baseline;padding:0 8px 0 0;overflow:hidden}
 .fe-hist-no{flex:none;width:44px;box-sizing:border-box;padding-right:8px;text-align:right;color:var(--dsw-alias-label-tertiary,#888);user-select:none;opacity:.7}
 .fe-hist-text{white-space:pre;min-width:0}
-/* 着色：mod/del 左半格红、mod/add 右半格绿、缺行一侧垫灰底。 */
+/* 着色：mod/del 左半格红、mod/add 右半格蓝、缺行一侧垫灰底；
+   蓝红与统计色块一致（蓝=新增、红=删除）。 */
 .fe-hist-row-mod .fe-hist-cell:first-child,.fe-hist-row-del .fe-hist-cell:first-child{background:rgba(255,90,95,.14)}
-.fe-hist-row-mod .fe-hist-cell:last-child,.fe-hist-row-add .fe-hist-cell:last-child{background:rgba(52,199,123,.13)}
+.fe-hist-row-mod .fe-hist-cell:last-child,.fe-hist-row-add .fe-hist-cell:last-child{background:rgba(74,158,255,.15)}
 .fe-hist-row-add .fe-hist-cell:first-child,.fe-hist-row-del .fe-hist-cell:last-child{background:var(--dsw-alias-bg-layer-2,#22252c)}
 .fe-hist-row:hover .fe-hist-cell{filter:brightness(1.18)}
+/* 色块跳转命中行：描边闪烁一次 */
+@keyframes fe-flash-add{from{outline-color:rgba(61,139,255,.95)}to{outline-color:rgba(61,139,255,0)}}
+@keyframes fe-flash-del{from{outline-color:rgba(255,90,95,.95)}to{outline-color:rgba(255,90,95,0)}}
+.fe-hist-row[data-flash='add']{outline:2px solid rgba(61,139,255,.95);outline-offset:-2px;animation:fe-flash-add 1s ease-out both}
+.fe-hist-row[data-flash='del']{outline:2px solid rgba(255,90,95,.95);outline-offset:-2px;animation:fe-flash-del 1s ease-out both}
 .fe-hist-more-rows{padding:6px 12px;font-size:12px;color:var(--dsw-alias-label-tertiary,#888)}
+/* 历史页内编辑态：右栏整体替换为 CodeMirror 宿主，随弹窗高度自适应 */
+.fe-hist-editor{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;box-sizing:border-box;border:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.08));border-radius:10px;overflow:hidden;background:var(--dsw-alias-bg-base,#0e1116)}
+.fe-hist-editor .cm-editor{flex:1;min-height:0}
+.fe-hist-editor .cm-scroller{font-family:ui-monospace,'JetBrains Mono','Cascadia Code',Menlo,Consolas,monospace;font-size:13px;line-height:1.6;overflow:auto}
+.fe-hist-editor .cm-editor,.fe-hist-editor .cm-gutters{background:transparent}
 
 /* ── 玻璃质感融合（仅 data-dsh-glass 期间生效）────────────────────────
  * 抽屉/弹窗本体已被玻璃主题的浮层总选择器命中（fe-drawer 含 "drawer"、
@@ -219,6 +248,7 @@ html[data-dsh-glass] .fe-workspace-select,
 html[data-dsh-glass] .fe-editor-host,
 html[data-dsh-glass] .fe-md-body,
 html[data-dsh-glass] .fe-hex-dump,
+html[data-dsh-glass] .fe-hist-editor,
 html[data-dsh-glass] .fe-hist-scroll{background-color:transparent}
 /* 图片舞台：棋盘底衬在毛玻璃上会显成一层「垫卡」，换成极轻纱保住区域感 */
 html[data-dsh-glass] .fe-viewer-stage{background:none;background-color:rgba(255,255,255,.05)}

@@ -1,8 +1,11 @@
 /**
  * dsh-file-explorer — 打开文件统一入口：
- *   图片扩展名 → 图片查看器；文本 → CodeMirror 编辑/保存；
+ *   图片扩展名 → 图片查看器；文本 → 「内容 + 时间线」双区布局：
+ *     右栏默认是当前文件内容（CodeMirror，可直接编辑保存），
+ *     左侧时间线点选任一时点后右栏切到该时点 vs 当前的双栏对比，
+ *     点时间线顶部的「当前内容」随时回到编辑；
  *   二进制 → 十六进制预览 + 下载；超大 → 说明 + 下载。
- * 文本读取记录 version，保存用 replaceIfVersion 守卫，冲突时可「仍要覆盖」。
+ * 保存走 version 守卫，冲突时可「仍要覆盖」。
  */
 
 import { useEffect, useRef, useState } from 'react'
@@ -13,7 +16,6 @@ import { EditorState, type Extension } from '@codemirror/state'
 // 只用 oneDarkHighlightStyle 会让当前行高亮等 chrome 残留浅色默认值（白条）。
 import { oneDark } from '@codemirror/theme-one-dark'
 import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
-import { MarkstreamMarkdown } from '../markdown/renderer'
 import { ApiError, explorerSource, type FileReadSource, writeFile } from './api.ts'
 import { languageForPath } from './languages.ts'
 import type { FileExplorerLocaleKey } from './locales.ts'
@@ -35,15 +37,8 @@ function fileNameOf(path: string): string {
 
 const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|bmp|ico|cur|svg|avif)$/i
 
-/** Markdown 文件在卡片里默认渲染展示（可切源码编辑）。 */
-const MARKDOWN_EXT_RE = /\.(md|markdown|mdx)$/i
-
 function isImagePath(path: string): boolean {
   return IMAGE_EXT_RE.test(path)
-}
-
-function isMarkdownPath(path: string): boolean {
-  return MARKDOWN_EXT_RE.test(path)
 }
 
 /** Format a byte count for display. */
@@ -60,14 +55,10 @@ export function toHexDump(bytes: Uint8Array): string {
     const chunk = bytes.subarray(offset, Math.min(offset + 16, bytes.length))
     let hex = ''
     let ascii = ''
-    for (let i = 0; i < 16; i++) {
-      if (i < chunk.length) {
-        const byte = chunk[i]
-        hex += `${byte.toString(16).padStart(2, '0')} `
-        ascii += byte >= 0x20 && byte < 0x7f ? String.fromCharCode(byte) : '·'
-      } else {
-        hex += '   '
-      }
+    for (let i = 0; i < chunk.length; i++) {
+      const byte = chunk[i]
+      hex += `${byte.toString(16).padStart(2, '0')} `
+      ascii += byte >= 0x20 && byte < 0x7f ? String.fromCharCode(byte) : '·'
       if (i === 7) hex += ' '
     }
     lines.push(`${offset.toString(16).padStart(8, '0')}  ${hex} ${ascii}`)
@@ -127,33 +118,25 @@ function TextFileModal({ open, path, sessionId, source, onClose, t }: FileEditor
   const [dirty, setDirty] = useState(false)
   const [saving, setSaving] = useState(false)
   const [conflict, setConflict] = useState(false)
-  // 「编辑 ↔ 历史」模式；历史模式下渲染时间线 + 双栏对比，编辑器暂离但草稿保留。
-  const [mode, setMode] = useState<'edit' | 'history'>('edit')
+  // 右栏视图：「当前内容」（可编辑）↔ 选中时点的对比 diff。打开默认内容——
+  // 文件本体第一眼可见可改；历史以左侧时间线常驻，点时点才展开对比。
+  const [histView, setHistView] = useState<'current' | 'diff'>('current')
   const draftRef = useRef<string | null>(null)
-  // 「渲染 ↔ 源码」视图：markdown 文件默认渲染展示，可切源码编辑；
-  // renderText 是渲染视图展示的内容（跟随编辑器当前文本，含未保存修改）。
-  const [view, setView] = useState<'render' | 'source'>('source')
-  const [renderText, setRenderText] = useState('')
+  // 磁盘内容基准的 ref 镜像：编辑器挂载 doc 取这里（不进 effect deps），
+  // 保存成功后 setContent 同步 state 与 ref 都不会触发编辑器重挂丢光标。
+  const contentRef = useRef('')
+  // 历史页保存成功后的递增值：让对比视图按新磁盘内容重算（色块/差异即时更新）。
+  const [histReload, setHistReload] = useState(0)
 
-  const switchMode = (next: 'edit' | 'history'): void => {
-    if (next === mode) return
-    // 进历史前把未保存的编辑内容收进草稿，返回时原样恢复到编辑器。
-    if (next === 'history' && viewRef.current !== null) {
-      draftRef.current = viewRef.current.state.doc.toString()
+  /** 放弃未保存修改：把编辑器内容重置回磁盘版本。 */
+  const discardChanges = (): void => {
+    const editor = viewRef.current
+    if (editor !== null) {
+      editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: content } })
     }
-    setMode(next)
-  }
-
-  // 渲染 ↔ 源码切换：离开编辑器前把当前 doc 收进草稿位（与进历史同法），
-  // 往返切换不丢未保存修改；渲染视图展示的正是这份最新文本。
-  const switchView = (next: 'render' | 'source'): void => {
-    if (next === view) return
-    if (next === 'render') {
-      const text = viewRef.current?.state.doc.toString() ?? (draftRef.current ?? content)
-      draftRef.current = text
-      setRenderText(text)
-    }
-    setView(next)
+    draftRef.current = null
+    setDirty(false)
+    setConflict(false)
   }
 
   // Load the file when the target changes.
@@ -166,19 +149,16 @@ function TextFileModal({ open, path, sessionId, source, onClose, t }: FileEditor
     setBinary(null)
     setDirty(false)
     setConflict(false)
-    setMode('edit')
+    // 打开文件默认落在当前内容上（历史异步加载，不阻塞看文件）。
+    setHistView('current')
     draftRef.current = null
-    const markdown = isMarkdownPath(path)
-    setView(markdown ? 'render' : 'source')
-    setRenderText('')
     const src = sourceOf(source)
     src.content(path).then(
       (file) => {
         if (!current) return
+        contentRef.current = file.content
         setContent(file.content)
         setVersion(file.version)
-        // 渲染视图的初始内容 = 磁盘内容（此后切换视图时跟随编辑器文本）。
-        if (markdown) setRenderText(file.content)
         setLoadState('ready')
       },
       async (error: unknown) => {
@@ -204,9 +184,12 @@ function TextFileModal({ open, path, sessionId, source, onClose, t }: FileEditor
     return () => { current = false }
   }, [open, path, source, t])
 
-  // Mount / destroy the CodeMirror editor. 历史模式或渲染视图暂离时销毁，返回时以草稿重建。
+  // Mount / destroy the CodeMirror editor.
+  // 挂载位置：右栏处于「当前内容」视图时 → FileHistoryView 渲染的 hostRef 宿主。
+  // 切到对比视图时卸载，回来时以草稿重建，未保存修改不丢。
+  const editorActive = open && loadState === 'ready' && histView === 'current'
   useEffect(() => {
-    if (!open || loadState !== 'ready' || mode !== 'edit' || view !== 'source') {
+    if (!editorActive) {
       viewRef.current?.destroy()
       viewRef.current = null
       return
@@ -218,10 +201,9 @@ function TextFileModal({ open, path, sessionId, source, onClose, t }: FileEditor
     const extensions: Extension[] = [basicSetup, oneDark]
     if (language !== null) extensions.push(language)
 
-    // 局部名用 editor：外层 view 是「渲染/源码」视图 state，避免遮蔽。
     const editor = new EditorView({
       state: EditorState.create({
-        doc: draftRef.current ?? content,
+        doc: draftRef.current ?? contentRef.current,
         extensions: [
           ...extensions,
           EditorView.updateListener.of((update) => {
@@ -234,10 +216,14 @@ function TextFileModal({ open, path, sessionId, source, onClose, t }: FileEditor
     viewRef.current = editor
 
     return () => {
-      viewRef.current?.destroy()
-      viewRef.current = null
+      const mounted = viewRef.current
+      if (mounted !== null) {
+        draftRef.current = mounted.state.doc.toString()
+        mounted.destroy()
+        viewRef.current = null
+      }
     }
-  }, [open, loadState, mode, view, path, content])
+  }, [editorActive, path])
 
   const save = (): void => {
     const view = viewRef.current
@@ -247,10 +233,12 @@ function TextFileModal({ open, path, sessionId, source, onClose, t }: FileEditor
     writeFile(path, next, conflict ? undefined : version).then(
       (result) => {
         setVersion(result.version)
+        setContent(next)
         setDirty(false)
         setConflict(false)
         setSaving(false)
         draftRef.current = null
+        setHistReload(value => value + 1)
       },
       (error: unknown) => {
         setSaving(false)
@@ -265,33 +253,10 @@ function TextFileModal({ open, path, sessionId, source, onClose, t }: FileEditor
     <a className={css.downloadLink} href={sourceOf(source).rawUrl(path, true)} download>{t('download')}</a>
   )
 
-  // 历史对比入口：仅文本内容就绪时开放（历史视图是文本对比）。
-  const historyToggle = loadState === 'ready' ? (
-    <Button
-      variant="outline"
-      disabled={saving}
-      onClick={() => { switchMode(mode === 'edit' ? 'history' : 'edit') }}
-    >
-      {mode === 'edit' ? t('historyBtn') : t('histBack')}
-    </Button>
-  ) : null
-
-  // 渲染 ↔ 源码切换入口：仅 markdown 文件、编辑模式、内容就绪时开放。
-  const viewToggle = loadState === 'ready' && mode === 'edit' && isMarkdownPath(path) ? (
-    <Button
-      variant="outline"
-      disabled={saving}
-      onClick={() => { switchView(view === 'render' ? 'source' : 'render') }}
-    >
-      {view === 'render' ? t('sourceView') : t('renderedView')}
-    </Button>
-  ) : null
-
   let footer = (
     <div className={css.editorFooter}>
       <span className={css.editorStatus}>{''}</span>
       <span style={{ flex: 1 }} />
-      {historyToggle}
       <Button variant="outline" onClick={onClose}>{t('close')}</Button>
     </div>
   )
@@ -302,10 +267,20 @@ function TextFileModal({ open, path, sessionId, source, onClose, t }: FileEditor
           {conflict ? t('staleConflict') : dirty ? t('unsaved') : ''}
         </span>
         <span style={{ flex: 1 }} />
-        {viewToggle}
-        {historyToggle}
-        <Button variant="outline" disabled={saving} onClick={onClose}>{t('cancel')}</Button>
-        {mode === 'edit' && (
+        {histView === 'diff' && (
+          <Button variant="primary" disabled={saving} onClick={() => { setHistView('current') }}>
+            {t('backToContent')}
+          </Button>
+        )}
+        {histView === 'current' && (
+          <>
+            {dirty && !conflict && (
+              <Button variant="outline" disabled={saving} onClick={discardChanges}>{t('histDiscard')}</Button>
+            )}
+            <Button variant="outline" disabled={saving} onClick={onClose}>{t('cancel')}</Button>
+          </>
+        )}
+        {histView === 'current' && (
           <Button
             variant="primary"
             disabled={(!dirty && !conflict) || saving}
@@ -337,12 +312,7 @@ function TextFileModal({ open, path, sessionId, source, onClose, t }: FileEditor
     )
   }
 
-  const historyMode = mode === 'history' && loadState === 'ready'
-  const titlePrefix = historyMode
-    ? t('histModalTitle')
-    : loadState !== 'ready' && loadState !== 'loading'
-      ? t('viewTitle')
-      : mode === 'edit' && view === 'render' ? t('viewTitle') : t('editorTitle')
+  const titlePrefix = loadState !== 'ready' && loadState !== 'loading' ? t('viewTitle') : t('editorTitle')
 
   return (
     <FeModal
@@ -351,13 +321,22 @@ function TextFileModal({ open, path, sessionId, source, onClose, t }: FileEditor
       closeLabel={t('close')}
       title={`${titlePrefix} · ${fileNameOf(path)}`}
       className={css.editorModal}
-      width={historyMode ? 'min(1180px, 96vw)' : 'min(960px, 92vw)'}
+      width='min(1180px, 96vw)'
       maximizable
-      forceMaximized={historyMode}
+      forceMaximized={true}
       footer={footer}
     >
-      {historyMode ? (
-        <FileHistoryView sessionId={sessionId} path={path} t={t} />
+      {loadState === 'ready' || conflict ? (
+        <FileHistoryView
+          sessionId={sessionId}
+          path={path}
+          t={t}
+          contentMode={histView === 'current'}
+          editorHostRef={hostRef}
+          reloadToken={histReload}
+          onRequestCompare={() => { setHistView('diff') }}
+          onRequestContent={() => { setHistView('current') }}
+        />
       ) : (
         <>
           {loadState === 'loading' && <div className={css.status}>{t('loading')}</div>}
@@ -366,12 +345,6 @@ function TextFileModal({ open, path, sessionId, source, onClose, t }: FileEditor
             <div className={css.binaryCard}>
               <div className={css.binaryHint}>{t('binaryPeekNote')}</div>
               <pre className={css.hexDump}>{binary?.dump ?? ''}</pre>
-            </div>
-          )}
-          {loadState === 'ready' && view === 'source' && <div className={css.editorHost} ref={hostRef} />}
-          {loadState === 'ready' && view === 'render' && (
-            <div className={css.markdownBody}>
-              <MarkstreamMarkdown text={renderText} streaming={false} />
             </div>
           )}
         </>
