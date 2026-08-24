@@ -196,6 +196,64 @@ export function PinIcon({ size = 16, filled = false }: { size?: number; filled?:
   )
 }
 
+// ── 详情区 meta 徽章图标族（12px 线性，Lucide 形，stroke 继承 currentColor）──
+
+/** 全局作用域（地球）。 */
+function GlobeIcon({ size = 11 }: { size?: number }): JSX.Element {
+  return (
+    <svg viewBox="0 0 16 16" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="8" cy="8" r="6" />
+      <path d="M2 8h12M8 2c1.8 1.6 2.7 3.7 2.7 6S9.8 12.4 8 14C6.2 12.4 5.3 10.3 5.3 8S6.2 3.6 8 2Z" />
+    </svg>
+  )
+}
+
+/** 项目作用域（文件夹）。 */
+function FolderIcon({ size = 11 }: { size?: number }): JSX.Element {
+  return (
+    <svg viewBox="0 0 16 16" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.8l1.4 1.6h4.8A1.5 1.5 0 0 1 14 6.1v5.4a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5v-7Z" />
+    </svg>
+  )
+}
+
+/** 手动来源（铅笔）。 */
+function PenIcon({ size = 11 }: { size?: number }): JSX.Element {
+  return (
+    <svg viewBox="0 0 16 16" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="m11.5 2.5 2 2L6 12l-2.7.7L4 10l7.5-7.5Z" />
+      <path d="m10 4 2 2" />
+    </svg>
+  )
+}
+
+/** 自动来源（闪光）。 */
+function SparkIcon({ size = 11 }: { size?: number }): JSX.Element {
+  return (
+    <svg viewBox="0 0 16 16" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M8 2.2 9.3 6l3.8 1.3-3.8 1.3L8 12.4 6.7 8.6 2.9 7.3 6.7 6 8 2.2Z" />
+      <path d="M12.8 11.4l.5 1.5 1.5.5-1.5.5-.5 1.5-.5-1.5-1.5-.5 1.5-.5.5-1.5Z" />
+    </svg>
+  )
+}
+
+/** 长期沉淀（层叠）。 */
+function LayersIcon({ size = 11 }: { size?: number }): JSX.Element {
+  return (
+    <svg viewBox="0 0 16 16" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="m8 2.5 5.5 3L8 8.5l-5.5-3 5.5-3Z" />
+      <path d="m2.5 8.5 5.5 3 5.5-3" />
+      <path d="m2.5 11.5 5.5 3 5.5-3" />
+    </svg>
+  )
+}
+
+/** 重要度数值 → 条形百分比（初始 10、命中加分上不封顶；20 视为满格）。 */
+function importancePercent(importance: number): number {
+  if (!Number.isFinite(importance) || importance <= 0) return 0
+  return Math.min(100, Math.round((importance / 20) * 100))
+}
+
 /** 主面板。 */
 export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor = null, onCardMouseEnter, onCardMouseLeave, t = makeT(), ...api }: MemoryPanelProps): JSX.Element | null {
   ensureStyles()
@@ -887,11 +945,31 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
                       {detailActions(detail)}
                     </div>
                     <div className={css.detailMeta}>
-                      <span>{detail.scope === 'global' ? t('scopeGlobal') : projectName(detail.projectHash, projects)}</span>
-                      <span>{t('importanceLabel', { n: detail.importance })}</span>
-                      <span>{detail.source === 'manual' ? t('sourceManual') : t('sourceExtract')}</span>
-                      <span>{relativeTime(detail.updatedAt)}</span>
-                      {detail.layer === 'long' && <span>{t('groupLongterm')}</span>}
+                      <span className={css.metaBadge} title={detail.scope === 'global' ? t('scopeGlobal') : undefined}>
+                        {detail.scope === 'global' ? <GlobeIcon /> : <FolderIcon />}
+                        {detail.scope === 'global' ? t('scopeGlobal') : projectName(detail.projectHash, projects)}
+                      </span>
+                      <span className={detail.source === 'manual' ? `${css.metaBadge} ${css.metaBadgeAccent}` : css.metaBadge}>
+                        {detail.source === 'manual' ? <PenIcon /> : <SparkIcon />}
+                        {detail.source === 'manual' ? t('sourceManual') : t('sourceExtract')}
+                      </span>
+                      {detail.layer === 'long' && (
+                        <span className={`${css.metaBadge} ${css.metaBadgeWarn}`}>
+                          <LayersIcon />
+                          {t('groupLongterm')}
+                        </span>
+                      )}
+                      {detail.pinned && (
+                        <span className={`${css.metaBadge} ${css.metaBadgeWarn}`} title={t('pin')}><PinIcon size={11} filled /></span>
+                      )}
+                      <span className={css.metaTime}>{relativeTime(detail.updatedAt)}</span>
+                    </div>
+                    <div className={css.importanceRow}>
+                      <span className={css.importanceLabel}>{t('importanceTitle')}</span>
+                      <span className={css.importanceBar} role="img" aria-label={t('importanceTitle')}>
+                        <i style={{ width: `${importancePercent(detail.importance)}%` }} />
+                      </span>
+                      <span className={css.importanceValue}>{Number(detail.importance).toFixed(1)}</span>
                     </div>
                     <div className={css.detailBody}>
                       <MarkstreamMarkdown text={detail.content} streaming={false} />

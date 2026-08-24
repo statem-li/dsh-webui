@@ -81,6 +81,7 @@ export const zh = {
   enabledAria: '启用开关，当前开启',
   disabledAria: '启用开关，当前禁用',
   disabledTag: '已禁用',
+  importanceTitle: '重要度',
 } satisfies Record<string, string>
 
 /** dsh-memory locale key union. */
@@ -170,6 +171,7 @@ export const en = {
   enabledAria: 'Enable switch, currently on',
   disabledAria: 'Enable switch, currently off',
   disabledTag: 'Off',
+  importanceTitle: 'Importance',
 } satisfies Record<MemoryLocaleKey, string>
 
 /** 轻量翻译函数类型（面板/入口组件共用）。 */
