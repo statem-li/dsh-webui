@@ -35,6 +35,7 @@ export const WEBUI_MODULE_KEYS = [
   'sessionPin',        // 会话置顶 / 归档 / 右键菜单
   'rewind',            // 对话退回（文件回退 + 上下文分支）
   'screenshot',        // 对话截图（回复/问答/整段会话 × 电脑/手机 × 1080P/2K/4K × 自适应/16:9 等画幅）
+  'deliverables',      // 会话产物大卡片（assistant 操作栏归档盒按钮 + 左清单右预览）
   'promptOptimize',    // 提示词优化图标
   'zhThinking',        // 中文思考开关
   'mood',              // MOOD 自述（按 Agent 预设的开关 + 人设 + 对话流卡片）

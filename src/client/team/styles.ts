@@ -128,11 +128,22 @@ const SHEET = `
 .team-chevron{flex:none;display:inline-flex;color:var(--dsw-alias-label-tertiary,#888);transition:transform .18s cubic-bezier(.2,.8,.2,1)}
 .team-chevron[data-open='true']{transform:rotate(180deg)}
 
-/* ══ 编制页：角色卡片网格（占满右侧）══ */
-.team-roster{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:10px;padding:10px 16px 16px}
+/* ══ 编制页：关系图画板（占满右侧）══ */
+.team-roster{flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column;gap:10px;padding:10px 16px 16px}
 .team-roster-bar{flex:none;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .team-link-tip{display:flex;align-items:center;gap:8px;padding:4px 10px;border-radius:12px;background:color-mix(in srgb,var(--dsw-alias-state-business-primary,#4176e6) 16%,transparent);border:1px solid color-mix(in srgb,var(--dsw-alias-state-business-primary,#4176e6) 50%,transparent);font-size:12px;color:var(--dsw-alias-state-business-primary,#4176e6)}
-.team-roster-chains{display:flex;flex-direction:column;gap:8px;padding-top:6px;border-top:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.08))}
+.team-roster-chains{flex:none;max-height:220px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;padding-top:6px;border-top:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.08))}
+
+/* ══ 关系图画板 ══ */
+.team-board{flex:1;min-height:0;min-width:0;position:relative;overflow:auto;border:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.08));border-radius:12px;background:var(--dsw-alias-bg-module-platform,rgba(255,255,255,.02))}
+.team-board-canvas{position:relative}
+.team-board-svg{position:absolute;inset:0;pointer-events:none}
+.team-board-edge{stroke:var(--dsw-alias-border-l2,rgba(255,255,255,.16));stroke-width:1.4;fill:none}
+.team-board-edge[data-direct='true']{stroke-dasharray:5 4;opacity:.8;stroke:var(--dsw-alias-label-tertiary,#888)}
+.team-board-edge[data-chain='true']{stroke:var(--dsw-alias-state-business-primary,#4176e6);stroke-width:2.2}
+.team-board-node{position:absolute}
+.team-board-node .team-avatar[data-drag-handle]{cursor:grab}
+.team-board-node .team-avatar[data-drag-handle]:active{cursor:grabbing}
 
 .team-role-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px;align-items:start}
 

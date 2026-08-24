@@ -10,19 +10,20 @@
  * 数据全部走 /api/webui-team/*（纯 fetch），与 host 半身解耦。
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { ensureShellStyles } from '../popover-shell.js'
 import { NavButton, ensureNavMount, ensureNavStyles, useNavSlot, useRail } from '../sidebar-nav.js'
 import { ensureTeamStyles } from './styles.ts'
 import * as api from './api.ts'
 import { RoleCard } from './RoleCard.tsx'
+import { TeamBoard } from './TeamBoard.tsx'
 import { ChainEditor } from './ChainEditor.tsx'
 import { ModelSelect } from './ModelSelect.tsx'
 import { GenerateModal } from './GenerateModal.tsx'
 import {
   GROUP_META, SOURCE_LABEL,
-  type CapabilityCatalog, type Chain, type ModelBinding, type ProviderView, type Role, type Run, type RunSummary,
+  type CapabilityCatalog, type Chain, type ModelBinding, type NodePos, type ProviderView, type Role, type Run, type RunSummary,
   type Team, type TeamGlobals, type TeamSummary,
 } from './types.ts'
 import {
@@ -31,24 +32,43 @@ import {
 
 const RELOAD_MS = 20_000
 const RUN_POLL_MS = 1200
-/** 抽屉宽度：占满右侧但给左侧留出一点上下文。 */
-const DRAWER_WIDTH = 'min(1180px, 92vw)'
 /** 抽屉关闭动画时长（与 styles.ts 的 team-drawer-out 保持一致）。 */
 const DRAWER_EXIT_MS = 220
 
 type PanelTab = 'roster' | 'run' | 'history' | 'settings'
 
-/** 团队入口按钮 + 右侧全高抽屉。 */
+/** 团队入口按钮 + 右侧全高抽屉（贴侧边栏右缘铺满到屏幕右缘）。 */
 export function TeamNavApp(): JSX.Element | null {
   const slot = useNavSlot('team')
   const [open, setOpen] = useState(false)
   const [closing, setClosing] = useState(false)
+  const [sidebarRight, setSidebarRight] = useState(0)
   const rail = useRail()
 
   useEffect(() => {
     ensureNavStyles()
     ensureShellStyles()
     ensureTeamStyles()
+  }, [])
+
+  // 测量侧边栏右缘：抽屉 left 贴侧边栏右边、right=0，占满中间全部空间，不留间距。
+  useLayoutEffect(() => {
+    const measure = (): void => {
+      const col = document.querySelector('[class*="_sidebarCol"]')
+      const right = col !== null ? Math.round(col.getBoundingClientRect().right) : 0
+      setSidebarRight(previous => (previous === right ? previous : right))
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    const col = document.querySelector('[class*="_sidebarCol"]')
+    if (col !== null) observer.observe(col)
+    window.addEventListener('resize', measure)
+    const timer = window.setInterval(measure, 1200)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', measure)
+      window.clearInterval(timer)
+    }
   }, [])
 
   const close = useCallback((): void => {
@@ -96,11 +116,11 @@ export function TeamNavApp(): JSX.Element | null {
       {slot !== null ? createPortal(button, slot) : null}
       {(open || closing) ? createPortal(
         <>
-          <div className="team-mask" data-anim={anim} aria-hidden="true" onClick={close} />
+          <div className="team-mask" data-anim={anim} aria-hidden="true" onClick={close} style={{ left: sidebarRight }} />
           <div
             className="team-drawer"
             data-anim={anim}
-            style={{ width: DRAWER_WIDTH }}
+            style={{ left: sidebarRight, right: 0, width: 'auto' }}
             role="dialog"
             aria-modal="true"
             aria-label="团队编排"
@@ -394,6 +414,34 @@ function TeamPanel({ onClose }: { onClose: () => void }): JSX.Element {
     await saveTeam({ ...team, directLinks: team.directLinks.filter((_, i) => i !== index) })
   }
 
+  /** 画板拖拽结束：把全部节点位置固化进 role.pos。 */
+  const commitPositions = async (positions: Record<string, NodePos>): Promise<void> => {
+    if (team === null) return
+    try {
+      const data = await api.saveTeam({
+        ...team,
+        roles: team.roles.map(role => (positions[role.id] !== undefined ? { ...role, pos: positions[role.id] } : role)),
+      })
+      setTeam(data.team)
+      setTeams(data.teams)
+    } catch (err) {
+      fail(err)
+    }
+  }
+
+  /** 自动重排：清空手工位置，回到网格自动布局。 */
+  const resetPositions = async (): Promise<void> => {
+    if (team === null) return
+    await saveTeam({
+      ...team,
+      roles: team.roles.map((role) => {
+        const next = { ...role }
+        delete next.pos
+        return next
+      }),
+    })
+  }
+
   // ── 运行操作 ──
 
   const startRun = async (): Promise<void> => {
@@ -566,7 +614,7 @@ function TeamPanel({ onClose }: { onClose: () => void }): JSX.Element {
           </div>
         </div>
       ) : tab === 'roster' ? (
-        /* ── 编制页：角色卡片网格占满右侧 ── */
+        /* ── 编制页：关系图画板（卡片节点）── */
         <div className="team-roster">
           <div className="team-roster-bar">
             <select
@@ -581,6 +629,7 @@ function TeamPanel({ onClose }: { onClose: () => void }): JSX.Element {
               ))}
             </select>
             <button type="button" className="team-btn" onClick={() => void addRole()}>＋ 添加角色</button>
+            <button type="button" className="team-btn" onClick={() => void resetPositions()}>自动重排</button>
             <span style={{ flex: 1 }} />
             {linkFrom !== '' ? (
               <span className="team-link-tip">
@@ -588,7 +637,7 @@ function TeamPanel({ onClose }: { onClose: () => void }): JSX.Element {
                 <button type="button" className="team-btn" onClick={() => setLinkFrom('')}>取消</button>
               </span>
             ) : (
-              <span className="team-pop-hint">点卡片上的 🔗 进入连线模式，再左键点目标卡片建立关联</span>
+              <span className="team-pop-hint">拖头像移动节点 · 点 🔗 再点目标卡片建立关联</span>
             )}
             <button type="button" className="team-btn team-btn-danger" onClick={() => void resetTeam()}>恢复出厂编制</button>
           </div>
@@ -596,34 +645,29 @@ function TeamPanel({ onClose }: { onClose: () => void }): JSX.Element {
           {error !== null ? <div className="team-error" role="alert">{error}</div> : null}
           {readonlyIssue !== undefined ? <div className="team-error">{readonlyIssue}</div> : null}
 
-          <div className="team-role-grid">
-            {team.roles.map(role => (
-              <RoleCard
-                key={role.id}
-                role={role}
-                teamModel={team.model}
-                providers={providers}
-                catalog={catalog}
-                selected={selectedRoleId === role.id}
-                linking={linkFrom === role.id}
-                linkMode={linkFrom !== ''}
-                chainIndex={chainOrder[role.id] ?? null}
-                links={linksByRole[role.id] ?? []}
-                open={openRoleIds[role.id] === true}
-                onToggleOpen={() => {
-                  setSelectedRoleId(role.id)
-                  setOpenRoleIds(p => ({ ...p, [role.id]: p[role.id] !== true }))
-                }}
-                onSave={saveRole}
-                onRemove={() => void removeRole(role.id)}
-                onStartLink={() => startLink(role.id)}
-                onFinishLink={() => finishLink(role.id)}
-                onRemoveLink={(index) => { void removeLink(index) }}
-              />
-            ))}
-          </div>
+          <TeamBoard
+            team={team}
+            chain={currentChain}
+            chainOrder={chainOrder}
+            linkFrom={linkFrom}
+            selectedRoleId={selectedRoleId}
+            openRoleIds={openRoleIds}
+            catalog={catalog}
+            providers={providers}
+            linksByRole={linksByRole}
+            onToggleOpen={(roleId) => {
+              setSelectedRoleId(roleId)
+              setOpenRoleIds(p => ({ ...p, [roleId]: p[roleId] !== true }))
+            }}
+            onSave={saveRole}
+            onRemove={(roleId) => { void removeRole(roleId) }}
+            onStartLink={(roleId) => startLink(roleId)}
+            onFinishLink={(roleId) => finishLink(roleId)}
+            onRemoveLink={(index) => { void removeLink(index) }}
+            onCommitPositions={(positions) => { void commitPositions(positions) }}
+          />
 
-          {/* 协作链与关联关系（角色卡片下方） */}
+          {/* 协作链（画板下方） */}
           <div className="team-roster-chains">
             <div className="team-section-title" style={{ display: 'flex', alignItems: 'center' }}>
               <span style={{ flex: 1 }}>协作链（{team.chains.length}）</span>

@@ -71,6 +71,8 @@ import { applyRewindClient } from './rewind'
 import { applyCtrlEnterNewline } from './ctrl-enter-newline'
 // 对话截图：assistant 消息 actions 行的相机按钮 → 截图面板（范围/主题/宽度 + 预览后保存）。
 import { applyMessageScreenshot } from './screenshot/index'
+// 会话产物大卡片：assistant 消息 actions 行的归档盒按钮（截图旁）→ 本会话产物清单+预览。
+import { applyMessageDeliverables } from './message-deliverables/index'
 // 会话产物大卡片已下线：文件浏览器统一弹窗（历史 + 页内编辑）覆盖其全部能力。
 // host 端 /api/webui-deliverables 记账与路由保留——产物 chip 点击预览、
 // workspace 外产物的读取授权仍依赖它；卡片本体（message-deliverables/）留档不挂载。
@@ -272,7 +274,8 @@ export function apply(ctx: ClientContext): void {
   // ---- 对话截图：assistant 消息 actions 行相机按钮 → 截图面板 ---------------
   if (on('screenshot')) applyMessageScreenshot(ctx)
 
-  // ---- 会话产物大卡片：已下线（见文件头注释），产物入口收敛到文件浏览器 ------
+  // ---- 会话产物大卡片：assistant 操作栏归档盒按钮 → 本会话产物清单+预览 -----
+  if (on('deliverables')) applyMessageDeliverables(ctx)
 
   // ---- 技能 slash 源（替代内核 ui-skill）：输入 / 先选集合再选技能 ----------
   if (on('skills')) applySkillSource(ctx)

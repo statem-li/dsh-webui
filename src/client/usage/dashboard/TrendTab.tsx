@@ -197,7 +197,9 @@ export function TrendTab({ range, rangeLabel, onJumpAccounts, onJumpSignal, refr
   // 粒度自适应趋势：≤2 天按小时、≤31 天按日、≤120 天按周、更长按月。
   const grain = pickGrain(range)
   const series = grain === 'hour' ? aggregateHourSeries(hours, range) : aggregateSeries(filtered, grain)
-  const showTrend = series.length >= 2
+  // 单点也画（如刚跨天时当天只有 1 个小时点）：一根柱同样是有效趋势；
+  // 确实无可绘数据时主图位给空态，不再偷换成模型排行（底部已有常驻排行卡）。
+  const showTrend = series.length >= 1
   const rank = modelRank(filtered)
 
   // 异常日（仅日粒度）：范围内 tokens > 活跃日中位数 ×3 的天，柱顶红点 + 点击跳信号 tab。
@@ -281,9 +283,7 @@ export function TrendTab({ range, rangeLabel, onJumpAccounts, onJumpSignal, refr
           <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
             {showTrend
               ? <BarChart data={series} anomalies={anomalyMap ?? undefined} onSelectAnomaly={anomalyMap !== null && onJumpSignal !== undefined ? () => onJumpSignal() : undefined} />
-              : rank.length > 0
-                ? <RankBars rows={rank} nameWidth={180} />
-                : emptyHint(`${rangeLabel}暂无用量`)}
+              : emptyHint(`${rangeLabel}暂无可绘制的趋势数据`) }
           </div>
         </div>
 

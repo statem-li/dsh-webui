@@ -61,12 +61,14 @@ export interface RoleCardProps {
   onStartLink: () => void
   onFinishLink: () => void
   onRemoveLink: (index: number) => void
+  /** 头像区的拖拽手柄 pointerdown（关系图画板里拖动节点用；卡片视图可不传）。 */
+  onDragPointerDown?: (event: React.PointerEvent) => void
 }
 
 /** 角色卡片。 */
 export function RoleCard({
   role, teamModel, providers, catalog, open, selected, linking, linkMode, chainIndex, links,
-  onToggleOpen, onSave, onRemove, onStartLink, onFinishLink, onRemoveLink,
+  onToggleOpen, onSave, onRemove, onStartLink, onFinishLink, onRemoveLink, onDragPointerDown,
 }: RoleCardProps): JSX.Element {
   const [draft, setDraft] = useState<Role>(role)
   const [saving, setSaving] = useState(false)
@@ -136,7 +138,14 @@ export function RoleCard({
     >
       {/* ── 头部 ── */}
       <div className="team-grid-head" onClick={handleCardClick} role="button">
-        <span className="team-avatar" style={{ background: GROUP_META[role.group].color }} aria-hidden="true">
+        <span
+          className="team-avatar"
+          style={{ background: GROUP_META[role.group].color }}
+          data-drag-handle={onDragPointerDown !== undefined || undefined}
+          aria-hidden="true"
+          onPointerDown={onDragPointerDown}
+          onClick={event => event.stopPropagation()}
+        >
           {avatar}
         </span>
         <span className="team-grid-title">
