@@ -49,7 +49,6 @@ export function groupEntries(entries: MemoryEntry[], now = new Date()): Record<T
 /** 单条 md 行。 */
 function entryLine(entry: MemoryEntry): string {
   const tagText = entry.tags.length > 0 ? ` \`${entry.tags.join('` `')}\`` : ''
-  // 置顶由所在区块标题（# 置顶）标识，行内不再重复加 📌（避免"两个置顶图标"的视觉冗余）。
   const score = entry.importance >= 10 ? '' : ` [${entry.importance}]`
   return `- ${entry.content.replace(/\n/g, ' ')}${score}${tagText}`
 }
@@ -176,7 +175,9 @@ export function buildInjectionText(
     if (section !== 'pinned') used += block.length + 1
     sections[section] = text
   }
-  if (pinned.length > 0) consume('pinned', renderPinned(pinned))
+  // 置顶区块不带「# 置顶」二级标题：[记忆·置顶] 分组头已标识归属，
+  // 双重标志对模型纯冗余（renderPinned 的带标题版本仅供落盘产物使用）。
+  if (pinned.length > 0) consume('pinned', pinned.map(entryLine).join('\n'))
   for (const entry of rest) {
     if (entry.scope === 'global') {
       if (isIdentityEntry(entry)) {
@@ -195,10 +196,10 @@ export function buildInjectionText(
     sections.facts,
   ].filter(Boolean).join('\n\n')
   const outSections = [
-    sections.identity ? { name: 'identity', text: sections.identity } : null,
-    sections.memory ? { name: 'memory', text: sections.memory } : null,
-    sections.pinned ? { name: 'pinned', text: sections.pinned } : null,
-    sections.facts ? { name: 'facts', text: sections.facts } : null,
+    sections.identity ? { name: sectionHeader('identity'), text: sections.identity } : null,
+    sections.memory ? { name: sectionHeader('memory'), text: sections.memory } : null,
+    sections.pinned ? { name: sectionHeader('pinned'), text: sections.pinned } : null,
+    sections.facts ? { name: sectionHeader('facts'), text: sections.facts } : null,
   ].filter((section): section is { name: string; text: string } => section !== null)
   return { text, sections: outSections }
 }
