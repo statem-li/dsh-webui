@@ -92,6 +92,7 @@ export const css = {
   miniSwitchOn: 'dsh-memory-mini-switch-on',
   itemDisabled: 'dsh-memory-item-disabled',
   disabledMark: 'dsh-memory-disabled-mark',
+  scopeBadge: 'dsh-memory-scope-badge',
 } as const
 
 const STYLE_ID = 'dsh-memory-styles'
@@ -245,6 +246,9 @@ const SHEET = `
 .dsh-memory-mini-switch:focus-visible{outline:none;box-shadow:0 0 0 2px var(--dsw-alias-border-l3,rgba(255,255,255,.16))}
 .dsh-memory-item-disabled{opacity:.55}
 .dsh-memory-disabled-mark{flex:none;margin-left:6px;padding:0 5px;border:1px solid var(--dsw-alias-border-l3,rgba(255,255,255,.18));border-radius:4px;font-size:10px;line-height:14px;color:var(--dsw-alias-label-tertiary,#999);white-space:nowrap}
+/* 行内作用域徽章（全局/项目名）：中性色紧凑版，图标+短名，超长省略 */
+.dsh-memory-scope-badge{flex:none;display:inline-flex;align-items:center;gap:3px;max-width:88px;padding:0 5px;border:1px solid var(--dsw-alias-border-l3,rgba(255,255,255,.16));border-radius:4px;font-size:10px;line-height:15px;color:var(--dsw-alias-label-tertiary,#999);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dsh-memory-scope-badge svg{flex:none}
 
 /* ── 窄屏：主从改上下堆叠 ── */
 @media (max-width: 767.98px) {

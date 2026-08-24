@@ -569,6 +569,13 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
             <span className={css.itemTitle}>
               {entry.pinned && <span className={css.pinMark}><PinIcon size={11} filled /></span>}
               <span className={css.itemTitleText}>{entryTitle(entry.content)}</span>
+              <span
+                className={css.scopeBadge}
+                title={entry.scope === 'global' ? t('scopeGlobal') : projectName(entry.projectHash, projects)}
+              >
+                {entry.scope === 'global' ? <GlobeIcon size={10} /> : <FolderIcon size={10} />}
+                {entry.scope === 'global' ? t('scopeGlobal') : projectName(entry.projectHash, projects)}
+              </span>
               {!enabled && <span className={css.disabledMark}>{t('disabledTag')}</span>}
             </span>
             <span className={css.itemSnippet}>{entrySnippet(entry.content)}</span>
