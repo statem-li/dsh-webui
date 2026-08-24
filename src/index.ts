@@ -284,7 +284,7 @@ export async function apply(ctx: Context, config: WebuiConfig = {}): Promise<voi
 
   // 9.6) 工作区临时垃圾清理器：_tmp 约定目录 + 规则扫描 + 定时调度 +
   //      webui_tmp_clean 工具（/api/webui-tmp-cleaner；设置页自定触发时间）。
-  if (modules.tmpCleaner) applyTmpCleaner(ctx)
+  if (modules.tmpCleaner) await applyTmpCleaner(ctx)
 
   // 10) 用量统计 + 技能管理（自 dsh-usage-skill 融合；host 复用其 lib 产物）。
   if (modules.usage) await applyUsageHost(ctx, config.usage)

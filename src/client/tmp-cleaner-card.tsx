@@ -343,7 +343,7 @@ function TmpCleanerCard(): JSX.Element {
                     checked={draft.injectPrompt}
                     onChange={e => patch({ injectPrompt: e.target.checked })}
                   />
-                  注入「临时脚本写 _tmp/」提示词约定
+                  维护「_tmp/ 约定」置顶记忆
                 </label>
                 <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 13 }}>
                   <input

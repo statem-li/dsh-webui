@@ -125,11 +125,90 @@ function normalizeConfig(raw: unknown): CleanerConfig {
   }
 }
 
-// ── 系统提示词注入 ──────────────────────────────────────────────────────────
+// ── 约定提示词（记忆承载 + 系统提示词兜底）────────────────────────────────
 
-/** 注入的系统提示词片段：把一次性产物赶进 _tmp/，与清理器闭环。 */
+/**
+ * 托管置顶记忆的识别 tag：tmpCleaner 按 tag 幂等维护这条记忆（存在性 +
+ * pinned 状态），**不覆盖内容**——用户在记忆面板改过文案后重启不会被打回；
+ * 想恢复默认文案删掉这条记忆再重启 DSH 即可重建。
+ */
+export const CONVENTION_TAG = 'tmp-cleaner-convention'
+
+/** 写入记忆条目的约定文案（记忆通道；措辞对齐用户置顶记忆风格）。 */
+const CONVENTION_MEMORY_TEXT =
+  '【工作区临时文件约定】凡是为完成当前任务而临时创建的一次性脚本、探针、数据抓取结果等中间产物，一律写入当前工作区根下的 _tmp/ 目录（不存在就先创建它），不要散落在工作区其他位置；这些文件无需手动删除，dsh-webui 清理器会定期自动清理各工作区的 _tmp/。正式的项目代码与文档不要放进 _tmp/。'
+
+/** 注入的系统提示词片段（fallback：记忆引擎未启用时才走这条通道）。 */
 const TMP_CONVENTION_INSTRUCTION =
   '【工作区临时文件约定】凡是为完成当前任务而临时创建的一次性脚本、探针、数据抓取结果等中间产物，一律写入当前工作区根下的 _tmp/ 目录（不存在就先创建它），不要散落在工作区其他位置；这些文件无需你手动删除，系统会定期自动清理。正式的项目代码与文档不要放进 _tmp/。'
+
+/** 取 memory 模块共享的单例 store（未启用 memory 模块时为 undefined）。 */
+function memoryStoreOf(ctx: PluginContext): any | undefined {
+  return (ctx as any).webuiMemoryStore
+}
+
+/**
+ * 幂等维护「_tmp 约定」托管置顶记忆：
+ *  - injectPrompt 开 → 确保存在一条带 CONVENTION_TAG 的全局置顶记忆
+ *    （已存在则只校正 pinned，绝不覆盖用户编辑过的内容）；
+ *  - injectPrompt 关 → 移除全部托管条目。
+ * 返回是否由记忆通道承载（false = 记忆引擎不可用，调用方应退回 systemPrompt）。
+ */
+async function ensureConventionMemory(ctx: PluginContext): Promise<boolean> {
+  const store = memoryStoreOf(ctx)
+  if (store === undefined) return false
+  const config = readConfig(ctx)
+  const entries = await store.readEntries() as Array<{ id: string; tags?: unknown; pinned?: boolean; scope?: string }>
+  const managed = entries.filter(e => Array.isArray(e.tags) && (e.tags as string[]).includes(CONVENTION_TAG))
+  try {
+    if (!config.injectPrompt) {
+      for (const entry of managed) {
+        const removed = await store.removeEntry(entry.id)
+        if (removed) {
+          await store.appendChange({
+            action: 'delete',
+            entryId: entry.id,
+            scope: 'global',
+            projectHash: null,
+            summary: '删除：_tmp 约定（清理器开关关闭）',
+          }).catch(() => undefined)
+        }
+      }
+      return true
+    }
+    const kept = managed[0]
+    if (kept !== undefined) {
+      // 已存在：只确保置顶与全局层；内容以用户编辑为准，不打回默认文案。
+      if (kept.pinned !== true || kept.scope !== 'global') {
+        await store.patchEntry(kept.id, { pinned: true, scope: 'global', projectHash: null })
+      }
+      // 多余的重复托管条目清掉（理论上不该出现，防御一下）。
+      for (const extra of managed.slice(1)) await store.removeEntry(extra.id)
+      return true
+    }
+    // 首次创建：写入默认文案的置顶记忆。
+    const { entry } = await store.upsertEntry({
+      content: CONVENTION_MEMORY_TEXT,
+      scope: 'global',
+      projectHash: null,
+      tags: [CONVENTION_TAG],
+      pinned: true,
+      importance: 8,
+      source: 'manual',
+    })
+    await store.appendChange({
+      action: 'add',
+      entryId: entry.id,
+      scope: 'global',
+      projectHash: null,
+      summary: '新增：_tmp 约定（临时脚本写工作区 _tmp/）',
+    }).catch(() => undefined)
+    return true
+  } catch (error: any) {
+    console.log('[tmp-cleaner] convention memory sync failed:', String(error?.message ?? error))
+    return false
+  }
+}
 
 // ── 清理引擎 ────────────────────────────────────────────────────────────────
 
@@ -453,7 +532,7 @@ const dayKey = (ts: number): string => new Date(ts).toISOString().slice(0, 10)
  * 装配 tmpCleaner host 能力。
  * @param ctx - host 上下文。
  */
-export function applyTmpCleaner(ctx: PluginContext): void {
+export async function applyTmpCleaner(ctx: PluginContext): Promise<void> {
   // 命名空间注册在 host 层，settings.yaml 持久化；重复注册会抛错，先探测。
   try {
     settingsScope = ctx.settings.register('webui-tmp-cleaner', z.object({
@@ -472,12 +551,18 @@ export function applyTmpCleaner(ctx: PluginContext): void {
     settingsScope = undefined
   }
 
-  // 系统提示词注入：关闭时返回空串，renderPrompt 自动丢弃（零占用）。
-  ctx.effect(() => ctx.systemPrompt.section({
-    name: 'tmp-cleaner',
-    order: -35,
-    text: () => (readConfig().injectPrompt ? TMP_CONVENTION_INSTRUCTION : ''),
-  }), '@dsh-webui/tmp-cleaner: prompt section')
+  // 约定通道：优先写为「置顶记忆」（记忆面板可编辑、重启不打回用户修改）；
+  // 记忆引擎未启用时退回 systemPrompt 注入（关闭时返回空串零占用）。
+  // 注意：记忆只在每会话首轮注入一次且定位「参考补充」，约束力弱于系统
+  // 提示词——若发现模型不遵守约定，可在设置卡关掉本开关并改用 AGENTS.md。
+  const memoryBacked = await ensureConventionMemory(ctx)
+  if (!memoryBacked) {
+    ctx.effect(() => ctx.systemPrompt.section({
+      name: 'tmp-cleaner',
+      order: -35,
+      text: () => (readConfig().injectPrompt ? TMP_CONVENTION_INSTRUCTION : ''),
+    }), '@dsh-webui/tmp-cleaner: prompt section')
+  }
 
   // ── 调度器：60s tick，daily / interval 双模式 ──
   const bootAt = Date.now()
@@ -549,6 +634,10 @@ export function applyTmpCleaner(ctx: PluginContext): void {
             const next = normalizeConfig({ ...readConfig(), ...patch })
             if (settingsScope !== undefined) {
               await settingsScope.update(next)
+            }
+            // 注入开关闭合时同步维护托管置顶记忆（幂等）。
+            if (typeof (body.patch as any)?.injectPrompt === 'boolean') {
+              await ensureConventionMemory(ctx)
             }
             return respond(200, { ok: true, config: next })
           }

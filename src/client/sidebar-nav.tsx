@@ -18,6 +18,7 @@
 
 import { useEffect, useState, type MouseEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
+import type { PopoverAnchor } from './popover-shell.js'
 
 /** nav host id（本模块创建）。 */
 const HOST_ID = 'dsh-webui-nav-host'

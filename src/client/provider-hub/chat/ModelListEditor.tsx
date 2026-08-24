@@ -1102,12 +1102,14 @@ const capacityMenuItemStyle: CSSProperties = {
   cursor: 'pointer',
 }
 
+/* 官方 .iconButton：28×28 方形图标钮，hover 由注入的 .dsh-webui-icon-btn
+ * 系列提供（普通=中性底、danger=危险底）。 */
 const iconButtonStyle: CSSProperties = {
   display: 'inline-flex',
   alignItems: 'center',
   justifyContent: 'center',
-  width: 26,
-  height: 26,
+  width: 28,
+  height: 28,
   padding: 0,
   border: 'none',
   borderRadius: 6,
@@ -1116,29 +1118,47 @@ const iconButtonStyle: CSSProperties = {
   cursor: 'pointer',
 }
 
+/* 官方 .linkButton：28px 高的透明文字钮，tertiary 色，hover 才浮出底色。
+ * （不用 brand-primary：该令牌是反色设计，浅色主题下为黑。） */
 const linkButtonStyle: CSSProperties = {
-  padding: '4px 8px',
-  fontSize: 12,
+  boxSizing: 'border-box',
+  display: 'inline-flex',
+  alignItems: 'center',
+  height: 28,
+  padding: '0 10px',
   border: 'none',
-  borderRadius: 8,
-  background: 'var(--dsw-alias-interactive-bg-hover, rgba(22,93,255,0.08))',
-  color: 'var(--dsw-alias-brand-primary, #165dff)',
-  cursor: 'pointer',
-}
-
-const addModelButtonStyle: CSSProperties = {
-  alignSelf: 'flex-start',
-  padding: '4px 10px',
-  fontSize: 12,
-  borderRadius: 8,
-  border: '1px dashed var(--dsw-alias-border-l3, #c9cdd4)',
+  borderRadius: 14,
   background: 'transparent',
-  color: 'var(--dsw-alias-label-secondary, #4e5969)',
+  color: 'var(--dsw-alias-label-tertiary, #8f959e)',
+  fontSize: 12,
+  lineHeight: '18px',
   cursor: 'pointer',
 }
 
+/* 官方 .addModelButton：28px 实线胶囊（虚线只属于「空态/添加入口」，模型
+ * 目录的添加是常规命令）。 */
+const addModelButtonStyle: CSSProperties = {
+  boxSizing: 'border-box',
+  alignSelf: 'flex-start',
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 4,
+  height: 28,
+  padding: '0 10px',
+  border: '1px solid var(--dsw-alias-border-l2, #dcdfe6)',
+  borderRadius: 14,
+  background: 'transparent',
+  color: 'var(--dsw-alias-label-primary, #1f2329)',
+  fontSize: 12,
+  lineHeight: '18px',
+  cursor: 'pointer',
+}
+
+/* 字段标签：与 ChatProviderDetail 的 Field 标签同规格（12/18/500 secondary）。 */
 const fieldLabelStyle: CSSProperties = {
   fontSize: 12,
+  lineHeight: '18px',
+  fontWeight: 500,
   color: 'var(--dsw-alias-label-secondary, #4e5969)',
 }
 
@@ -1176,7 +1196,7 @@ const capSwitchStyle: CSSProperties = {
 
 const capSwitchOnStyle: CSSProperties = {
   ...capSwitchStyle,
-  background: 'var(--dsw-alias-state-business-primary, #165dff)',
+  background: 'var(--dsw-alias-state-business-primary, #4176e6)',
 }
 
 const capKnobStyle: CSSProperties = {
@@ -1204,17 +1224,18 @@ const capSwitchLabelStyle: CSSProperties = {
   whiteSpace: 'nowrap',
 }
 
-/* 「一键检测」按钮：行内小按钮。 */
+/* 「一键检测」按钮：行内 dense 胶囊（28 高、14 圆角、12 字），与列表行
+ * 的「测试/编辑」小胶囊同规格；强调色用品牌蓝 business-primary。 */
 const capabilityTestButtonStyle: CSSProperties = {
   boxSizing: 'border-box',
-  height: 22,
-  padding: '0 8px',
-  border: '1px solid var(--dsw-alias-border-l2, #dcdfe6)',
-  borderRadius: 11,
+  height: 28,
+  padding: '0 12px',
+  border: '1px solid var(--dsw-alias-state-business-primary, #4176e6)',
+  borderRadius: 14,
   background: 'transparent',
-  color: 'var(--dsw-alias-label-secondary, #4e5969)',
-  fontSize: 11,
-  lineHeight: '20px',
+  color: 'var(--dsw-alias-state-business-primary, #4176e6)',
+  fontSize: 12,
+  lineHeight: '18px',
   cursor: 'pointer',
   flex: 'none',
 }
@@ -1222,12 +1243,14 @@ const capabilityTestButtonStyle: CSSProperties = {
 const hintStyle: CSSProperties = {
   margin: 0,
   fontSize: 12,
+  lineHeight: '18px',
   color: 'var(--dsw-alias-label-tertiary, #8f959e)',
 }
 
 const errorStyle: CSSProperties = {
   margin: 0,
   fontSize: 12,
+  lineHeight: '18px',
   color: 'var(--dsw-alias-state-error-primary, #d54941)',
 }
 
@@ -1241,9 +1264,9 @@ const overlayStyle: CSSProperties = {
   justifyContent: 'center',
 }
 
+/* 官方 .fetchDialog：候选弹窗最大 520px，滚动列表收在浮层内。 */
 const modalStyle: CSSProperties = {
-  width: 420,
-  maxWidth: 'calc(100vw - 48px)',
+  width: 'min(520px, calc(100vw - 48px))',
   maxHeight: '70vh',
   overflowY: 'auto',
   padding: 16,
@@ -1255,20 +1278,47 @@ const modalStyle: CSSProperties = {
   gap: 6,
 }
 
-const primaryButtonStyle: CSSProperties = {
-  padding: '6px 14px',
+/* 候选条目：圆角行 + code 字体 id（官方 .candidate/.candidateId）。 */
+const candidateStyle: CSSProperties = {
+  borderRadius: 6,
+}
+
+const candidateIdStyle: CSSProperties = {
+  flex: '1 1 auto',
+  fontFamily: 'var(--ds-font-family-code, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace)',
   fontSize: 13,
-  borderRadius: 8,
+  lineHeight: '20px',
+  color: 'var(--dsw-alias-label-primary, #1f2329)',
+  overflowWrap: 'anywhere',
+}
+
+/* 弹窗按钮与表单 footer 同规格：36px 高、18px 圆角大胶囊、14 字。 */
+const primaryButtonStyle: CSSProperties = {
+  boxSizing: 'border-box',
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  height: 36,
+  padding: '0 14px',
+  fontSize: 14,
+  lineHeight: '22px',
+  borderRadius: 18,
   border: 'none',
-  background: 'var(--dsw-alias-button-primary-fill, #165dff)',
+  background: 'var(--dsw-alias-button-primary-fill, #4176e6)',
   color: 'var(--dsw-alias-label-primary-foreground, #fff)',
   cursor: 'pointer',
 }
 
 const secondaryButtonStyle: CSSProperties = {
-  padding: '6px 14px',
-  fontSize: 13,
-  borderRadius: 8,
+  boxSizing: 'border-box',
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  height: 36,
+  padding: '0 14px',
+  fontSize: 14,
+  lineHeight: '22px',
+  borderRadius: 18,
   border: '1px solid var(--dsw-alias-border-l2, #dcdfe6)',
   background: 'transparent',
   color: 'var(--dsw-alias-label-primary, #1f2329)',

@@ -26,7 +26,7 @@ import type {
 import {
   deletePath, getPath, hasPath, nodeAtPath, rehydrateSchema, setPath, validateDraft,
 } from '@deepseek-ai/dsh-client-schema-form'
-import { ModelListEditor, modelDrafts, validateModels } from './ModelListEditor.tsx'
+import { ModelListEditor, ensureProviderFieldStyles, modelDrafts, validateModels } from './ModelListEditor.tsx'
 import type { ModelDraft, T } from './ModelListEditor.tsx'
 import { chatCopy, t as chatT } from './ModelListEditor.tsx'
 import { deriveKeyRef, messageOf, protocolChoices } from './store.ts'
@@ -169,6 +169,9 @@ export function ChatProviderDetail(props: ChatProviderDetailProps): ReactNode {
   const [failure, setFailure] = useState<string | undefined>(undefined)
   const [saved, setSaved] = useState(false)
   const [deleteArmed, setDeleteArmed] = useState(false)
+
+  // 展开编辑 UI 的共享伪类样式（focus/placeholder/hover/disabled）。
+  useEffect(() => { ensureProviderFieldStyles() }, [])
 
   // 自定义创建模式专用字段。
   const [route, setRoute] = useState('')
@@ -440,13 +443,13 @@ export function ChatProviderDetail(props: ChatProviderDetailProps): ReactNode {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12, flex: 1, minWidth: 0 }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
-        <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--dsw-alias-label-primary, #1f2329)' }}>
+        <span style={{ fontSize: 14, lineHeight: '22px', fontWeight: 500, color: 'var(--dsw-alias-label-primary, #1f2329)' }}>
           {target.mode === 'custom' ? chatCopy.addCustom : target.displayName}
         </span>
         {target.mode !== 'custom' && target.provider !== target.displayName
-          ? <span style={{ fontSize: 12, color: 'var(--dsw-alias-label-tertiary, #8f959e)' }}>{target.provider}</span>
+          ? <span style={{ fontSize: 12, lineHeight: '18px', color: 'var(--dsw-alias-label-tertiary, #8f959e)' }}>{target.provider}</span>
           : null}
-        {saved ? <span style={{ fontSize: 12, color: 'var(--dsw-alias-state-success-primary, #00b42a)' }}>{chatCopy.saved}</span> : null}
+        {saved ? <span style={{ fontSize: 12, lineHeight: '18px', color: 'var(--dsw-alias-state-success-primary, #00b42a)' }}>{chatCopy.saved}</span> : null}
       </div>
       {layout === 'unknown' && target.mode !== 'custom'
         ? <p style={hintStyle}>{`其他字段在 settings.yaml 中（${target.settingsNs}）`}</p>
@@ -457,6 +460,7 @@ export function ChatProviderDetail(props: ChatProviderDetailProps): ReactNode {
           <>
             <Field label={chatCopy.providerId}>
               <input
+                className="dsh-webui-field"
                 style={inputStyle}
                 type="text"
                 value={route}
@@ -471,6 +475,7 @@ export function ChatProviderDetail(props: ChatProviderDetailProps): ReactNode {
               : <p style={hintStyle}>{chatCopy.providerIdHint}</p>}
             <Field label={chatCopy.displayName}>
               <input
+                className="dsh-webui-field"
                 style={inputStyle}
                 type="text"
                 value={customName}
@@ -484,8 +489,26 @@ export function ChatProviderDetail(props: ChatProviderDetailProps): ReactNode {
         )
         : null}
 
-      <Field label={chatCopy.keyInput}>
+      <Field
+        label={chatCopy.keyInput}
+        labelExtra={keyState === undefined
+          ? null
+          : (
+            <span
+              role="img"
+              aria-label={keyState.configured === true ? chatCopy.credentialConfigured : chatCopy.credentialMissing}
+              title={keyState.configured === true ? chatCopy.credentialConfigured : chatCopy.credentialMissing}
+              style={{
+                width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
+                background: keyState.configured === true
+                  ? 'var(--dsw-alias-state-success-primary, #00b42a)'
+                  : 'var(--dsw-alias-state-error-primary, #d54941)',
+              }}
+            />
+          )}
+      >
         <input
+          className="dsh-webui-field"
           style={inputStyle}
           type="password"
           autoComplete="off"
@@ -504,6 +527,7 @@ export function ChatProviderDetail(props: ChatProviderDetailProps): ReactNode {
       {target.mode === 'custom' || layout !== 'unknown' ? (
         <Field label={chatCopy.baseUrl}>
           <input
+            className="dsh-webui-field"
             style={inputStyle}
             type="text"
             value={target.mode === 'custom' ? customBaseURL : stringAt(draft, 'baseURL') ?? ''}
@@ -525,6 +549,7 @@ export function ChatProviderDetail(props: ChatProviderDetailProps): ReactNode {
       {target.mode === 'custom' || (target.declared === true && layout === 'pi-ai') ? (
         <Field label={chatCopy.apiProtocol}>
           <select
+            className="dsh-webui-field"
             style={selectInputStyle}
             value={target.mode === 'custom' ? customProtocol : probeApi ?? ''}
             aria-label={chatCopy.apiProtocol}
@@ -564,12 +589,13 @@ export function ChatProviderDetail(props: ChatProviderDetailProps): ReactNode {
 
       {failure !== undefined ? <p style={errorStyle}>{failure}</p> : null}
       {modelFailure !== undefined
-        ? <p style={hintStyle}>{`${chatCopy.modelId} ${String(modelFailure.index + 1)}: ${t(modelFailure.key)}`}</p>
+        ? <p style={errorStyle}>{`${chatCopy.modelId} ${String(modelFailure.index + 1)}: ${t(modelFailure.key)}`}</p>
         : null}
 
-      <div style={{ display: 'flex', gap: 8, marginTop: 4, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4, flexWrap: 'wrap' }}>
         <button
           type="button"
+          className="dsh-webui-secondary-btn"
           style={secondaryButtonStyle}
           disabled={busy}
           onClick={() => { onClose(false) }}
@@ -580,6 +606,7 @@ export function ChatProviderDetail(props: ChatProviderDetailProps): ReactNode {
           ? (
             <button
               type="button"
+              className="dsh-webui-danger-btn"
               style={deleteArmed ? dangerConfirmStyle : dangerButtonStyle}
               disabled={busy}
               onClick={confirmDelete}
@@ -590,6 +617,7 @@ export function ChatProviderDetail(props: ChatProviderDetailProps): ReactNode {
           : null}
         <button
           type="button"
+          className="dsh-webui-primary-btn"
           style={primaryButtonStyle}
           disabled={disabled || (target.mode === 'custom' ? !customReady : modelFailure !== undefined || shownKeyFailure !== undefined)}
           onClick={() => { void submit() }}
@@ -601,11 +629,14 @@ export function ChatProviderDetail(props: ChatProviderDetailProps): ReactNode {
   )
 }
 
-/** 一个字段（label + 控件 + 字段级错误）。 */
-function Field({ label, children }: { label: string; children: ReactNode }): ReactNode {
+/** 一个字段（label [+ 标签附加节点] + 控件 + 字段级错误）。 */
+function Field({ label, labelExtra, children }: { label: string; labelExtra?: ReactNode; children: ReactNode }): ReactNode {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-      <span style={fieldLabelStyle}>{label}</span>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <span style={{ ...fieldLabelStyle, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+        {label}
+        {labelExtra}
+      </span>
       {children}
     </div>
   )
@@ -641,39 +672,55 @@ const selectInputStyle: CSSProperties = {
   maxWidth: 240,
 }
 
+/* 官方 .fieldLabel：12/18、500、secondary。 */
 const fieldLabelStyle: CSSProperties = {
   fontSize: 12,
+  lineHeight: '18px',
+  fontWeight: 500,
   color: 'var(--dsw-alias-label-secondary, #4e5969)',
 }
 
 const hintStyle: CSSProperties = {
   margin: 0,
   fontSize: 12,
+  lineHeight: '18px',
   color: 'var(--dsw-alias-label-tertiary, #8f959e)',
 }
 
 const errorStyle: CSSProperties = {
   margin: 0,
   fontSize: 12,
+  lineHeight: '18px',
   color: 'var(--dsw-alias-state-error-primary, #d54941)',
 }
 
+/* 官方 .primaryButton/.secondaryButton/.dangerButton：36px 高、18px 圆角
+ * 胶囊、14 字、0 14 内边距；hover 态由注入的 .dsh-webui-*-btn 类提供。 */
 const primaryButtonStyle: CSSProperties = {
-  marginLeft: 'auto',
+  boxSizing: 'border-box',
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
   height: 36,
-  padding: '0 18px',
+  padding: '0 14px',
   fontSize: 14,
+  lineHeight: '22px',
   borderRadius: 18,
   border: 'none',
-  background: 'var(--dsw-alias-button-primary-fill, #165dff)',
+  background: 'var(--dsw-alias-button-primary-fill, #4176e6)',
   color: 'var(--dsw-alias-label-primary-foreground, #fff)',
   cursor: 'pointer',
 }
 
 const secondaryButtonStyle: CSSProperties = {
+  boxSizing: 'border-box',
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
   height: 36,
-  padding: '0 16px',
+  padding: '0 14px',
   fontSize: 14,
+  lineHeight: '22px',
   borderRadius: 18,
   border: '1px solid var(--dsw-alias-border-l2, #dcdfe6)',
   background: 'transparent',
@@ -682,9 +729,14 @@ const secondaryButtonStyle: CSSProperties = {
 }
 
 const dangerButtonStyle: CSSProperties = {
+  boxSizing: 'border-box',
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
   height: 36,
-  padding: '0 16px',
+  padding: '0 14px',
   fontSize: 14,
+  lineHeight: '22px',
   borderRadius: 18,
   border: '1px solid var(--dsw-alias-state-error-primary, #d54941)',
   background: 'transparent',

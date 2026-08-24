@@ -11,7 +11,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { CSSProperties } from 'react'
 import { getPath } from '@deepseek-ai/dsh-client-schema-form'
-import { chatCopy } from './ModelListEditor.tsx'
+import { chatCopy, ensureProviderFieldStyles } from './ModelListEditor.tsx'
 import { PerfBenchModal } from '../perf/PerfBenchModal.tsx'
 import type { ModelsSettingsState, ProviderRow } from './store.ts'
 
@@ -82,6 +82,8 @@ export function ChatProviderList(props: ChatProviderListProps): ReactNode {
   const [capabilities, setCapabilities] = useState<Record<string, string[]>>({})
   // 当前打开基准测试弹窗的供应商行（null = 关闭）。
   const [benchRow, setBenchRow] = useState<ProviderRow | null>(null)
+  // 行内小胶囊按钮的 hover 态样式（与展开编辑器共用同一注入块）。
+  useEffect(() => { ensureProviderFieldStyles() }, [])
   useEffect(() => {
     let alive = true
     const load = (): void => {
@@ -117,7 +119,7 @@ export function ChatProviderList(props: ChatProviderListProps): ReactNode {
       <section style={sectionStyle}>
         <SectionTitle />
         <p style={errorStyle}>{`${chatCopy.loadFailed}: ${state.error ?? ''}`}</p>
-        <button type="button" style={smButtonStyle} onClick={onRetry}>
+        <button type="button" className="dsh-webui-capsule-btn" style={smButtonStyle} onClick={onRetry}>
           {chatCopy.retry}
         </button>
       </section>
@@ -290,13 +292,13 @@ function DevRoleProbeBar(): ReactNode {
                     : 'var(--dsw-alias-label-tertiary, #8f959e)'
               return (
                 <div key={item.key} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '2px 0', minWidth: 0 }}>
-                  <span style={{ flex: 'none', width: 120, fontSize: 12.5, color: 'var(--dsw-alias-label-primary, #1f2329)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  <span style={{ flex: 'none', width: 120, fontSize: 12, lineHeight: '18px', color: 'var(--dsw-alias-label-primary, #1f2329)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {item.label}
                   </span>
-                  <span style={{ flex: 'none', width: 86, fontSize: 12.5, color: markColor }}>
+                  <span style={{ flex: 'none', width: 86, fontSize: 12, lineHeight: '18px', color: markColor }}>
                     {mark}{item.status === 'running' ? ' 测试中' : ''}
                   </span>
-                  <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: 'var(--dsw-alias-label-tertiary, #8f959e)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.note}>
+                  <span style={{ flex: 1, minWidth: 0, fontSize: 12, lineHeight: '18px', color: 'var(--dsw-alias-label-tertiary, #8f959e)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.note}>
                     {item.note || `测试模型 ${item.model}`}
                   </span>
                 </div>
@@ -379,6 +381,7 @@ function ProviderRowCard({
             ? (
               <button
                 type="button"
+                className="dsh-webui-capsule-btn"
                 style={smButtonStyle}
                 onClick={(event) => { event.stopPropagation(); onBench() }}
               >
@@ -388,6 +391,7 @@ function ProviderRowCard({
             : null}
           <button
             type="button"
+            className="dsh-webui-capsule-btn"
             style={smButtonStyle}
             onClick={(event) => { event.stopPropagation(); onSelect() }}
           >
@@ -475,7 +479,7 @@ const rowCardStyle: CSSProperties = {
 
 const rowCardSelectedStyle: CSSProperties = {
   ...rowCardStyle,
-  borderColor: 'var(--dsw-alias-state-business-primary, #165dff)',
+  borderColor: 'var(--dsw-alias-state-business-primary, #4176e6)',
 }
 
 /* 官方 .rowHead。 */
@@ -505,7 +509,7 @@ const tagStyle: CSSProperties = {
 const countBadgeStyle: CSSProperties = {
   flexShrink: 0, minWidth: 20, padding: '1px 5px',
   fontSize: 11, borderRadius: 10, textAlign: 'center',
-  background: 'var(--dsw-alias-interactive-bg-hover, rgba(22,93,255,0.08))',
+  background: 'var(--dsw-alias-interactive-bg-hover, rgba(65,118,230,0.08))',
   color: 'var(--dsw-alias-label-tertiary, #8f959e)',
 }
 
@@ -521,10 +525,10 @@ const rowActionsStyle: CSSProperties = {
   display: 'inline-flex', alignItems: 'center', gap: 6, flex: 'none',
 }
 
-/* 官方行内小胶囊：28px 高、14px 圆角、12px 字。 */
+/* 官方行内小胶囊（Button .sm）：28px 高、14px 圆角、12px 字、0 10 内边距。 */
 const smButtonStyle: CSSProperties = {
   boxSizing: 'border-box',
-  height: 28, padding: '0 12px',
+  height: 28, padding: '0 10px',
   border: '1px solid var(--dsw-alias-border-l2, #dcdfe6)',
   borderRadius: 14,
   background: 'transparent',
@@ -559,7 +563,7 @@ const probeBarStyle: CSSProperties = {
 
 const probeButtonStyle: CSSProperties = {
   boxSizing: 'border-box',
-  height: 28, padding: '0 12px',
+  height: 28, padding: '0 10px',
   border: '1px solid var(--dsw-alias-state-business-primary, #4176e6)',
   borderRadius: 14,
   background: 'transparent',

@@ -46,6 +46,11 @@ function resolveConfig(input: Partial<MemoryConfig> | undefined, persisted?: Par
 /** 应用入口。 */
 export function applyMemory(ctx: Context, input: Partial<MemoryConfig> | undefined): void {
   const store = new MemoryStore()
+  // 单例共享：store 是「内存态权威副本 + 全量回刷磁盘」的设计，二次实例化会
+  // 各持一份内存态互相覆盖丢数据。webui 内部模块（如 tmp-cleaner 托管置顶
+  // 记忆）经 ctx.webuiMemoryStore 复用本实例，绝不自行 new MemoryStore()。
+  const shared = ctx as any
+  shared.webuiMemoryStore = store
   const config = resolveConfig(input, store.readConfigSync())
   const logError = (stage: string, error: unknown): void => {
     const message = error instanceof Error ? error.stack ?? error.message : String(error)
