@@ -48,4 +48,5 @@ export declare function buildCronPrompt(job: CronJob): string;
 export declare function executeJob(ctx: Context, llm: LlmLike, job: CronJob, signal?: AbortSignal): Promise<{
     summary: string;
     file?: string;
+    model: string;
 }>;

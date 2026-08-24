@@ -4,26 +4,48 @@
  *  │ 条目列表  │  详情：标题 / meta / 完整 MD │
  *  │ (紧凑行)  │  （查看 · 编辑 · 移动 · 新建）│
  *  └──────────┴────────────────────────────┘
- * 左列只放「标题 + 摘要 + 时间」，空间留给右侧详情做完整 Markdown 渲染；
- * 置顶条目排列表最前（📌 标识），时间分组作为列表内小节标题。
- * Tab（全部 / 变更）：变更 tab 为全宽列表（badge + 摘要 + 前后对比）。
+ * 左列只放「标题 + 摘要 + 时间 + 重要度迷你条」，空间留给右侧详情做完整 Markdown
+ * 渲染；置顶条目排列表最前（📌 标识），时间分组作为列表内小节标题。
+ *
+ * 四个 Tab：
+ *  - 全部：主从布局 + 搜索 / 标签 / 项目胶囊筛选 + 添加 / 多选删除 / 一键整理；
+ *  - 变更：全宽列表（动作徽标 + 摘要 + 前后对比），可切「今天 / 全部」；
+ *  - 修订：整理前快照，可一键回滚；
+ *  - 设置：引擎运行时配置（分组行卡片，见 SettingsTab）。
+ *
+ * 数据加载分片：list/tags 随筛选条件走；changes / revisions / config / summary
+ * 各自独立加载，切 Tab 时按需拉取——避免每次改一个字符就把五个接口全打一遍。
+ * 搜索框输入走 260ms 防抖。
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Button,
+  IconCloseFill14,
   IconEditOutline16,
   IconFolderOpenOutline16,
+  IconPlusOutline16,
   IconRefreshOutline14,
+  IconSearchOutline16,
+  IconSparkle16,
   IconTrashOutline16,
   Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { MarkstreamMarkdown } from '../markdown/renderer.js'
-import type { ChangeView, MemoryApi, MemoryConfigView, MemoryEntryView, MemoryListResponse, ProjectView, RevisionView } from './api.js'
+import type {
+  ChangeView,
+  MemoryApi,
+  MemoryConfigView,
+  MemoryEntryView,
+  MemoryKind,
+  MemoryListResponse,
+  MemorySummaryResponse,
+  ProjectView,
+  RevisionView,
+} from './api.js'
 import { css, ensureStyles } from './styles.js'
-import { changeActionLabel } from './Notify.tsx'
 import { SettingsTab } from './SettingsTab.js'
-import { makeT, type MemoryT } from './locales.js'
+import { makeT, type MemoryLocaleKey, type MemoryT } from './locales.js'
 import { modalStaggerClass } from '../modal-animation.js'
 import { PshBody, PshHead, PopoverShell, type PopoverAnchor } from '../popover-shell.js'
 
@@ -42,13 +64,19 @@ type ViewState =
 /** 项目筛选值：all | global | project:<hash>。 */
 type ScopeFilter = 'all' | 'global' | `project:${string}`
 
-/** 编辑中的条目（含归属范围，保存时可同时修改项目/全局）。 */
+/** 变更 Tab 的时间范围。 */
+type ChangeRange = 'today' | 'all'
+
+/** 编辑中的条目（含归属范围与元数据，保存时一并提交）。 */
 interface EditState {
   entryId: string
   content: string
   tags: string
   scope: 'global' | 'project'
   projectHash: string | null
+  importance: number
+  pinned: boolean
+  kind: MemoryKind
 }
 
 /** 移动中的条目。 */
@@ -74,6 +102,19 @@ export type MemoryPanelProps = {
   /** 轻量翻译函数（入口经 makeT 提供）。 */
   t?: MemoryT
 } & MemoryApi
+
+/** 全部记忆类型（编辑区下拉）。 */
+const KINDS: readonly MemoryKind[] = ['identity', 'preference', 'fact', 'decision', 'gotcha', 'session-summary']
+
+/** 记忆类型 → 文案 key。 */
+const KIND_LABEL: Record<MemoryKind, MemoryLocaleKey> = {
+  identity: 'kindIdentity',
+  preference: 'kindPreference',
+  fact: 'kindFact',
+  decision: 'kindDecision',
+  gotcha: 'kindGotcha',
+  'session-summary': 'kindSession',
+}
 
 /** 分割标签输入（逗号/空格/中文逗号）。 */
 function splitTags(raw: string): string[] {
@@ -105,7 +146,7 @@ function entrySnippet(content: string): string {
   return flat === '' ? trimmed.replace(/\s+/g, ' ').slice(0, 64) : flat.slice(0, 64)
 }
 
-/** 相对时间（今天 HH:mm / 昨天 / N 天前）。 */
+/** 相对时间（刚刚 / N 分钟前 / 昨天 / N 天前 / 日期）。 */
 function relativeTime(iso: string, now = new Date()): string {
   const time = Date.parse(iso)
   if (Number.isNaN(time)) return ''
@@ -119,6 +160,15 @@ function relativeTime(iso: string, now = new Date()): string {
   if (days === 1) return '昨天'
   if (days < 30) return `${days} 天前`
   return new Date(time).toLocaleDateString()
+}
+
+/** 绝对时间（详情脚注：本地日期 + 时分）。 */
+function absoluteTime(iso: string | null): string {
+  if (iso === null) return ''
+  const time = Date.parse(iso)
+  if (Number.isNaN(time)) return ''
+  const date = new Date(time)
+  return `${date.toLocaleDateString()} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
 }
 
 /** 按 updatedAt 分组（与 host groupEntries 一致）。 */
@@ -167,8 +217,7 @@ function containsSensitive(text: string): boolean {
 }
 
 /**
- * 大脑/记忆图标（Lucide `brain`，MIT 开源，24 viewBox + stroke-width 2，
- * 标准矢量设计——小尺寸下依然清晰，替代自绘细描边版）。
+ * 大脑/记忆图标（Lucide `brain`，MIT 开源，24 viewBox + stroke-width 2）。
  * 来源：https://lucide.dev/icons/brain
  */
 export function BrainIcon({ size = 16 }: { size?: number }): JSX.Element {
@@ -196,7 +245,7 @@ export function PinIcon({ size = 16, filled = false }: { size?: number; filled?:
   )
 }
 
-// ── 详情区 meta 徽章图标族（12px 线性，Lucide 形，stroke 继承 currentColor）──
+// ── 详情区 meta 徽章图标族（11px 线性，Lucide 形，stroke 继承 currentColor）──
 
 /** 全局作用域（地球）。 */
 function GlobeIcon({ size = 11 }: { size?: number }): JSX.Element {
@@ -248,6 +297,35 @@ function LayersIcon({ size = 11 }: { size?: number }): JSX.Element {
   )
 }
 
+/** 已确认（对勾盾）。 */
+function VerifiedIcon({ size = 11 }: { size?: number }): JSX.Element {
+  return (
+    <svg viewBox="0 0 16 16" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M8 1.8 13 3.4v4.1c0 3-2 5.5-5 6.7-3-1.2-5-3.7-5-6.7V3.4L8 1.8Z" />
+      <path d="m5.8 7.8 1.6 1.6 3-3.2" />
+    </svg>
+  )
+}
+
+/** 多选勾（列表勾选框内）。 */
+function CheckMark({ size = 12 }: { size?: number }): JSX.Element {
+  return (
+    <svg viewBox="0 0 16 16" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M3 8.5 6.5 12 13 4.5" />
+    </svg>
+  )
+}
+
+/** 电源（启用/禁用）。 */
+function PowerIcon({ size = 14, dim = false }: { size?: number; dim?: boolean }): JSX.Element {
+  return (
+    <svg viewBox="0 0 16 16" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" style={{ opacity: dim ? 0.45 : undefined }} aria-hidden="true">
+      <path d="M8 1.5v6" />
+      <path d="M11.3 3.7a4.7 4.7 0 1 1-6.6 0" />
+    </svg>
+  )
+}
+
 /** 重要度数值 → 条形百分比（初始 10、命中加分上不封顶；20 视为满格）。 */
 function importancePercent(importance: number): number {
   if (!Number.isFinite(importance) || importance <= 0) return 0
@@ -264,15 +342,21 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
   const [tab, setTab] = useState<MemoryTab>(initialTab ?? 'all')
   const [scope, setScope] = useState<ScopeFilter>('all')
   const [q, setQ] = useState('')
+  // 防抖后的搜索词：list 请求只跟这个走（边打字边请求会打爆 host）。
+  const [debouncedQ, setDebouncedQ] = useState('')
   const [tag, setTag] = useState('')
   const [state, setState] = useState<ViewState>({ status: 'loading' })
   const [allTags, setAllTags] = useState<Array<{ tag: string; count: number }>>([])
+  const [summary, setSummary] = useState<MemorySummaryResponse | null>(null)
   const [changes, setChanges] = useState<ChangeView[]>([])
+  const [changeRange, setChangeRange] = useState<ChangeRange>('today')
   const [revisions, setRevisions] = useState<RevisionView[]>([])
   const [editing, setEditing] = useState<EditState | null>(null)
   const [moving, setMoving] = useState<MoveState | null>(null)
   const [busy, setBusy] = useState(false)
+  const [consolidating, setConsolidating] = useState(false)
   const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
   // 手动添加记忆表单。
   const [adding, setAdding] = useState(false)
   const [addContent, setAddContent] = useState('')
@@ -285,51 +369,153 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
   // 多选删除模式。
   const [selecting, setSelecting] = useState(false)
   const [checkedIds, setCheckedIds] = useState<ReadonlySet<string>>(new Set())
-  // 运行时配置（面板设置）。
+  // 运行时配置（设置 Tab，按需加载）。
   const [config, setConfigState] = useState<MemoryConfigView | null>(null)
+  // 项目别名草稿（选中某项目时可改名）。
+  const [aliasDraft, setAliasDraft] = useState<string | null>(null)
 
-  const load = useCallback(async () => {
+  // 当前 tab / 变更范围的最新值（供 mutation 后的刷新决定拉哪些接口）。
+  const tabRef = useRef(tab)
+  tabRef.current = tab
+  const rangeRef = useRef(changeRange)
+  rangeRef.current = changeRange
+
+  // 搜索防抖：260ms 内的连续输入合并成一次请求。
+  useEffect(() => {
+    if (q === debouncedQ) return undefined
+    const timer = window.setTimeout(() => { setDebouncedQ(q) }, 260)
+    return () => { window.clearTimeout(timer) }
+  }, [q, debouncedQ])
+
+  // ── 数据加载（分片：条目 / 概览 / 变更 / 修订 / 配置各自独立）───────
+
+  const load = useCallback(async (options: { silent?: boolean } = {}) => {
     const current = apiRef.current
-    setState({ status: 'loading' })
+    if (options.silent !== true) setState({ status: 'loading' })
     setError('')
     try {
       const scopeParam = scope === 'all' ? undefined : scope === 'global' ? 'global' : 'project'
       const projectParam = scope.startsWith('project:') ? scope.slice('project:'.length) : undefined
-      const [list, tagsRes, changesRes, revisionsRes, configRes] = await Promise.all([
-        current.list({ scope: scopeParam, project: projectParam, q: q !== '' ? q : undefined, tag: tag !== '' ? tag : undefined }),
+      const [list, tagsRes] = await Promise.all([
+        current.list({
+          scope: scopeParam,
+          project: projectParam,
+          q: debouncedQ !== '' ? debouncedQ : undefined,
+          tag: tag !== '' ? tag : undefined,
+        }),
         current.tags(),
-        current.changes(),
-        current.revisions(),
-        current.getConfig(),
       ])
       setState({ status: 'ready', snapshot: list })
       setAllTags(tagsRes.tags)
-      setChanges(changesRes.changes)
-      setRevisions(revisionsRes.revisions)
-      setConfigState(configRes.config)
     } catch (loadError) {
       setState({ status: 'error' })
       setError(loadError instanceof Error ? loadError.message : String(loadError))
     }
-  }, [scope, q, tag])
+  }, [scope, debouncedQ, tag])
 
-  // 运行时配置补丁（面板设置）。
-  const patchConfig = useCallback(async (patch: Partial<MemoryConfigView>) => {
+  const loadSummary = useCallback(async () => {
     try {
-      const res = await apiRef.current.setConfig(patch)
-      setConfigState(res.config)
+      setSummary(await apiRef.current.summary())
+    } catch {
+      // 概览是装饰性信息，失败静默（不遮蔽列表本身的错误）。
+    }
+  }, [])
+
+  const loadChanges = useCallback(async (range: ChangeRange) => {
+    try {
+      const response = await apiRef.current.changes(range === 'all' ? 'all' : undefined)
+      setChanges(response.changes)
+    } catch (changesError) {
+      setError(changesError instanceof Error ? changesError.message : String(changesError))
+    }
+  }, [])
+
+  const loadRevisions = useCallback(async () => {
+    try {
+      setRevisions((await apiRef.current.revisions()).revisions)
+    } catch (revisionsError) {
+      setError(revisionsError instanceof Error ? revisionsError.message : String(revisionsError))
+    }
+  }, [])
+
+  const loadConfig = useCallback(async () => {
+    try {
+      setConfigState((await apiRef.current.getConfig()).config)
     } catch (configError) {
       setError(configError instanceof Error ? configError.message : String(configError))
     }
   }, [])
 
+  /** 运行时配置补丁（设置 Tab；host 会钳制越界值并回传结果）。 */
+  const patchConfig = useCallback(async (patchValue: Partial<MemoryConfigView>) => {
+    setError('')
+    try {
+      const response = await apiRef.current.setConfig(patchValue)
+      setConfigState(response.config)
+    } catch (configError) {
+      setError(configError instanceof Error ? configError.message : String(configError))
+    }
+  }, [])
+
+  /** 恢复引擎默认配置。 */
+  const resetConfig = useCallback(async () => {
+    setError('')
+    try {
+      const response = await apiRef.current.resetConfig()
+      setConfigState(response.config)
+      setNotice(t('settingsReset'))
+    } catch (configError) {
+      setError(configError instanceof Error ? configError.message : String(configError))
+    }
+  }, [t])
+
+  /** 改动后的静默刷新：条目 + 概览 + 当前 Tab 的数据。 */
+  const refresh = useCallback(async () => {
+    await load({ silent: true })
+    await loadSummary()
+    if (tabRef.current === 'changes') await loadChanges(rangeRef.current)
+    if (tabRef.current === 'revisions') await loadRevisions()
+  }, [load, loadSummary, loadChanges, loadRevisions])
+
   useEffect(() => {
-    if (open) void load()
-  }, [open, load])
+    if (!open) return
+    void load()
+    void loadSummary()
+  }, [open, load, loadSummary])
+
+  // Tab 按需加载：变更 / 修订 / 设置各自只在被打开时拉取。
+  useEffect(() => {
+    if (!open) return
+    if (tab === 'changes') void loadChanges(changeRange)
+    else if (tab === 'revisions') void loadRevisions()
+    else if (tab === 'settings') void loadConfig()
+  }, [open, tab, changeRange, loadChanges, loadRevisions, loadConfig])
 
   useEffect(() => {
     if (open && initialTab !== undefined) setTab(initialTab)
   }, [open, initialTab])
+
+  // 面板关闭时复位一次性态（多选集合 / 表单 / 提示语），避免重开时残留。
+  useEffect(() => {
+    if (open) return
+    setSelecting(false)
+    setCheckedIds(new Set())
+    setEditing(null)
+    setMoving(null)
+    setAdding(false)
+    setNotice('')
+    setError('')
+  }, [open])
+
+  // 切项目时清空别名草稿：草稿是「当前选中项目」的编辑态，跟着筛选一起复位。
+  useEffect(() => { setAliasDraft(null) }, [scope])
+
+  // 提示语（保存成功等）2.4s 后自动消失。
+  useEffect(() => {
+    if (notice === '') return undefined
+    const timer = window.setTimeout(() => { setNotice('') }, 2400)
+    return () => { window.clearTimeout(timer) }
+  }, [notice])
 
   // ── 裁决 / 条目操作 ──────────────────────────────────────────────────
 
@@ -342,24 +528,48 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
       setError(operationError instanceof Error ? operationError.message : String(operationError))
     } finally {
       setBusy(false)
-      // 无论操作成功与否都刷新列表：清除幽灵条目（已被外部删除/并发丢失的条目），
+      // 无论成功与否都刷新：清除幽灵条目（已被外部删除/并发丢失的条目），
       // 避免"删除报不存在但面板仍显示"。
-      await load()
+      await refresh()
     }
   }
 
   const handlePin = (entry: MemoryEntryView): void => {
-    void run(() => api.pin(entry.id, !entry.pinned))
+    void run(() => apiRef.current.pin(entry.id, !entry.pinned))
   }
 
   /** 启用/禁用单条记忆（禁用=保留但不参与注入与编译）。 */
   const handleEnable = (entry: MemoryEntryView): void => {
-    void run(() => api.enable(entry.id, entry.disabled))
+    void run(() => apiRef.current.enable(entry.id, entry.disabled))
   }
 
   const handleDelete = (entry: MemoryEntryView): void => {
     if (!window.confirm(t('deleteConfirm'))) return
-    void run(() => api.deleteEntry(entry.id))
+    void run(() => apiRef.current.deleteEntry(entry.id))
+  }
+
+  /** 一键整理（Memory Dream）：当前筛选为某项目时只整理该项目，否则全量。 */
+  const handleConsolidate = (): void => {
+    if (!window.confirm(t('consolidateConfirm'))) return
+    setConsolidating(true)
+    setError('')
+    void (async () => {
+      try {
+        const target: 'all' | 'global' | 'project' = scope === 'global'
+          ? 'global'
+          : scope.startsWith('project:') ? 'project' : 'all'
+        const hash = scope.startsWith('project:') ? scope.slice('project:'.length) : undefined
+        const response = await apiRef.current.consolidate(target, hash)
+        const changed = response.results.reduce((sum, result) => sum + result.changed, 0)
+        setNotice(changed > 0 ? t('consolidateDone', { n: changed }) : t('consolidateNoop'))
+      } catch (consolidateError) {
+        setError(consolidateError instanceof Error ? consolidateError.message : String(consolidateError))
+      } finally {
+        setConsolidating(false)
+        await refresh()
+        await loadRevisions()
+      }
+    })()
   }
 
   // ── 多选删除 ─────────────────────────────────────────────────────────
@@ -397,7 +607,7 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
       if (!window.confirm(t('sensitiveConfirm'))) return
     }
     void run(async () => {
-      await api.remember({
+      const created = await apiRef.current.remember({
         content,
         scope: addScope,
         projectHash: addScope === 'project' ? addProject : undefined,
@@ -410,6 +620,8 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
       setAddTags('')
       setAddPinned(false)
       setAddProject('')
+      setNotice(t('addSaved'))
+      setSelectedId(created.entry.id)
     })
   }
 
@@ -420,50 +632,81 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
     const project = projects.find(candidate => candidate.hash === hash)
     const name = project?.alias ?? project?.path.split(/[\\/]/).filter(Boolean).at(-1) ?? hash
     if (!window.confirm(t('clearProjectConfirm', { name, count: project?.entryCount ?? 0 }))) return
-    void run(() => api.deleteProject(hash))
+    void run(() => apiRef.current.deleteProject(hash))
+  }
+
+  /** 保存项目别名（空串=清除别名，回退目录名）。 */
+  const saveAlias = (hash: string, current: string | null): void => {
+    if (aliasDraft === null) return
+    const next = aliasDraft.trim()
+    setAliasDraft(null)
+    if (next === (current ?? '')) return
+    void run(async () => {
+      await apiRef.current.meta(hash, { alias: next })
+      setNotice(t('aliasSaved'))
+    })
   }
 
   /** 回滚到某修订版本。 */
   const handleRollback = (revision: RevisionView): void => {
     if (!window.confirm(t('rollbackConfirm', { id: revision.id, time: relativeTime(revision.at) }))) return
-    void run(() => api.rollback(revision.id))
+    void run(() => apiRef.current.rollback(revision.id))
   }
 
   const startEdit = (entry: MemoryEntryView): void => {
+    setAdding(false)
+    setMoving(null)
     setEditing({
       entryId: entry.id,
       content: entry.content,
       tags: entry.tags.join(', '),
       scope: entry.scope,
       projectHash: entry.projectHash,
+      importance: entry.importance,
+      pinned: entry.pinned,
+      kind: entry.kind,
     })
   }
 
   const saveEdit = (): void => {
     if (editing === null) return
+    const content = editing.content.trim()
+    if (content === '') {
+      setError(t('addContentPlaceholder'))
+      return
+    }
     void run(async () => {
-      await api.update(editing.entryId, {
-        content: editing.content.trim() !== '' ? editing.content : undefined,
-        tags: splitTags(editing.tags),
-      })
-      // 归属变更（全局 ⇄ 项目 / 换项目）。
       const original = state.status === 'ready'
         ? state.snapshot.entries.find(entry => entry.id === editing.entryId)
         : undefined
+      const updated = await apiRef.current.update(editing.entryId, {
+        content,
+        tags: splitTags(editing.tags),
+        importance: editing.importance,
+        pinned: editing.pinned,
+        kind: editing.kind,
+      })
+      // 归属变更（全局 ⇄ 项目 / 换项目）：update 后条目 id 可能因内容变化而重算，
+      // 所以 move 必须用 update 回传的最新 id，而不是编辑开始时的旧 id。
       const moved = original !== undefined
         && (editing.scope !== original.scope
           || (editing.scope === 'project' && editing.projectHash !== original.projectHash))
+      let finalId = updated.entry.id
       if (moved) {
-        await api.move(editing.entryId, {
+        const movedEntry = await apiRef.current.move(finalId, {
           scope: editing.scope,
           projectHash: editing.scope === 'project' && editing.projectHash !== null ? editing.projectHash : undefined,
         })
+        finalId = movedEntry.entry.id
       }
       setEditing(null)
+      setSelectedId(finalId)
     })
   }
 
   const startMove = (entry: MemoryEntryView): void => {
+    setAdding(false)
+    setEditing(null)
     setMoving({
       entryId: entry.id,
       target: entry.scope === 'global' ? 'project' : 'global',
@@ -475,14 +718,14 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
     if (moving === null) return
     void run(async () => {
       if (moving.target === 'project' && moving.project.trim() === '') {
-        throw new Error(t('projectPlaceholder'))
+        throw new Error(t('selectProject'))
       }
-      await api.move(moving.entryId, {
+      const moved = await apiRef.current.move(moving.entryId, {
         scope: moving.target,
         projectHash: moving.target === 'project' ? moving.project.trim() : undefined,
-        path: moving.target === 'project' ? moving.project.trim() : undefined,
       })
       setMoving(null)
+      setSelectedId(moved.entry.id)
     })
   }
 
@@ -490,10 +733,7 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
 
   const snapshot = state.status === 'ready' ? state.snapshot : null
   const projects: ProjectView[] = snapshot?.projects ?? []
-  const filtered = useMemo(() => {
-    if (snapshot === null) return []
-    return snapshot.entries
-  }, [snapshot])
+  const filtered = useMemo(() => snapshot?.entries ?? [], [snapshot])
 
   const pinned = useMemo(() => filtered.filter(entry => entry.pinned), [filtered])
   const grouped = useMemo(() => groupEntries(filtered.filter(entry => !entry.pinned)), [filtered])
@@ -533,8 +773,10 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
     const ids = [...checkedIds]
     if (ids.length === 0) return
     if (!window.confirm(t('deleteSelectedConfirm', { n: ids.length }))) return
+    // 批量路由：一次事务删完再编译一次产物（此前是 N 次 /delete，
+    // 每次都重编译一遍全部 md 产物）。
     void run(async () => {
-      await Promise.all(ids.map(id => api.deleteEntry(id)))
+      await apiRef.current.deleteBatch(ids)
       exitSelecting()
     })
   }
@@ -550,19 +792,16 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
           type="button"
           className={[
             css.item,
-            selected ? css.itemSelected : '',
+            (selecting ? checked : selected) ? css.itemSelected : '',
             enabled ? '' : css.itemDisabled,
           ].filter(Boolean).join(' ')}
           data-selected={(selecting ? checked : selected) || undefined}
+          aria-pressed={selecting ? checked : undefined}
           onClick={() => { if (selecting) toggleChecked(entry.id); else selectEntry(entry) }}
         >
           {selecting && (
             <span className={css.itemCheck} aria-hidden="true">
-              {checked && (
-                <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M3 8.5 6.5 12 13 4.5" />
-                </svg>
-              )}
+              {checked && <CheckMark />}
             </span>
           )}
           <span className={css.itemBody}>
@@ -579,7 +818,14 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
               {!enabled && <span className={css.disabledMark}>{t('disabledTag')}</span>}
             </span>
             <span className={css.itemSnippet}>{entrySnippet(entry.content)}</span>
-            <span className={css.itemTime}>{relativeTime(entry.updatedAt)}</span>
+            <span className={css.itemFoot}>
+              <span className={css.itemTime}>{relativeTime(entry.updatedAt)}</span>
+              <span
+                className={css.itemScore}
+                style={{ ['--pct' as string]: `${importancePercent(entry.importance)}%` }}
+                title={`${t('importanceTitle')} ${Number(entry.importance).toFixed(1)}`}
+              />
+            </span>
           </span>
         </button>
         {/* 行内启用开关：span role=switch（li>button 内禁嵌套 button），点击不触发行选中 */}
@@ -623,10 +869,7 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
             disabled={busy}
             onClick={() => { handleEnable(entry) }}
           >
-            <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" style={{ opacity: enabled ? undefined : 0.45 }} aria-hidden="true">
-              <path d="M8 1.5v6" />
-              <path d="M11.3 3.7a4.7 4.7 0 1 1-6.6 0" />
-            </svg>
+            <PowerIcon size={14} dim={!enabled} />
           </button>
         </Tooltip>
         <Tooltip label={t('edit')} side="bottom" delayMs={500}>
@@ -684,9 +927,37 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
     </>
   )
 
-  const renderEmpty = (text: string): JSX.Element => <div className={css.empty}>{text}</div>
+  /** 空态占位（图标 + 主文案 + 可选提示 + 可选动作按钮）。 */
+  const renderEmpty = (
+    text: string,
+    hint?: string,
+    action?: { label: string; onClick: () => void },
+  ): JSX.Element => (
+    <div className={css.empty}>
+      <span className={css.emptyIcon}><BrainIcon size={26} /></span>
+      <span className={css.emptyText}>{text}</span>
+      {hint !== undefined && <span className={css.emptyHint}>{hint}</span>}
+      {action !== undefined && (
+        <Button variant="outline" size="sm" onClick={action.onClick}>{action.label}</Button>
+      )}
+    </div>
+  )
+
+  /** 骨架屏（首次加载）。 */
+  const renderSkeleton = (): JSX.Element => (
+    <div className={css.skeleton} aria-busy="true">
+      <div className={css.skeletonRow} />
+      <div className={css.skeletonRow} />
+      <div className={css.skeletonRow} />
+      <div className={css.skeletonRow} />
+    </div>
+  )
 
   if (!open) return null
+
+  const selectedProject = scope.startsWith('project:')
+    ? projects.find(candidate => candidate.hash === scope.slice('project:'.length))
+    : undefined
 
   return (
     <PopoverShell
@@ -699,69 +970,127 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
       ariaLabel={t('panelTitle')}
     >
       <PshHead title={t('panelTitle')} closeLabel={t('close')} onClose={onClose} />
-      <PshBody className={css.modalBody ?? ''}>
+      <PshBody className={css.modalBody}>
       <div className={`${css.panel} ${modalStaggerClass}`} aria-busy={state.status === 'loading'}>
-        {/* Tab：全部 / 变更 */}
-        <div className={css.tabs} role="tablist">
-          {(['all', 'changes', 'revisions', 'settings'] as const).map(key => (
-            <button
-              key={key}
-              type="button"
-              role="tab"
-              aria-selected={tab === key}
-              className={tab === key ? `${css.tab} ${css.tabActive}` : css.tab}
-              onClick={() => { setTab(key); closeForms() }}
-            >
-              {key === 'all' ? t('tabAll') : key === 'changes' ? `${t('tabChanges')}${changes.length > 0 ? ` (${changes.length})` : ''}` : key === 'revisions' ? t('tabRevisions') : '设置'}
-            </button>
-          ))}
-        </div>
-
-        {/* 项目切换 + 自动记忆开关 + 清空项目 */}
-        <div className={css.topRow}>
-          <div className={css.projectChips} role="group" aria-label={t('scopeGlobal')}>
-            <button
-              type="button"
-              className={scope === 'all' ? `${css.projectChip} ${css.projectChipActive}` : css.projectChip}
-              onClick={() => { setScope('all') }}
-            >
-              {t('tabAll')}
-            </button>
-            <button
-              type="button"
-              className={scope === 'global' ? `${css.projectChip} ${css.projectChipActive}` : css.projectChip}
-              onClick={() => { setScope('global') }}
-            >
-              {t('scopeGlobal')}
-            </button>
-            {projects.map(project => (
+        {/* 头部：Tab 组 + 统计条 */}
+        <div className={css.head}>
+          <div className={css.tabs} role="tablist">
+            {(['all', 'changes', 'revisions', 'settings'] as const).map(key => (
               <button
-                key={project.hash}
+                key={key}
                 type="button"
-                title={project.path}
-                className={scope === `project:${project.hash}` ? `${css.projectChip} ${css.projectChipActive}` : css.projectChip}
-                onClick={() => { setScope(scope === `project:${project.hash}` ? 'all' : `project:${project.hash}`) }}
+                role="tab"
+                aria-selected={tab === key}
+                className={tab === key ? `${css.tab} ${css.tabActive}` : css.tab}
+                onClick={() => { setTab(key); closeForms(); exitSelecting() }}
               >
-                {project.alias ?? project.path.split(/[\\/]/).filter(Boolean).at(-1) ?? project.hash}
+                {key === 'all' ? t('tabAll')
+                  : key === 'changes' ? t('tabChanges')
+                    : key === 'revisions' ? t('tabRevisions') : t('tabSettings')}
+                {key === 'changes' && summary !== null && summary.todayChanges > 0 && (
+                  <span className={css.tabCount}>{summary.todayChanges}</span>
+                )}
               </button>
             ))}
           </div>
-          {/* 选中具体项目时：自动记忆开关 + 清空该项目全部记忆 */}
-          {scope.startsWith('project:') && (() => {
-            const hash = scope.slice('project:'.length)
-            const project = projects.find(candidate => candidate.hash === hash)
-            const autoOn = project?.autoMemory ?? true
-            return (
-              <>
+          {summary !== null && (
+            <div className={css.statBar}>
+              <span className={css.stat}>
+                <span className={css.statValue}>{summary.entryCount}</span>
+                {t('statEntries')}
+              </span>
+              <span className={css.statDot} aria-hidden="true" />
+              <span className={css.stat}>
+                <span className={css.statValue}>{summary.projectCount}</span>
+                {t('statProjects')}
+              </span>
+              <span className={css.statDot} aria-hidden="true" />
+              {summary.pinnedCount !== undefined && (
+                <span className={css.stat} title={t('tabPinned')}>
+                  <PinIcon size={11} filled />
+                  <span className={css.statValue}>{summary.pinnedCount}</span>
+                </span>
+              )}
+              {summary.longtermCount !== undefined && (
+                <span className={css.stat} title={t('groupLongterm')}>
+                  <LayersIcon size={11} />
+                  <span className={css.statValue}>{summary.longtermCount}</span>
+                </span>
+              )}
+              {summary.disabledCount !== undefined && summary.disabledCount > 0 && (
+                <span className={css.stat} title={t('disabledTag')}>
+                  <PowerIcon size={11} dim />
+                  <span className={css.statValue}>{summary.disabledCount}</span>
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* 项目切换 + 该项目的自动记忆开关 / 别名 / 清空（设置 Tab 不需要） */}
+        {tab !== 'settings' && (
+          <div className={css.topRow}>
+            <div className={css.projectChips} role="group" aria-label={t('scopeGlobal')}>
+              <button
+                type="button"
+                className={scope === 'all' ? `${css.projectChip} ${css.projectChipActive}` : css.projectChip}
+                onClick={() => { setScope('all') }}
+              >
+                <span>{t('tabAll')}</span>
+                {summary !== null && <span className={css.projectChipCount}>{summary.entryCount}</span>}
+              </button>
+              <button
+                type="button"
+                className={scope === 'global' ? `${css.projectChip} ${css.projectChipActive}` : css.projectChip}
+                onClick={() => { setScope('global') }}
+              >
+                <span>{t('scopeGlobal')}</span>
+                {summary?.globalCount !== undefined && (
+                  <span className={css.projectChipCount}>{summary.globalCount}</span>
+                )}
+              </button>
+              {projects.map(project => (
+                <button
+                  key={project.hash}
+                  type="button"
+                  title={project.path}
+                  className={scope === `project:${project.hash}` ? `${css.projectChip} ${css.projectChipActive}` : css.projectChip}
+                  onClick={() => { setScope(scope === `project:${project.hash}` ? 'all' : `project:${project.hash}`) }}
+                >
+                  <span>{project.alias ?? project.path.split(/[\\/]/).filter(Boolean).at(-1) ?? project.hash}</span>
+                  <span className={css.projectChipCount}>{project.entryCount}</span>
+                </button>
+              ))}
+            </div>
+            {selectedProject !== undefined && (
+              <div className={css.projectTools}>
+                <input
+                  className={css.inlineInput}
+                  style={{ width: 150 }}
+                  value={aliasDraft ?? selectedProject.alias ?? ''}
+                  placeholder={t('aliasPlaceholder')}
+                  aria-label={t('projectAlias')}
+                  title={t('projectAlias')}
+                  disabled={busy}
+                  onChange={event => { setAliasDraft(event.currentTarget.value) }}
+                  onBlur={() => { saveAlias(selectedProject.hash, selectedProject.alias) }}
+                  onKeyDown={event => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault()
+                      saveAlias(selectedProject.hash, selectedProject.alias)
+                    }
+                    if (event.key === 'Escape') setAliasDraft(null)
+                  }}
+                />
                 <span className={css.switchLine}>
                   <button
                     type="button"
                     className={css.switch}
                     role="switch"
-                    aria-checked={autoOn}
+                    aria-checked={selectedProject.autoMemory}
                     aria-label={t('autoMemory')}
                     disabled={busy}
-                    onClick={() => { void run(() => api.meta(hash, { autoMemory: !autoOn })) }}
+                    onClick={() => { void run(() => apiRef.current.meta(selectedProject.hash, { autoMemory: !selectedProject.autoMemory })) }}
                   />
                   <span className={css.switchText}>{t('autoMemory')}</span>
                 </span>
@@ -770,32 +1099,40 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
                     <IconTrashOutline16 size={14} />
                   </button>
                 </Tooltip>
-              </>
-            )
-          })()}
-        </div>
+              </div>
+            )}
+          </div>
+        )}
 
-        {/* 搜索 + 标签筛选 + 新建/多选（全部 Tab） */}
+        {/* 搜索 + 标签筛选 + 整理/新建/多选（全部 Tab） */}
         {tab === 'all' && (selecting ? (
           <div className={css.searchRow}>
             <span className={css.batchCount}>{t('selectedCount', { n: checkedIds.size })}</span>
             <button type="button" className={css.chip} onClick={toggleAllChecked}>{allChecked ? t('collapse') : t('selectAll')}</button>
-            <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
-              <Button variant="outline" size="sm" disabled={busy} onClick={exitSelecting}>{t('cancel')}</Button>
-              <Button variant="primary" size="sm" disabled={busy || checkedIds.size === 0} onClick={deleteChecked}>
-                {t('delete')} ({checkedIds.size})
-              </Button>
-            </div>
+            <span className={css.spacer} />
+            <Button variant="outline" size="sm" disabled={busy} onClick={exitSelecting}>{t('cancel')}</Button>
+            <Button variant="primary" size="sm" disabled={busy || checkedIds.size === 0} onClick={deleteChecked}>
+              {t('delete')} ({checkedIds.size})
+            </Button>
           </div>
         ) : (
           <div className={css.searchRow}>
-            <input
-              className={css.searchInput}
-              value={q}
-              placeholder={t('searchPlaceholder')}
-              aria-label={t('searchPlaceholder')}
-              onChange={(event) => { setQ(event.currentTarget.value) }}
-            />
+            <span className={css.searchBox}>
+              <span className={css.searchIcon}><IconSearchOutline16 size={14} /></span>
+              <input
+                className={css.searchInput}
+                value={q}
+                placeholder={t('searchPlaceholder')}
+                aria-label={t('searchPlaceholder')}
+                onChange={(event) => { setQ(event.currentTarget.value) }}
+                onKeyDown={event => { if (event.key === 'Escape' && q !== '') { event.preventDefault(); setQ('') } }}
+              />
+              {q !== '' && (
+                <button type="button" className={css.searchClear} aria-label={t('cancel')} onClick={() => { setQ('') }}>
+                  <IconCloseFill14 size={12} />
+                </button>
+              )}
+            </span>
             <select
               className={css.tagSelect}
               value={tag}
@@ -808,218 +1145,348 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
               ))}
             </select>
             <Tooltip label={t('retry')} side="top" delayMs={500}>
-              <button type="button" className={css.iconAction} aria-label={t('retry')} onClick={() => { void load() }}>
+              <button type="button" className={css.iconAction} aria-label={t('retry')} disabled={busy} onClick={() => { void refresh() }}>
                 <IconRefreshOutline14 />
               </button>
             </Tooltip>
+            <Tooltip label={consolidating ? t('consolidating') : t('consolidateHint')} side="top" delayMs={500}>
+              <button
+                type="button"
+                className={consolidating ? `${css.iconAction} ${css.iconActionBusy}` : css.iconAction}
+                aria-label={t('consolidate')}
+                disabled={busy || consolidating}
+                onClick={handleConsolidate}
+              >
+                <IconSparkle16 size={14} />
+              </button>
+            </Tooltip>
+            <span className={css.spacer} />
             <Button
               variant="ghost"
               size="sm"
+              icon={<IconPlusOutline16 size={14} />}
               aria-expanded={adding}
-              onClick={() => { setAdding(value => !value); setEditing(null); setMoving(null) }}
+              onClick={() => {
+                setAdding(value => !value)
+                setEditing(null)
+                setMoving(null)
+                if (scope.startsWith('project:')) {
+                  setAddScope('project')
+                  setAddProject(scope.slice('project:'.length))
+                }
+              }}
             >
               {t('add')}
             </Button>
-            <Button variant="ghost" size="sm" onClick={enterSelecting}>
+            <Button variant="ghost" size="sm" disabled={filtered.length === 0} onClick={enterSelecting}>
               {t('multiSelect')}
             </Button>
           </div>
         ))}
 
-        {error !== '' && <p className={css.error}>{error}</p>}
+        {/* 变更 Tab 的时间范围切换 */}
+        {tab === 'changes' && (
+          <div className={css.searchRow}>
+            {(['today', 'all'] as const).map(range => (
+              <button
+                key={range}
+                type="button"
+                className={changeRange === range ? `${css.projectChip} ${css.projectChipActive}` : css.projectChip}
+                onClick={() => { setChangeRange(range) }}
+              >
+                <span>{range === 'today' ? t('changesToday') : t('changesAll')}</span>
+                {changeRange === range && <span className={css.projectChipCount}>{visibleChanges.length}</span>}
+              </button>
+            ))}
+            <span className={css.spacer} />
+            <Tooltip label={t('retry')} side="top" delayMs={500}>
+              <button type="button" className={css.iconAction} aria-label={t('retry')} disabled={busy} onClick={() => { void loadChanges(changeRange) }}>
+                <IconRefreshOutline14 />
+              </button>
+            </Tooltip>
+          </div>
+        )}
 
-        {state.status === 'loading' && renderEmpty(t('loading'))}
-        {state.status === 'error' && (
+        {notice !== '' && <p className={css.notice}>{notice}</p>}
+        {error !== '' && <p className={css.error} role="alert">{error}</p>}
+
+        {tab === 'all' && state.status === 'loading' && renderSkeleton()}
+        {tab === 'all' && state.status === 'error' && (
           <div className={css.empty}>
-            {t('error')}
-            <button type="button" className={css.chip} onClick={() => { void load() }}>{t('retry')}</button>
+            <span className={css.emptyIcon}><BrainIcon size={26} /></span>
+            <span className={css.emptyText}>{t('error')}</span>
+            <Button variant="outline" size="sm" onClick={() => { void load() }}>{t('retry')}</Button>
           </div>
         )}
 
         {/* 全部：主从布局（左列表 / 右详情） */}
         {state.status === 'ready' && tab === 'all' && (
-          filtered.length === 0 ? renderEmpty(t('empty')) : (
-            <div className={css.split}>
-              {/* 左列：紧凑条目列表（置顶在前 + 时间分组小节） */}
+          <div className={css.split}>
+            {/* 左列：紧凑条目列表（置顶在前 + 时间分组小节） */}
+            {filtered.length === 0 ? (
+              // 空态用 div 承载（ul 里塞非 li 元素不合法）；类名沿用左列几何。
+              <div className={css.listPane}>
+                {renderEmpty(
+                  q !== '' || tag !== '' ? t('searchEmpty') : t('empty'),
+                  q !== '' || tag !== '' ? t('searchEmptyHint') : undefined,
+                  q !== '' || tag !== ''
+                    ? { label: t('clearFilters'), onClick: () => { setQ(''); setTag('') } }
+                    : undefined,
+                )}
+              </div>
+            ) : (
               <ul className={css.listPane}>
-                {pinned.length > 0 && <li className={css.listSection}>{t('tabPinned')}</li>}
+                {pinned.length > 0 && (
+                  <li className={css.listSection}>
+                    {t('tabPinned')}
+                    <span className={css.listSectionCount}>{pinned.length}</span>
+                  </li>
+                )}
                 {pinned.map(renderItemRow)}
                 {(Object.keys(grouped) as GroupKey[]).map(groupKey => (
                   grouped[groupKey].length > 0 ? (
                     [
-                      <li key={`${groupKey}-section`} className={css.listSection}>{groupTitles[groupKey]}</li>,
+                      <li key={`${groupKey}-section`} className={css.listSection}>
+                        {groupTitles[groupKey]}
+                        <span className={css.listSectionCount}>{grouped[groupKey].length}</span>
+                      </li>,
                       ...grouped[groupKey].map(renderItemRow),
                     ]
                   ) : null
                 ))}
               </ul>
-              {/* 右侧：详情（查看 / 编辑 / 移动 / 新建） */}
-              <div className={css.detailPane}>
-                {adding ? (
-                  <div className={css.detailForm}>
+            )}
+            {/* 右侧：详情（查看 / 编辑 / 移动 / 新建） */}
+            <div className={css.detailPane}>
+              {adding ? (
+                <div className={css.detailForm}>
+                  <span className={css.formTitle}>{t('addTitle')}</span>
+                  <label className={css.field}>
+                    <span className={css.fieldLabel}>{t('addContentPlaceholder')}</span>
                     <textarea
                       className={css.inlineTextarea}
-                      style={{ minHeight: 220 }}
+                      style={{ minHeight: 200 }}
                       value={addContent}
                       placeholder={t('addContentPlaceholder')}
                       aria-label={t('addContentPlaceholder')}
                       autoFocus
                       onChange={(event) => { setAddContent(event.currentTarget.value) }}
                     />
-                    <div className={css.addMeta}>
-                      <input
-                        className={css.inlineInput}
-                        style={{ flex: 1, minWidth: 120 }}
-                        value={addTags}
-                        placeholder={t('addTagsPlaceholder')}
-                        aria-label={t('addTagsPlaceholder')}
-                        onChange={(event) => { setAddTags(event.currentTarget.value) }}
-                      />
-                      <label className={css.check}>
-                        <input type="checkbox" checked={addPinned} onChange={(event) => { setAddPinned(event.currentTarget.checked) }} />
-                        {t('addPinned')}
-                      </label>
-                      {scopeFields('dsh-memory-add-scope', addScope, setAddScope, addProject, setAddProject)}
-                    </div>
-                    <div className={css.editButtons}>
-                      <Button variant="primary" disabled={busy || addContent.trim() === ''} onClick={saveAdd}>{t('save')}</Button>
-                      <Button variant="outline" disabled={busy} onClick={() => { setAdding(false) }}>{t('cancel')}</Button>
-                    </div>
+                  </label>
+                  <label className={css.field}>
+                    <span className={css.fieldLabel}>{t('addTagsPlaceholder')}</span>
+                    <input
+                      className={css.inlineInput}
+                      value={addTags}
+                      placeholder={t('addTagsPlaceholder')}
+                      aria-label={t('addTagsPlaceholder')}
+                      onChange={(event) => { setAddTags(event.currentTarget.value) }}
+                    />
+                  </label>
+                  <div className={css.addMeta}>
+                    <label className={css.check}>
+                      <input type="checkbox" checked={addPinned} onChange={(event) => { setAddPinned(event.currentTarget.checked) }} />
+                      {t('addPinned')}
+                    </label>
+                    {scopeFields('dsh-memory-add-scope', addScope, setAddScope, addProject, setAddProject)}
                   </div>
-                ) : editing !== null && detail !== null && detail.id === editing.entryId ? (
-                  <div className={css.detailForm}>
+                  <div className={css.editButtons}>
+                    <Button variant="outline" disabled={busy} onClick={() => { setAdding(false) }}>{t('cancel')}</Button>
+                    <Button variant="primary" disabled={busy || addContent.trim() === ''} onClick={saveAdd}>{t('save')}</Button>
+                  </div>
+                </div>
+              ) : editing !== null ? (
+                <div className={css.detailForm}>
+                  <span className={css.formTitle}>{t('editTitle')}</span>
+                  <label className={css.field}>
+                    <span className={css.fieldLabel}>{t('addContentPlaceholder')}</span>
                     <textarea
                       className={css.inlineTextarea}
-                      style={{ minHeight: 220 }}
+                      style={{ minHeight: 200 }}
                       value={editing.content}
                       aria-label={t('edit')}
                       onChange={(event) => { setEditing({ ...editing, content: event.currentTarget.value }) }}
                     />
-                    <div className={css.addMeta}>
+                  </label>
+                  <label className={css.field}>
+                    <span className={css.fieldLabel}>{t('tagEditPlaceholder')}</span>
+                    <input
+                      className={css.inlineInput}
+                      value={editing.tags}
+                      placeholder={t('tagEditPlaceholder')}
+                      aria-label={t('tagEditPlaceholder')}
+                      onChange={(event) => { setEditing({ ...editing, tags: event.currentTarget.value }) }}
+                    />
+                  </label>
+                  <div className={css.fieldRow}>
+                    <label className={css.field}>
+                      <span className={css.fieldLabel}>{t('importanceField')}</span>
                       <input
-                        className={css.inlineInput}
-                        style={{ flex: 1, minWidth: 120 }}
-                        value={editing.tags}
-                        placeholder={t('tagEditPlaceholder')}
-                        aria-label={t('tagEditPlaceholder')}
-                        onChange={(event) => { setEditing({ ...editing, tags: event.currentTarget.value }) }}
+                        type="number"
+                        className={css.numberInput}
+                        min={1}
+                        max={20}
+                        step={0.5}
+                        value={editing.importance}
+                        aria-label={t('importanceField')}
+                        onChange={(event) => {
+                          const next = Number(event.currentTarget.value)
+                          if (Number.isFinite(next)) setEditing({ ...editing, importance: Math.max(1, Math.min(20, next)) })
+                        }}
                       />
-                      {scopeFields(`dsh-memory-edit-scope-${editing.entryId}`, editing.scope, (next) => {
-                        setEditing({ ...editing, scope: next, projectHash: next === 'global' ? null : editing.projectHash })
-                      }, editing.projectHash ?? '', (hash) => { setEditing({ ...editing, scope: 'project', projectHash: hash }) })}
-                    </div>
-                    <div className={css.editButtons}>
-                      <Button variant="primary" disabled={busy} onClick={saveEdit}>{t('save')}</Button>
-                      <Button variant="outline" disabled={busy} onClick={() => { setEditing(null) }}>{t('cancel')}</Button>
-                    </div>
-                  </div>
-                ) : moving !== null && detail !== null && detail.id === moving.entryId ? (
-                  <div className={css.detailForm}>
-                    <div className={css.editButtons} style={{ justifyContent: 'flex-start' }}>
-                      <Button
-                        variant={moving.target === 'global' ? 'primary' : 'outline'}
-                        disabled={busy}
-                        onClick={() => { setMoving({ ...moving, target: 'global' }) }}
+                    </label>
+                    <label className={css.field}>
+                      <span className={css.fieldLabel}>{t('kindLabel')}</span>
+                      <select
+                        className={css.tagSelect}
+                        value={editing.kind}
+                        aria-label={t('kindLabel')}
+                        onChange={(event) => { setEditing({ ...editing, kind: event.currentTarget.value as MemoryKind }) }}
                       >
-                        {t('moveToGlobal')}
-                      </Button>
-                      <Button
-                        variant={moving.target === 'project' ? 'primary' : 'outline'}
-                        disabled={busy}
-                        onClick={() => { setMoving({ ...moving, target: 'project' }) }}
-                      >
-                        {t('moveToProject')}
-                      </Button>
-                    </div>
-                    {moving.target === 'project' && (
-                      <input
-                        className={css.inlineInput}
-                        value={moving.project}
-                        placeholder={t('projectPlaceholder')}
-                        aria-label={t('projectPlaceholder')}
-                        onChange={(event) => { setMoving({ ...moving, project: event.currentTarget.value }) }}
-                      />
-                    )}
-                    <div className={css.editButtons}>
-                      <Button variant="primary" disabled={busy} onClick={saveMove}>{t('save')}</Button>
-                      <Button variant="outline" disabled={busy} onClick={() => { setMoving(null) }}>{t('cancel')}</Button>
-                    </div>
-                  </div>
-                ) : detail !== null ? (
-                  <>
-                    <div className={css.detailHead}>
-                      <h3 className={css.detailTitle}>{entryTitle(detail.content)}</h3>
-                      {detailActions(detail)}
-                    </div>
-                    <div className={css.detailMeta}>
-                      <span className={css.metaBadge} title={detail.scope === 'global' ? t('scopeGlobal') : undefined}>
-                        {detail.scope === 'global' ? <GlobeIcon /> : <FolderIcon />}
-                        {detail.scope === 'global' ? t('scopeGlobal') : projectName(detail.projectHash, projects)}
-                      </span>
-                      <span className={detail.source === 'manual' ? `${css.metaBadge} ${css.metaBadgeAccent}` : css.metaBadge}>
-                        {detail.source === 'manual' ? <PenIcon /> : <SparkIcon />}
-                        {detail.source === 'manual' ? t('sourceManual') : t('sourceExtract')}
-                      </span>
-                      {detail.layer === 'long' && (
-                        <span className={`${css.metaBadge} ${css.metaBadgeWarn}`}>
-                          <LayersIcon />
-                          {t('groupLongterm')}
-                        </span>
-                      )}
-                      {detail.pinned && (
-                        <span className={`${css.metaBadge} ${css.metaBadgeWarn}`} title={t('pin')}><PinIcon size={11} filled /></span>
-                      )}
-                      <span className={css.metaTime}>{relativeTime(detail.updatedAt)}</span>
-                    </div>
-                    <div className={css.importanceRow}>
-                      <span className={css.importanceLabel}>{t('importanceTitle')}</span>
-                      <span className={css.importanceBar} role="img" aria-label={t('importanceTitle')}>
-                        <i style={{ width: `${importancePercent(detail.importance)}%` }} />
-                      </span>
-                      <span className={css.importanceValue}>{Number(detail.importance).toFixed(1)}</span>
-                    </div>
-                    <div className={css.detailBody}>
-                      <MarkstreamMarkdown text={detail.content} streaming={false} />
-                    </div>
-                    {detail.tags.length > 0 && (
-                      <div className={css.detailTags}>
-                        {detail.tags.map(tagName => (
-                          <button
-                            key={tagName}
-                            type="button"
-                            className={tag === tagName ? `${css.chip} ${css.chipActive}` : css.chip}
-                            onClick={() => { setTag(tag === tagName ? '' : tagName) }}
-                          >
-                            {tagName}
-                          </button>
+                        {KINDS.map(kind => (
+                          <option key={kind} value={kind}>{t(KIND_LABEL[kind])}</option>
                         ))}
-                      </div>
+                      </select>
+                    </label>
+                  </div>
+                  <div className={css.addMeta}>
+                    <label className={css.check}>
+                      <input type="checkbox" checked={editing.pinned} onChange={(event) => { setEditing({ ...editing, pinned: event.currentTarget.checked }) }} />
+                      {t('pin')}
+                    </label>
+                    {scopeFields(`dsh-memory-edit-scope-${editing.entryId}`, editing.scope, (next) => {
+                      setEditing({ ...editing, scope: next, projectHash: next === 'global' ? null : editing.projectHash })
+                    }, editing.projectHash ?? '', (hash) => { setEditing({ ...editing, scope: 'project', projectHash: hash }) })}
+                  </div>
+                  <div className={css.editButtons}>
+                    <Button variant="outline" disabled={busy} onClick={() => { setEditing(null) }}>{t('cancel')}</Button>
+                    <Button variant="primary" disabled={busy || editing.content.trim() === ''} onClick={saveEdit}>{t('save')}</Button>
+                  </div>
+                </div>
+              ) : moving !== null ? (
+                <div className={css.detailForm}>
+                  <span className={css.formTitle}>{t('moveTitle')}</span>
+                  <div className={css.addMeta}>
+                    {scopeFields(`dsh-memory-move-scope-${moving.entryId}`, moving.target, (next) => {
+                      setMoving({ ...moving, target: next })
+                    }, moving.project, (hash) => { setMoving({ ...moving, target: 'project', project: hash }) })}
+                  </div>
+                  <div className={css.editButtons}>
+                    <Button variant="outline" disabled={busy} onClick={() => { setMoving(null) }}>{t('cancel')}</Button>
+                    <Button
+                      variant="primary"
+                      disabled={busy || (moving.target === 'project' && moving.project.trim() === '')}
+                      onClick={saveMove}
+                    >
+                      {t('save')}
+                    </Button>
+                  </div>
+                </div>
+              ) : detail !== null ? (
+                <>
+                  <div className={css.detailHead}>
+                    <h3 className={css.detailTitle}>{entryTitle(detail.content)}</h3>
+                    {detailActions(detail)}
+                  </div>
+                  <div className={css.detailMeta}>
+                    <span className={css.metaBadge} title={detail.scope === 'global' ? t('scopeGlobal') : projectName(detail.projectHash, projects)}>
+                      {detail.scope === 'global' ? <GlobeIcon /> : <FolderIcon />}
+                      {detail.scope === 'global' ? t('scopeGlobal') : projectName(detail.projectHash, projects)}
+                    </span>
+                    <span className={detail.source === 'manual' ? `${css.metaBadge} ${css.metaBadgeAccent}` : css.metaBadge}>
+                      {detail.source === 'manual' ? <PenIcon /> : <SparkIcon />}
+                      {detail.source === 'manual' ? t('sourceManual') : t('sourceExtract')}
+                    </span>
+                    <span className={css.metaBadge} title={t('kindLabel')}>{t(KIND_LABEL[detail.kind])}</span>
+                    {detail.layer === 'long' && (
+                      <span className={`${css.metaBadge} ${css.metaBadgeWarn}`}>
+                        <LayersIcon />
+                        {t('groupLongterm')}
+                      </span>
                     )}
-                  </>
-                ) : (
-                  renderEmpty(t('empty'))
-                )}
-              </div>
+                    {detail.pinned && (
+                      <span className={`${css.metaBadge} ${css.metaBadgeWarn}`} title={t('pin')}>
+                        <PinIcon size={11} filled />
+                        {t('tabPinned')}
+                      </span>
+                    )}
+                    {detail.verified
+                      ? <span className={css.metaBadge} title={t('verified')}><VerifiedIcon />{t('verified')}</span>
+                      : <span className={`${css.metaBadge} ${css.metaBadgeMuted}`} title={t('unverified')}>{t('unverified')}</span>}
+                    {detail.disabled && <span className={css.disabledMark}>{t('disabledTag')}</span>}
+                    <span className={css.metaTime} title={absoluteTime(detail.updatedAt)}>{relativeTime(detail.updatedAt)}</span>
+                  </div>
+                  <div className={css.importanceRow}>
+                    <span className={css.importanceLabel}>{t('importanceTitle')}</span>
+                    <span className={css.importanceBar} role="img" aria-label={t('importanceTitle')}>
+                      <i style={{ width: `${importancePercent(detail.importance)}%` }} />
+                    </span>
+                    <span className={css.importanceValue}>{Number(detail.importance).toFixed(1)}</span>
+                    <span className={css.importanceLabel}>{t('confidenceTitle')}</span>
+                    <span className={css.importanceValue}>{Math.round(detail.confidence * 100)}%</span>
+                  </div>
+                  <div className={css.detailBody}>
+                    <MarkstreamMarkdown text={detail.content} streaming={false} />
+                  </div>
+                  {detail.tags.length > 0 && (
+                    <div className={css.detailTags}>
+                      {detail.tags.map(tagName => (
+                        <button
+                          key={tagName}
+                          type="button"
+                          className={tag === tagName ? `${css.chip} ${css.chipActive}` : css.chip}
+                          onClick={() => { setTag(tag === tagName ? '' : tagName) }}
+                        >
+                          {tagName}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <div className={css.detailFoot}>
+                    <span>{t('versionTitle', { n: detail.version })}</span>
+                    <span className={css.statDot} aria-hidden="true" />
+                    <span>{t('createdAtLabel', { time: absoluteTime(detail.createdAt) })}</span>
+                    <span className={css.statDot} aria-hidden="true" />
+                    <span>{detail.lastHitAt === null ? t('neverHit') : t('lastHitLabel', { time: relativeTime(detail.lastHitAt) })}</span>
+                  </div>
+                </>
+              ) : (
+                renderEmpty(
+                  filtered.length === 0 ? t('empty') : t('detailPlaceholder'),
+                  filtered.length === 0 ? t('consolidateHint') : undefined,
+                )
+              )}
             </div>
-          )
+          </div>
         )}
 
         {/* 变更（按当前 全部/全局/项目 筛选；全宽列表） */}
-        {state.status === 'ready' && tab === 'changes' && (
+        {tab === 'changes' && (
           visibleChanges.length === 0
             ? renderEmpty(t('changesEmpty'))
             : <ul className={css.cardList}>{visibleChanges.map(renderChange)}</ul>
         )}
 
         {/* 修订版本（整理前快照，可一键回滚） */}
-        {state.status === 'ready' && tab === 'revisions' && (
+        {tab === 'revisions' && (
           revisions.length === 0
             ? renderEmpty(t('revisionsEmpty'))
             : <ul className={css.cardList}>{revisions.map(renderRevision)}</ul>
         )}
 
         {/* 设置（运行时配置，改动即时生效） */}
-        {tab === 'settings' && <SettingsTab config={config} onPatch={v => { void patchConfig(v) }} />}
+        {tab === 'settings' && (
+          <SettingsTab
+            config={config}
+            busy={busy}
+            t={t}
+            onPatch={patchValue => { void patchConfig(patchValue) }}
+            onReset={() => {
+              if (!window.confirm(t('settingsResetConfirm'))) return
+              void resetConfig()
+            }}
+          />
+        )}
       </div>
       </PshBody>
     </PopoverShell>
@@ -1032,15 +1499,17 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
         <span className={css.changeBadge}>{revision.trigger === 'manual' ? t('revManual') : t('revDaily')}</span>
         <div className={css.changeMain}>
           <div className={css.cardMeta}>
-            <span>{revision.scope}</span>
+            <span>{revision.scope === 'global' ? t('scopeGlobal') : revision.scope}</span>
+            <span className={css.statDot} aria-hidden="true" />
             <span>{t('revEntries', { n: revision.entryCount })}</span>
-            <span>{relativeTime(revision.at)}</span>
+            <span className={css.statDot} aria-hidden="true" />
+            <span title={absoluteTime(revision.at)}>{relativeTime(revision.at)}</span>
           </div>
-          <div className={css.revActions}>
-            <Button variant="outline" size="sm" disabled={busy} onClick={() => { handleRollback(revision) }}>
-              {t('rollback')}
-            </Button>
-          </div>
+        </div>
+        <div className={css.revActions}>
+          <Button variant="outline" size="sm" disabled={busy} onClick={() => { handleRollback(revision) }}>
+            {t('rollback')}
+          </Button>
         </div>
       </li>
     )
@@ -1049,15 +1518,21 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
   /** 渲染一条变更（含前后内容对比，无删除按钮）。 */
   function renderChange(change: ChangeView): JSX.Element {
     const hasDiff = change.before !== undefined && change.after !== undefined && change.before !== change.after
+    const badgeClass = change.action === 'delete'
+      ? `${css.changeBadge} ${css.changeBadgeDelete}`
+      : change.action === 'add'
+        ? `${css.changeBadge} ${css.changeBadgeAdd}`
+        : change.action === 'promote'
+          ? `${css.changeBadge} ${css.changeBadgePromote}`
+          : css.changeBadge
     return (
       <li key={change.id} className={css.changeRow}>
-        <span className={change.action === 'delete' ? `${css.changeBadge} ${css.changeBadgeDelete}` : css.changeBadge}>
-          {changeActionLabel(change.action)}
-        </span>
+        <span className={badgeClass}>{changeActionLabel(change.action, t)}</span>
         <div className={css.changeMain}>
           <div className={css.cardMeta}>
-            <span>{change.scope === 'global' ? t('scopeGlobal') : change.projectHash ?? ''}</span>
-            <span>{relativeTime(change.at)}</span>
+            <span>{change.scope === 'global' ? t('scopeGlobal') : projectName(change.projectHash, projects)}</span>
+            <span className={css.statDot} aria-hidden="true" />
+            <span title={absoluteTime(change.at)}>{relativeTime(change.at)}</span>
           </div>
           {change.action === 'delete' ? (
             <div className={css.cardContent}>{change.summary}</div>
@@ -1080,5 +1555,15 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
         </div>
       </li>
     )
+  }
+}
+
+/** 变更动作徽标文案（双语，走面板 t）。 */
+export function changeActionLabel(action: ChangeView['action'], t: MemoryT): string {
+  switch (action) {
+    case 'add': return t('changeAdd')
+    case 'update': return t('changeUpdate')
+    case 'promote': return t('changePromote')
+    case 'delete': return t('changeDelete')
   }
 }

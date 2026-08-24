@@ -1,7 +1,7 @@
 /**
  * dsh-memory 侧边栏导航行入口（「自动化」菜单下方，sidebar-nav memory 槽位）：
  * 图标用「大脑/记忆」线性 SVG（无 emoji），rail 态只留图标；右上角 badge 显示
- * 当日未读变更数。面板卡片以按钮为锚点从右侧滑出（automation 同款 popover）；
+ * 未读变更数。面板卡片以按钮为锚点从右侧滑出（automation 同款 popover）；
  * 有未读变更时打开直达「变更」Tab。
  */
 
@@ -53,33 +53,16 @@ export function MemoryNavApp(): JSX.Element | null {
           openPanel(unread.count > 0 ? 'changes' : 'all')
         }}
       />
+      {/* api 整体展开：面板 props 是 MemoryApi 的超集，逐字段列举会在
+          API 面新增方法（deleteBatch / resetConfig 等）时漏传而编译失败。 */}
       <MemoryPanel
+        {...api}
         open={open}
         closing={closing}
         onClose={requestClose}
         initialTab={initialTab}
         anchor={anchor}
         t={t}
-        list={api.list}
-        projects={api.projects}
-        tags={api.tags}
-        changes={api.changes}
-        summary={api.summary}
-        pin={api.pin}
-        enable={api.enable}
-        update={api.update}
-        move={api.move}
-        deleteEntry={api.deleteEntry}
-        deleteProject={api.deleteProject}
-        meta={api.meta}
-        remember={api.remember}
-        getInjectState={api.getInjectState}
-        setInjectState={api.setInjectState}
-        consolidate={api.consolidate}
-        revisions={api.revisions}
-        rollback={api.rollback}
-        getConfig={api.getConfig}
-        setConfig={api.setConfig}
       />
     </NavPortal>
   )

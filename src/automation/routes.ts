@@ -8,7 +8,13 @@
  *   GET  /api/webui-automation/runs?jobId=&limit=   → { runs }（运行历史）
  *   GET  /api/webui-automation/suggestions          → { suggestions }（待确认建议）
  *   POST /api/webui-automation/suggestions          → { action: dismiss|apply }
- *   GET  /api/webui-automation/events?since=<ms>    → { events }（完成事件，供 toast）
+ *   GET  /api/webui-automation/events?since=<seq>   → { events }（完成事件，供 toast）
+ *   GET  /api/webui-automation/settings             → { autoApprove }
+ *   POST /api/webui-automation/settings             → { autoApprove }（写入 settings.yaml）
+ *
+ * POST /cron 支持的 action：
+ *   add / remove / toggle / update / duplicate / run_now / cancel / clear_runs /
+ *   apply_suggestion
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http'
@@ -18,7 +24,8 @@ import { URL } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
 import { CodedError, normalizeModelRef, type CronJob, type JobType, type RunRecord } from './types.js'
 import { automationDataRoot, type CronStore } from './store.js'
-import type { AutomationSuggestionStore, SuggestionView } from './suggestions.js'
+import type { CronScheduler } from './scheduler.js'
+import type { AutomationSuggestionStore } from './suggestions.js'
 
 export const ROUTE_PREFIX = '/api/webui-automation'
 
@@ -183,10 +190,22 @@ export interface RouteDeps {
   store: CronStore
   suggestions: AutomationSuggestionStore
   events: AutomationEventBuffer
+  /** 调度器读取面（llm 不可用时为 null：立即运行/中止降级为 503）。 */
+  scheduler: () => CronScheduler | null
+  /** 设置读写面（settings.yaml 持久化的 autoApprove）。 */
+  settings: {
+    read: () => { autoApprove: boolean }
+    write: (patch: { autoApprove?: boolean }) => Promise<void>
+  }
 }
 
 /** 注册全部自动化路由；返回 disposer。 */
-export function registerAutomationRoutes({ webServer, store, suggestions, events }: RouteDeps): () => void {
+export function registerAutomationRoutes({ webServer, store, suggestions, events, scheduler, settings }: RouteDeps): () => void {
+  /** 任务列表 + 运行中 id（所有变更动作统一回这份最新快照）。 */
+  function jobsPayload(): { jobs: CronJob[], running: string[] } {
+    return { jobs: store.listJobs(), running: scheduler()?.runningIds() ?? [] }
+  }
+
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!loopbackAllowed(req)) {
       json(res, 403, { ok: false, error: 'loopback-only' })
@@ -196,9 +215,9 @@ export function registerAutomationRoutes({ webServer, store, suggestions, events
     const rest = url.pathname.slice(ROUTE_PREFIX.length)
     const method = req.method ?? 'GET'
     try {
-      // ── 任务列表 ──
+      // ── 任务列表（附带「正在执行」的任务 id，UI 显示运行中态）──
       if (method === 'GET' && rest === '/cron') {
-        json(res, 200, { ok: true, jobs: store.listJobs() })
+        json(res, 200, { ok: true, jobs: store.listJobs(), running: scheduler()?.runningIds() ?? [] })
         return
       }
 
@@ -224,7 +243,7 @@ export function registerAutomationRoutes({ webServer, store, suggestions, events
               model: normalizeModelRef(params.model),
               enabled: params.enabled !== false,
             })
-            json(res, 200, { ok: true, job, jobs: store.listJobs() })
+            json(res, 200, { ok: true, job, ...jobsPayload() })
             return
           }
 
@@ -235,7 +254,7 @@ export function registerAutomationRoutes({ webServer, store, suggestions, events
               json(res, 404, { ok: false, error: `找不到任务 ${id}` })
               return
             }
-            json(res, 200, { ok: true, jobs: store.listJobs() })
+            json(res, 200, { ok: true, ...jobsPayload() })
             return
           }
 
@@ -246,7 +265,7 @@ export function registerAutomationRoutes({ webServer, store, suggestions, events
               json(res, 404, { ok: false, error: `找不到任务 ${id}` })
               return
             }
-            json(res, 200, { ok: true, job, jobs: store.listJobs() })
+            json(res, 200, { ok: true, job, ...jobsPayload() })
             return
           }
 
@@ -279,19 +298,84 @@ export function registerAutomationRoutes({ webServer, store, suggestions, events
               json(res, 404, { ok: false, error: `找不到任务 ${id}` })
               return
             }
-            json(res, 200, { ok: true, job, jobs: store.listJobs() })
+            json(res, 200, { ok: true, job, ...jobsPayload() })
+            return
+          }
+
+          case 'duplicate': {
+            // 复制一份为停用草稿，便于「改几个字再启用」。
+            const id = typeof params.id === 'string' ? params.id : ''
+            const source = id === '' ? null : store.getJob(id)
+            if (source === null) {
+              json(res, 404, { ok: false, error: `找不到任务 ${id}` })
+              return
+            }
+            const job = store.addJob({
+              type: source.type,
+              schedule: source.schedule,
+              prompt: source.prompt,
+              label: `${source.label} (副本)`,
+              model: source.model,
+              enabled: false,
+            })
+            json(res, 200, { ok: true, job, ...jobsPayload() })
             return
           }
 
           case 'run_now': {
-            // 立即执行：把 nextRunAt 拨到当下，由调度器下一 tick 处理。
+            // 立即执行：调度器同步派发（不再拨 nextRunAt 等下一 tick——那会
+            // 让用户干等最多 60s，还会把定时游标搅乱）。
             const id = typeof params.id === 'string' ? params.id : ''
-            const due = id !== '' && store.dueNow(id)
-            if (!due) {
-              json(res, 409, { ok: false, error: '任务不存在或已停用，请先启用' })
+            const engine = scheduler()
+            if (engine === null) {
+              json(res, 503, { ok: false, error: '模型服务不可用，无法执行任务' })
               return
             }
-            json(res, 200, { ok: true })
+            if (id === '' || store.getJob(id) === null) {
+              json(res, 404, { ok: false, error: `找不到任务 ${id}` })
+              return
+            }
+            // 不等执行完（可能跑几分钟）：立刻回执，UI 靠 /cron 的 running
+            // 与 /events 观察结果。
+            const started = engine.runNow(id)
+            started.catch(() => {})
+            // 同步阶段的错误（busy / 空 prompt）在下一个 microtask 前已抛出，
+            // 这里用 Promise.race 抢一拍拿到它，避免「点了没反应」。
+            const immediate = await Promise.race([
+              started.then(() => null, (error: unknown) => error),
+              new Promise<null>(resolve => { setTimeout(() => resolve(null), 0) }),
+            ])
+            if (immediate !== null) {
+              const message = immediate instanceof Error ? immediate.message : String(immediate)
+              const status = (immediate as { code?: string }).code === 'job_busy' ? 409 : 400
+              json(res, status, { ok: false, error: message })
+              return
+            }
+            json(res, 200, { ok: true, ...jobsPayload() })
+            return
+          }
+
+          case 'cancel': {
+            // 中止正在执行的任务（长任务点错了不必干等 20 分钟超时）。
+            const id = typeof params.id === 'string' ? params.id : ''
+            const engine = scheduler()
+            if (engine === null || id === '' || !engine.cancel(id)) {
+              json(res, 409, { ok: false, error: '该任务当前没有正在执行的运行' })
+              return
+            }
+            json(res, 200, { ok: true, ...jobsPayload() })
+            return
+          }
+
+          case 'clear_runs': {
+            // 清空某任务的运行历史与完整产出（保留任务本体）。
+            const id = typeof params.id === 'string' ? params.id : ''
+            if (id === '' || store.getJob(id) === null) {
+              json(res, 404, { ok: false, error: `找不到任务 ${id}` })
+              return
+            }
+            store.clearRunHistory(id)
+            json(res, 200, { ok: true, runs: [] })
             return
           }
 
@@ -320,21 +404,27 @@ export function registerAutomationRoutes({ webServer, store, suggestions, events
         return
       }
 
-      // ── 运行历史 ──
+      // ── 运行历史（一律「新 → 旧」返回；含状态筛选）──
       if (method === 'GET' && rest === '/runs') {
         const limit = clampLimit(url.searchParams.get('limit'), 20)
+        const statusFilter = url.searchParams.get('status')
+        const keep = (run: RunRecord): boolean =>
+          statusFilter === null || statusFilter === '' || statusFilter === 'all' || run.status === statusFilter
         const jobId = url.searchParams.get('jobId')
         if (jobId !== null && jobId !== '') {
-          json(res, 200, { ok: true, runs: store.getRunHistory(jobId, limit) })
+          // store 按追加序（旧→新）返回，这里倒置——原实现让「最近 5 条」
+          // 实际显示的是最老的 5 条。
+          const runs = store.getRunHistory(jobId, limit).filter(keep).reverse()
+          json(res, 200, { ok: true, runs })
           return
         }
-        // 无 taskId：返回全部任务的最近记录合并视图（新→旧），带任务名。
+        // 无 jobId：返回全部任务的最近记录合并视图（新→旧），带任务名。
         const jobs = store.listJobs()
         const labelOf = new Map(jobs.map(job => [job.id, job.label]))
         const all: Array<RunRecord & { jobId: string, jobLabel: string }> = []
         for (const job of jobs) {
           for (const run of store.getRunHistory(job.id, limit)) {
-            all.push({ ...run, jobId: job.id, jobLabel: labelOf.get(job.id) ?? job.id })
+            if (keep(run)) all.push({ ...run, jobId: job.id, jobLabel: labelOf.get(job.id) ?? job.id })
           }
         }
         all.sort((a, b) => b.timestamp.localeCompare(a.timestamp))
@@ -378,6 +468,21 @@ export function registerAutomationRoutes({ webServer, store, suggestions, events
           return
         }
         json(res, 200, { ok: true, suggestions: suggestions.list() })
+        return
+      }
+
+      // ── 设置（AI 免确认开关）──
+      if (rest === '/settings') {
+        if (method === 'POST') {
+          const body = await readBody(req)
+          if (typeof body.autoApprove === 'boolean') {
+            await settings.write({ autoApprove: body.autoApprove })
+          }
+        } else if (method !== 'GET') {
+          json(res, 405, { ok: false, error: 'method not allowed' })
+          return
+        }
+        json(res, 200, { ok: true, ...settings.read() })
         return
       }
 

@@ -35,15 +35,38 @@ const MODEL_LABELS = new Set(['模型', 'Models'])
  * 页并存（设计文档 §8 已预见的降级路径）。
  */
 export function hideOfficialModelsNav(): () => void {
+  /** 被本模块隐藏的按钮：dispose 时逐个还原，避免关闭模块后官方页永久消失。 */
+  const hidden = new Set<HTMLElement>()
   const hide = (): void => {
+    // 设置弹窗未打开时整页没有 nav>button：直接返回，省掉逐按钮读文本。
     const buttons = document.querySelectorAll<HTMLElement>('nav button')
+    if (buttons.length === 0) return
     for (const btn of buttons) {
       const label = btn.querySelector('span')?.textContent?.trim() ?? btn.textContent?.trim() ?? ''
-      if (MODEL_LABELS.has(label)) btn.style.display = 'none'
+      if (!MODEL_LABELS.has(label)) continue
+      if (btn.style.display === 'none') continue
+      btn.style.display = 'none'
+      hidden.add(btn)
     }
   }
+  // 观察器挂在 body 全子树上，对话流式渲染期间每秒可触发上百次；回调只允许
+  // 排一个短延时任务，真正的查询按批合并执行（未节流版本会在每个 mutation
+  // 批次里跑一次全树 querySelectorAll + 逐按钮读文本，属性能红线）。
+  let timer: number | undefined
+  const schedule = (): void => {
+    if (timer !== undefined) return
+    timer = window.setTimeout(() => {
+      timer = undefined
+      hide()
+    }, 60)
+  }
   hide()
-  const observer = new MutationObserver(hide)
+  const observer = new MutationObserver(schedule)
   observer.observe(document.body, { childList: true, subtree: true })
-  return () => observer.disconnect()
+  return () => {
+    observer.disconnect()
+    if (timer !== undefined) window.clearTimeout(timer)
+    for (const btn of hidden) btn.style.removeProperty('display')
+    hidden.clear()
+  }
 }

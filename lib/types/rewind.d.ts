@@ -205,6 +205,48 @@ export declare function restoreSnapshot(view: SnapshotView, extraPaths?: Iterabl
     deleted: number;
     skippedLarge: number;
 }>;
+export type RewindValidation = {
+    ok: true;
+    fromSeq: number;
+    toSeq: number;
+    shadowedSeqs: number[];
+} | {
+    ok: false;
+    status: number;
+    error: string;
+};
+export type RewindContextOutcome = {
+    ok: true;
+    result: {
+        fromSeq: number;
+        replacementSeq: number;
+        shadowedSeqs: number[];
+        metered: boolean;
+    };
+} | {
+    ok: false;
+    status: number;
+    error: string;
+};
+/**
+ * 回退前置校验（**无副作用**）：会话必须已加载（live）且空闲（无未闭合
+ * turn）；目标 seq 必须仍是当前 surface 节点（未被压缩/此前回退遮蔽）。
+ */
+export declare function validateRewind(ctx: Context, sessionId: string, seq: number): RewindValidation;
+/**
+ * 原地回退上下文：在 live 会话的日志尾部追加表面替换，遮蔽从 seq（含）到
+ * 当前 surface 末尾的全部节点。模型下一次请求即不再包含这些节点。
+ * 调用前必须先通过 {@link validateRewind}（本函数只做追加，不做前置校验）。
+ *
+ * 追加顺序（与 compaction 的 shadow-price 协议一致）：
+ *   1. `compaction/prune`（计量声明，tokenMeter 可用时）——声明被遮蔽范围
+ *      的 token 价格，fold 时精确扣减上下文计数；
+ *   2. `user/message`（surfaceOp: replace + sourceEventSeqs 覆盖全部被遮蔽
+ *      节点）——真正的回退动作。source.kind='plugin' 不会触发本插件的快照
+ *      监听，也不匹配官方 user 节点渲染；客户端以「已退回」标记呈现。
+ * 两个事件同步连续追加，保证计量声明的邻接性。
+ */
+export declare function rewindContext(ctx: Context, sessionId: string, seq: number, shadowedSeqs: number[]): RewindContextOutcome;
 /**
  * 计算当前工作区相对快照的差异（用于退回前的「是否修改文件」判断）：
  *   - modified：快照里记录过内容、当前内容已不同的文件（会被写回）；

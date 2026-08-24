@@ -228,7 +228,7 @@ function DrawerPanel({ turn, data, store, openFile, inspectCall }: {
 
   return (
     <>
-      <div className="dts__modal-backdrop" onClick={close} aria-hidden />
+      <div className="dts__modal-mask" onClick={close} aria-hidden />
       <div className="dts__modal" role="dialog" aria-label={`第 ${turn} 轮活动详情`}>
         <header className="dts__modal-head">
           <span className="dts__modal-title">

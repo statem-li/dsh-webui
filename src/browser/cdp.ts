@@ -166,28 +166,48 @@ export async function attachTarget(conn: CdpConnection, targetId: string): Promi
 }
 
 // 网络空闲判定参数（SPA 首屏：load 后等异步请求静默）
-const NETIDLE_IDLE_MS = 300
+const NETIDLE_IDLE_MS = 250
 const NETIDLE_EXTRA_MS = 2500
+// 单个请求在途超过该时长即按「长连接/流式」处理（SSE、埋点心跳、轮询 XHR），
+// 不再计入活跃请求——否则这类页面每次导航都白等满 extraMs（实测主要空等来源）。
+const NETIDLE_STREAM_MS = 1000
 
-/** 等网络空闲：连续 idleMs 无新请求，最多额外等 extraMs */
+/**
+ * 等网络空闲：连续 idleMs 无请求变动且无短请求在途，最多额外等 extraMs。
+ * 按 requestId 记账（旧实现用计数器，事件丢一次就永远不归零）。
+ */
 export async function waitForNetworkIdle(
   session: CdpSession,
   idleMs = NETIDLE_IDLE_MS,
   extraMs = NETIDLE_EXTRA_MS,
 ): Promise<void> {
   const { conn, sessionId } = session
-  let active = 0
+  /** requestId → 发起时刻；超过 NETIDLE_STREAM_MS 视为流式并剔除。 */
+  const inflight = new Map<string, number>()
   let lastChange = Date.now()
-  const onReq = (p: any) => { if (!p || p.sessionId === sessionId) { active++; lastChange = Date.now() } }
-  const onDone = (p: any) => { if (!p || p.sessionId === sessionId) { active = Math.max(0, active - 1); lastChange = Date.now() } }
+  const mine = (p: any): boolean => !p || p.sessionId === undefined || p.sessionId === sessionId
+  const onReq = (p: any) => {
+    if (!mine(p)) return
+    if (typeof p?.requestId === 'string') inflight.set(p.requestId, Date.now())
+    lastChange = Date.now()
+  }
+  const onDone = (p: any) => {
+    if (!mine(p)) return
+    if (typeof p?.requestId === 'string') inflight.delete(p.requestId)
+    lastChange = Date.now()
+  }
   const off1 = conn.on('Network.requestWillBeSent', onReq)
   const off2 = conn.on('Network.loadingFinished', onDone)
   const off3 = conn.on('Network.loadingFailed', onDone)
   try {
     const idleDeadline = Date.now() + extraMs
     while (Date.now() < idleDeadline) {
-      if (active === 0 && Date.now() - lastChange >= idleMs) break
-      await sleep(80)
+      const now = Date.now()
+      for (const [id, ts] of inflight) {
+        if (now - ts > NETIDLE_STREAM_MS) inflight.delete(id)
+      }
+      if (inflight.size === 0 && now - lastChange >= idleMs) break
+      await sleep(50)
     }
   } finally {
     off1(); off2(); off3()
@@ -198,20 +218,34 @@ export async function waitForNetworkIdle(
  * 等页面就绪：先轮询 document.readyState 直到 complete（兼容初次导航与
  * 操作触发的二次导航），再等网络空闲。返回时页面已可稳定 snapshot。
  */
-export async function waitForPageReady(session: CdpSession, timeoutMs = 30000): Promise<void> {
+export async function waitForPageReady(
+  session: CdpSession,
+  timeoutMs = 30000,
+  skipNetworkIdle = false,
+): Promise<void> {
   const { conn, sessionId } = session
   try { await conn.send('Network.enable', {}, sessionId) } catch { /* 已启用 */ }
   try { await conn.send('Page.enable', {}, sessionId) } catch { /* 已启用 */ }
 
   const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    try {
-      const rs = await evaluateJson(session, 'document.readyState', false)
-      if (rs === 'complete') break
-    } catch { /* 上下文尚未就绪（导航切换中），继续等 */ }
-    await sleep(120)
+  // load 事件先到就立即放行，不必等下一次轮询 tick（省最多 1 个轮询周期）。
+  let loaded = false
+  const offLoad = conn.on('Page.loadEventFired', (p: any) => {
+    if (p?.sessionId === undefined || p.sessionId === sessionId) loaded = true
+  })
+  try {
+    while (Date.now() < deadline) {
+      if (loaded) break
+      try {
+        const rs = await evaluateJson(session, 'document.readyState', false)
+        if (rs === 'complete') break
+      } catch { /* 上下文尚未就绪（导航切换中），继续等 */ }
+      await sleep(70)
+    }
+  } finally {
+    offLoad()
   }
-  await waitForNetworkIdle(session)
+  if (!skipNetworkIdle) await waitForNetworkIdle(session)
 }
 
 /**
@@ -230,6 +264,37 @@ export async function navigateAndWait(
   const info: any = await conn.send('Page.getNavigationHistory', {}, sessionId)
   const current = info?.entries?.[info.currentIndex]
   return { url: current?.url || url, title: current?.title || '' }
+}
+
+/** 重新加载当前页（ignoreCache=true 相当于 Ctrl+Shift+R）。 */
+export async function reloadPage(
+  session: CdpSession,
+  ignoreCache = false,
+): Promise<{ url: string; title: string }> {
+  const { conn, sessionId } = session
+  try { await conn.send('Page.enable', {}, sessionId) } catch { /* 已启用 */ }
+  await conn.send('Page.reload', { ignoreCache }, sessionId)
+  await waitForPageReady(session, 30000, true)
+  const info: any = await conn.send('Page.getNavigationHistory', {}, sessionId)
+  const current = info?.entries?.[info.currentIndex]
+  return { url: current?.url || '', title: current?.title || '' }
+}
+
+/** 当前页的历史可用性（供 UI 置灰前进/后退按钮）。 */
+export async function navigationState(
+  session: CdpSession,
+): Promise<{ canBack: boolean; canForward: boolean; url: string; title: string }> {
+  const { conn, sessionId } = session
+  const info: any = await conn.send('Page.getNavigationHistory', {}, sessionId)
+  const entries: any[] = info?.entries || []
+  const idx: number = info?.currentIndex ?? -1
+  const current = entries[idx]
+  return {
+    canBack: idx > 0,
+    canForward: idx >= 0 && idx < entries.length - 1,
+    url: current?.url || '',
+    title: current?.title || '',
+  }
 }
 
 /** 历史前进/后退（delta 正=前进，负=后退） */

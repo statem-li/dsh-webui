@@ -13,7 +13,7 @@
  * DOM 顺序取胜浮于本壳之上。
  */
 
-import { useEffect, type CSSProperties, type ReactNode } from 'react'
+import { useEffect, useState, type CSSProperties, type ReactNode } from 'react'
 import { MODAL_ANIM_MS, modalSideAnimClass } from './modal-animation.js'
 
 const STYLE_ID = 'dsh-popover-shell-styles'
@@ -70,6 +70,8 @@ export interface PopoverAnchor {
 export interface PopoverSize {
   width: number
   height?: number
+  /** 铺满：忽略理想值，直接占满锚点右侧到视口边缘的全部空间（仪表盘 tab 用）。 */
+  fill?: boolean
 }
 
 /** PopoverShell 属性。 */
@@ -97,23 +99,35 @@ export interface PopoverShellProps {
 export function PopoverShell({
   closing, onClose, anchor, width = 560, size, onCardMouseEnter, onCardMouseLeave, ariaLabel, children,
 }: PopoverShellProps): JSX.Element {
-  const vw = window.innerWidth
-  const vh = window.innerHeight
+  // 视口尺寸走 state：窗口缩放时 fill/夹紧尺寸实时跟随（否则缩小窗口后卡片仍按旧尺寸布局）。
+  const [vp, setVp] = useState({ w: window.innerWidth, h: window.innerHeight })
+  useEffect(() => {
+    const onResize = (): void => { setVp({ w: window.innerWidth, h: window.innerHeight }) }
+    window.addEventListener('resize', onResize)
+    return () => { window.removeEventListener('resize', onResize) }
+  }, [])
+  const vw = vp.w
+  const vh = vp.h
   const idealW = size?.width ?? width
   const asPopover = anchor !== null && (vw - anchor.left) >= Math.min(POPOVER_MIN_SPACE, idealW)
   let style: CSSProperties | undefined
   if (anchor !== null && asPopover) {
     // 定位：left=按钮右缘+8；top 与按钮对齐但夹在视口内；宽高不越界。
+    // fill 模式额外把 top 提到顶部安全边（12px），让卡片吃满整个右侧面板高度。
     const left = Math.round(anchor.left)
-    const top = Math.max(8, Math.min(Math.round(anchor.top), vh - 200))
+    const fill = size?.fill === true
+    const top = fill ? 12 : Math.max(8, Math.min(Math.round(anchor.top), vh - 200))
     const availH = vh - top - 12
+    const availW = vw - left - 12
     style = {
       left,
       top,
-      width: `${Math.min(idealW, vw - left - 12)}px`,
-      ...(size?.height !== undefined
-        ? { height: `${Math.min(size.height, availH)}px`, maxHeight: `${availH}px` }
-        : { maxHeight: `${availH}px` }),
+      width: `${fill ? availW : Math.min(idealW, availW)}px`,
+      ...(fill
+        ? { height: `${availH}px`, maxHeight: `${availH}px` }
+        : size?.height !== undefined
+          ? { height: `${Math.min(size.height, availH)}px`, maxHeight: `${availH}px` }
+          : { maxHeight: `${availH}px` }),
     }
   }
   const anim = closing ? 'out' : 'in'

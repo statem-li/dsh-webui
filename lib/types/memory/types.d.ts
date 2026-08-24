@@ -113,7 +113,11 @@ export interface MemoryConfig {
     hitBonus: number;
     /** 注入 token 预算（按字符近似）。 */
     injectTokenBudget: number;
-    /** 每 N 个 step 刷新一次记忆注入（会话内）。 */
+    /**
+     * 每 N 个 step 刷新一次记忆注入（会话内）。
+     * @deprecated 当前注入按设计只在会话首步进行一次（避免置顶内容多轮重复），
+     * 该字段无读取方；保留仅为兼容既有 config.json，面板不再暴露。
+     */
     injectRefreshSteps: number;
     /** 是否启用每日编译（可关，保留轮数增量）。 */
     dailyCompileEnabled: boolean;
@@ -182,7 +186,99 @@ export interface ExtractCandidate {
     tags: string[];
     importance: number;
 }
-/** 应用配置覆盖（原地更新 config；返回实际应用的字段子集，供持久化）。 */
+/** 数值字段的取值域（面板输入越界时钳制而非丢弃；integer 字段四舍五入取整）。 */
+export declare const CONFIG_NUMBER_BOUNDS: {
+    readonly extractEveryTurns: {
+        readonly min: 1;
+        readonly max: 100;
+        readonly int: true;
+        readonly step: 1;
+    };
+    readonly compileEveryTurns: {
+        readonly min: 1;
+        readonly max: 500;
+        readonly int: true;
+        readonly step: 1;
+    };
+    readonly compileThreshold: {
+        readonly min: 0;
+        readonly max: 20;
+        readonly int: false;
+        readonly step: 0.5;
+    };
+    readonly decayLambda: {
+        readonly min: 0;
+        readonly max: 0.5;
+        readonly int: false;
+        readonly step: 0.01;
+    };
+    readonly hitBonus: {
+        readonly min: 0;
+        readonly max: 10;
+        readonly int: false;
+        readonly step: 0.5;
+    };
+    readonly injectTokenBudget: {
+        readonly min: 1000;
+        readonly max: 60000;
+        readonly int: true;
+        readonly step: 500;
+    };
+    readonly injectRefreshSteps: {
+        readonly min: 1;
+        readonly max: 200;
+        readonly int: true;
+        readonly step: 1;
+    };
+    readonly extractMaxChars: {
+        readonly min: 500;
+        readonly max: 60000;
+        readonly int: true;
+        readonly step: 500;
+    };
+    readonly minImportance: {
+        readonly min: 1;
+        readonly max: 10;
+        readonly int: false;
+        readonly step: 0.5;
+    };
+    readonly consolidateMaxEntries: {
+        readonly min: 10;
+        readonly max: 2000;
+        readonly int: true;
+        readonly step: 10;
+    };
+    readonly consolidateTimeoutMs: {
+        readonly min: 5000;
+        readonly max: 600000;
+        readonly int: true;
+        readonly step: 5000;
+    };
+    readonly injectTopK: {
+        readonly min: 1;
+        readonly max: 50;
+        readonly int: true;
+        readonly step: 1;
+    };
+    readonly entryLimit: {
+        readonly min: 50;
+        readonly max: 100000;
+        readonly int: true;
+        readonly step: 50;
+    };
+};
+/** 可调数值字段名。 */
+export type ConfigNumberKey = keyof typeof CONFIG_NUMBER_BOUNDS;
+declare const CONFIG_BOOLEAN_KEYS: readonly ["dailyCompileEnabled", "consolidateEnabled", "logApiRequests"];
+/** 可调布尔字段名。 */
+export type ConfigBooleanKey = (typeof CONFIG_BOOLEAN_KEYS)[number];
+/**
+ * 应用配置覆盖（原地更新 config；返回实际应用的字段子集，供持久化）。
+ * 数值按 CONFIG_NUMBER_BOUNDS 钳制到合法域（越界钳制而非静默丢弃——
+ * 旧实现要求 value > 0，导致 decayLambda=0 / compileThreshold=0 等
+ * 合法的"关闭衰减/不设阈值"写不进去，面板上看似保存成功实则被丢弃）。
+ */
 export declare function applyConfigOverrides(config: MemoryConfig, candidate: unknown): Partial<MemoryConfig>;
 /** 面板可展示的公开配置视图（只暴露可调字段）。 */
 export declare function publicConfig(config: MemoryConfig): Partial<MemoryConfig>;
+export {};

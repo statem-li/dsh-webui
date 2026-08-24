@@ -53,18 +53,18 @@ const SHEET = `
 .webui-view-tile:hover{color:var(--dsw-alias-label-primary,#ddd)}
 .webui-view-tile-active{color:var(--dsw-alias-state-business-primary,#4a9eff);background:color-mix(in srgb,var(--dsw-alias-state-business-primary,#4a9eff) 12%,transparent);box-shadow:0 0 10px color-mix(in srgb,var(--dsw-alias-state-business-primary,#4a9eff) 45%,transparent)}
 .webui-view-tile-active:hover{color:var(--dsw-alias-state-business-primary,#4a9eff)}
-/* 对话完成胶囊外壳：常态极淡蓝底 + 微辉光（保持可感知的存在感），
- * hover 时提亮为明显光影（与对话/轨迹图块选中态一致） */
-.dsh-done-pill-shell{background:color-mix(in srgb,var(--dsw-alias-state-business-primary,#4a9eff) 5%,transparent);box-shadow:0 0 8px color-mix(in srgb,var(--dsw-alias-state-business-primary,#4a9eff) 12%,transparent);transition:background .12s,box-shadow .12s}
-.dsh-done-pill-shell:hover{background:color-mix(in srgb,var(--dsw-alias-state-business-primary,#4a9eff) 10%,transparent);box-shadow:0 0 12px color-mix(in srgb,var(--dsw-alias-state-business-primary,#4a9eff) 38%,transparent)}
-/* 隐藏原生「对话/轨迹」标签页行（视图切换改由右上角图块接管） */
-[data-slot="conversation.session.header"] [role="tablist"]{display:none}
-/* Session log 按钮移到右侧：webui 的对话/轨迹/消息按钮排在其左侧 */
-[data-slot="conversation.session.header"] [class*="sessionLogButton"]{order:1}
+/* 对话完成胶囊的样式已移入 client/done-pill.tsx 自注入的 <style
+ * id="dsh-done-pill-css">：本表（dsh-webui-styles）由 Webui.tsx 在**会话视图**
+ * 内挂载才注入，而胶囊是 shell.overlay 全局常驻的——放在这里会导致首页/无
+ * 会话时胶囊完全没有样式（透明无底无边，浅色主题下等于看不见）。 */
 /* 右上角按钮组（对话/轨迹/消息/Session log）左移：titleRow 右侧 padding 让出空间，flex:1 的标题区自动收缩（200-100=100px 净左移） */
 [data-slot="conversation.session.header"] [class*="titleRow"]{padding-right:100px}
 /* 原生标签页行移除后 header 变矮，补底部留白避免图块贴住分割线 */
 [data-slot="conversation.session.header"] > header{padding-bottom:10px}
+/* 原生「对话/轨迹」标签行隐藏：右上角图块已接管视图切换（selectView 触发原生
+   tab 的 click、readTabs 经 MutationObserver 读 aria-selected），DOM 必须保留，
+   仅去掉主题下方的重复入口 */
+[data-slot="conversation.session.header"] [role="tablist"]{display:none}
 /* 供应商标签（模型选择器旁） */
 .webui-provider-badge{display:inline-flex;align-items:center;height:22px;padding:0 10px;border:1px solid var(--dsw-alias-border-l2,#333);border-radius:11px;background:var(--dsw-alias-bg-layer-2,transparent);color:var(--dsw-alias-label-secondary,#bbb);font-size:12px;line-height:1;white-space:nowrap}
 /* 消息数量按钮（内联，仅数量徽标） */

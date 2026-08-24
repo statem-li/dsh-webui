@@ -13,7 +13,8 @@
  * 约定省略（有安全风险）。文案使用本地中文字典，不依赖 locale 插件。
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { CSSProperties, ReactNode } from 'react'
 import type { DiscoveredModelView, IApiClient } from '@deepseek-ai/dsh-api-remotes/client'
 import { messageOf } from './store.ts'
@@ -48,6 +49,8 @@ export const chatCopy = {
   supportsImageGenHint: '声明该模型可生成图片，生图候选列表将标注「生图」。',
   supportsVideoGen: '生视频',
   supportsVideoGenHint: '声明该模型可生成视频，生视频候选列表将标注「生视频」。',
+  supportsSpeech: '语音',
+  supportsSpeechHint: '声明该模型可输出语音（OpenAI 兼容 /audio/speech），语音播报的「模型语音」引擎可选它。',
   capabilityHint: '模型能力（手动开关声明）',
   detectReasoning: '🔍 检测推理等级',
   detectReasoningTitle: '逐级探测该模型支持的推理等级（off/minimal/low/medium/high/xhigh/max），完成后自动保存配置。识图/生图/生视频请用上方开关手动声明，不做实测。',
@@ -491,6 +494,13 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
   const [detecting, setDetecting] = useState<ReadonlySet<number>>(new Set())
   const [detectState, setDetectState] = useState<ReadonlyMap<number, any>>(new Map())
   const [detectError, setDetectError] = useState<ReadonlyMap<number, string>>(new Map())
+  // 在跑的检测轮询句柄：编辑器卸载（切换供应商/关闭详情）时必须清掉，否则
+  // 轮询会一直打 /api/detect-capability 并对已卸载组件 setState。
+  const detectTimers = useRef<Set<number>>(new Set())
+  useEffect(() => () => {
+    for (const handle of detectTimers.current) window.clearInterval(handle)
+    detectTimers.current.clear()
+  }, [])
 
   // 生图/生视频能力声明(model-router.json capabilities):手动开关读写,不再实测。
   const [caps, setCaps] = useState<Record<string, string[]>>({})
@@ -525,7 +535,7 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
   }
 
   /** 切换生图/生视频开关:乐观更新 + POST 全量落盘,失败回滚。 */
-  const toggleCap = (index: number, cap: 'image' | 'video', on: boolean): void => {
+  const toggleCap = (index: number, cap: 'image' | 'video' | 'speech', on: boolean): void => {
     const key = capKeyOf(index)
     if (!key) return
     const next = { ...caps }
@@ -576,6 +586,17 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
     setDetecting(current => new Set(current).add(index))
     setDetectError(current => new Map(current).set(index, ''))
     let timer: number | undefined
+    /** 登记轮询句柄，卸载时统一清理（见 detectTimers 的清理 effect）。 */
+    const remember = (handle: number): void => {
+      timer = handle
+      detectTimers.current.add(handle)
+    }
+    const stopPolling = (): void => {
+      if (timer === undefined) return
+      window.clearInterval(timer)
+      detectTimers.current.delete(timer)
+      timer = undefined
+    }
     const pollOnce = async (): Promise<void> => {
       try {
         const r = await fetch('/api/detect-capability', { cache: 'no-store' })
@@ -583,7 +604,7 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
         if (!d?.ok || !d.state) return
         setDetectState(current => new Map(current).set(index, d.state))
         if (!d.state.running) {
-          if (timer !== undefined) window.clearInterval(timer)
+          stopPolling()
           // 本地草稿同步(与 host 落盘一致,避免保存时覆盖)。
           // 识图/生图/生视频由手动开关声明,检测只写推理等级。
           const st = d.state
@@ -620,7 +641,7 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
           return
         }
         if (d.state !== undefined && d.state !== null) setDetectState(current => new Map(current).set(index, d.state))
-        timer = window.setInterval(() => { void pollOnce() }, 800)
+        remember(window.setInterval(() => { void pollOnce() }, 800))
         void pollOnce()
       })
       .catch((error) => {
@@ -710,8 +731,10 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
       if (!response.result.ok) {
         const msg = response.result.error.message
         // 404/not found = 端点不支持 /models 列表接口；403 = 密钥无效/缺失。
-        // 其余错误原样展示。
-        if (/404|not found/i.test(msg)) setFailure(chatCopy.fetchUnsupported)
+        // no model discovery is registered = 该命名空间（如 llm-deepseek）根本没有
+        // 注册模型发现，原样回显是一句用户无法行动的英文。其余错误原样展示。
+        if (/no model discovery is registered/i.test(msg)) setFailure(chatCopy.fetchUnsupported)
+        else if (/404|not found/i.test(msg)) setFailure(chatCopy.fetchUnsupported)
         else if (/403/i.test(msg)) setFailure(chatCopy.fetchKeyInvalid)
         else setFailure(msg)
         return
@@ -950,6 +973,13 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
                       disabled={disabled || capKeyOf(index) === ''}
                       onToggle={(on) => { toggleCap(index, 'video', on) }}
                     />
+                    <CapabilitySwitch
+                      label={chatCopy.supportsSpeech}
+                      hint={chatCopy.supportsSpeechHint}
+                      checked={(caps[capKeyOf(index)] ?? []).includes('speech')}
+                      disabled={disabled || capKeyOf(index) === ''}
+                      onToggle={(on) => { toggleCap(index, 'speech', on) }}
+                    />
                   </div>
                   {capsError !== undefined ? <p style={errorStyle}>{capsError}</p> : null}
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -985,7 +1015,11 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
         + {chatCopy.addModel}
       </button>
       {failure !== undefined ? <p style={errorStyle}>{failure}</p> : null}
-      {candidates !== undefined ? (
+      {/* 必须 createPortal 到 body：玻璃质感开启时官方设置面板本体带
+          backdrop-filter，它会成为 position:fixed 后代的 containing block，
+          留在组件树里的遮罩/弹窗会被钉进面板坐标系（错位 + 遮罩不铺满，
+          点不到东西）——与 PerfBenchModal 同一条 dsh-webui 玻璃铁律。 */}
+      {candidates !== undefined ? createPortal(
         <div style={overlayStyle} onClick={closePicker}>
           <div
             role="dialog"
@@ -1021,7 +1055,8 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       ) : null}
     </section>
   )
@@ -1259,10 +1294,12 @@ const errorStyle: CSSProperties = {
   color: 'var(--dsw-alias-state-error-primary, #d54941)',
 }
 
+/* 候选弹窗遮罩：z-index 必须高于官方设置弹层（SettingsRoot overlay z-1000），
+ * 否则同层级下靠 DOM 序竞争，portal 时机一变就会被面板压住。 */
 const overlayStyle: CSSProperties = {
   position: 'fixed',
   inset: 0,
-  zIndex: 1000,
+  zIndex: 1200,
   background: 'rgba(0,0,0,0.35)',
   display: 'flex',
   alignItems: 'center',

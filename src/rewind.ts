@@ -1,9 +1,10 @@
 /**
  * webui — 对话「退回」能力（host 半身）。v2：git 式内容寻址存储。
  *
- * 目标：给用户消息增加「退回」按钮，点击后把这条消息的上下文消除（fork 到
- * 该消息之前的已完成 turn 边界），并把这条消息之后 agent 修改的文件回退到
- * 消息发送前的状态。两条腿必须一致：只有文件回退成功后才 fork 切上下文。
+ * 目标：给用户消息增加「退回」按钮，点击后把这条消息的上下文**原地消除**
+ * （同会话内 surface 替换，不 fork、不归档、不切换会话），并把这条消息之后
+ * agent 修改的文件回退到消息发送前的状态。两条腿必须一致：只有文件回退
+ * 成功后才追加上下文遮蔽事件。
  *
  * host 半身只负责「文件快照 / 回退」这一条腿，配合 client 半身（rewind.tsx）
  * 完成闭环：
@@ -35,7 +36,7 @@
  * 超限从最老快照淘汰）；快照最长保留 30 天；blob GC 只删除无任何存活快照引用
  * 且超过 1 小时未被写入的对象（1 小时窗口规避「blob 已写、索引未落盘」竞态）。
  */
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import {
   appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync,
   type Dirent,
@@ -175,7 +176,14 @@ function blobPath(hash: string): string {
 
 interface SessionLike {
   id: string
-  header?: { cwd?: string }
+  header?: { cwd?: string; parentSession?: string }
+  events: readonly SessionEventLike[]
+  surface: { nodes: readonly number[] }
+  append(
+    type: string,
+    data: unknown,
+    opts?: { surfaceOp?: unknown; sourceEventSeqs?: number[] },
+  ): { seq: number; type: string }
 }
 
 interface SessionEventLike {
@@ -194,9 +202,9 @@ interface WebServerService {
   register(route: WebServerRoute): () => void
 }
 
-/** 最小 sessions 服务面（lineage 查找用）。 */
+/** 最小 sessions 服务面（lineage 查找 + 原地回退用）。 */
 interface SessionStoreLike {
-  get(id: string): { header?: { parentSession?: string } } | undefined
+  get(id: string): SessionLike | undefined
 }
 
 declare module '@deepseek-ai/cordis' {
@@ -1319,6 +1327,156 @@ export async function restoreSnapshot(
   return { restored, deleted, skippedLarge }
 }
 
+// ── 原地上下文回退（surface replace；不 fork、不归档、不切会话）──────────────
+
+/**
+ * 替换节点携带的说明文本（模型可见，简短中性——告诉模型它看不到的那段
+ * 对话被用户回退了，避免把回退误当成「对话被清空」）。
+ */
+const REWIND_NOTICE = '（已回退：此后的对话与工具结果已从上下文移除。）'
+
+/** 从会话事件里取「模型可见消息」，用于 token 计量；非消息事件返回 null。 */
+function eventMessageOf(ev: SessionEventLike | undefined): { role: string; content: unknown[] } | null {
+  if (ev === undefined) return null
+  const d = ev.data as {
+    role?: string
+    content?: unknown[]
+    message?: { role?: string; content?: unknown[] }
+  } | undefined
+  switch (ev.type) {
+    case 'user/message':
+      return d !== undefined && Array.isArray(d.content) ? { role: d.role ?? 'user', content: d.content } : null
+    case 'assistant/message':
+    case 'tool/result':
+      return d?.message !== undefined && Array.isArray(d.message.content)
+        ? { role: d.message.role ?? (ev.type === 'assistant/message' ? 'assistant' : 'user'), content: d.message.content }
+        : null
+    default:
+      return null
+  }
+}
+
+/** 会话是否空闲：日志尾部没有未闭合的 turn。 */
+function isSessionIdle(events: readonly SessionEventLike[]): boolean {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i]
+    if (e.type === 'turn/end') return true
+    if (e.type === 'turn/start') return false
+  }
+  return true
+}
+
+export type RewindValidation =
+  | { ok: true; fromSeq: number; toSeq: number; shadowedSeqs: number[] }
+  | { ok: false; status: number; error: string }
+
+export type RewindContextOutcome =
+  | { ok: true; result: { fromSeq: number; replacementSeq: number; shadowedSeqs: number[]; metered: boolean } }
+  | { ok: false; status: number; error: string }
+
+/**
+ * 回退前置校验（**无副作用**）：会话必须已加载（live）且空闲（无未闭合
+ * turn）；目标 seq 必须仍是当前 surface 节点（未被压缩/此前回退遮蔽）。
+ */
+export function validateRewind(ctx: Context, sessionId: string, seq: number): RewindValidation {
+  const sessions = ctx.get('sessions') as SessionStoreLike | undefined
+  const session = sessions?.get(sessionId)
+  if (session === undefined) {
+    return { ok: false, status: 409, error: `会话 ${sessionId} 未加载（请先打开该会话再退回）` }
+  }
+  if (!isSessionIdle(session.events)) {
+    return { ok: false, status: 409, error: '会话正在运行中，请先停止当前回复再退回' }
+  }
+  const nodes = session.surface.nodes
+  const startIdx = nodes.indexOf(seq)
+  if (startIdx === -1) {
+    return { ok: false, status: 400, error: '该消息已不在上下文中（可能已被压缩或此前已回退）' }
+  }
+  const shadowedSeqs = nodes.slice(startIdx)
+  if (shadowedSeqs.length === 0) {
+    return { ok: false, status: 400, error: '没有可回退的内容' }
+  }
+  return {
+    ok: true,
+    fromSeq: shadowedSeqs[0]!,
+    toSeq: shadowedSeqs[shadowedSeqs.length - 1]!,
+    shadowedSeqs,
+  }
+}
+
+/**
+ * 原地回退上下文：在 live 会话的日志尾部追加表面替换，遮蔽从 seq（含）到
+ * 当前 surface 末尾的全部节点。模型下一次请求即不再包含这些节点。
+ * 调用前必须先通过 {@link validateRewind}（本函数只做追加，不做前置校验）。
+ *
+ * 追加顺序（与 compaction 的 shadow-price 协议一致）：
+ *   1. `compaction/prune`（计量声明，tokenMeter 可用时）——声明被遮蔽范围
+ *      的 token 价格，fold 时精确扣减上下文计数；
+ *   2. `user/message`（surfaceOp: replace + sourceEventSeqs 覆盖全部被遮蔽
+ *      节点）——真正的回退动作。source.kind='plugin' 不会触发本插件的快照
+ *      监听，也不匹配官方 user 节点渲染；客户端以「已退回」标记呈现。
+ * 两个事件同步连续追加，保证计量声明的邻接性。
+ */
+export function rewindContext(
+  ctx: Context,
+  sessionId: string,
+  seq: number,
+  shadowedSeqs: number[],
+): RewindContextOutcome {
+  const sessions = ctx.get('sessions') as SessionStoreLike | undefined
+  const session = sessions?.get(sessionId)
+  if (session === undefined) {
+    return { ok: false, status: 409, error: `会话 ${sessionId} 未加载（请先打开该会话再退回）` }
+  }
+  const fromSeq = shadowedSeqs[0]
+  const toSeq = shadowedSeqs[shadowedSeqs.length - 1]
+  if (fromSeq === undefined || toSeq === undefined) {
+    return { ok: false, status: 400, error: '没有可回退的内容' }
+  }
+  const events = session.events
+
+  // token 计量（可选）：有 tokenMeter 服务就发 compaction/prune 声明遮蔽范围。
+  const meter = ctx.get('tokenMeter') as { estimateMessage(m: { role: string; content: unknown[] }): number } | undefined
+  let metered = false
+  if (meter !== undefined) {
+    let shadowedTokenCount = 0
+    for (const s of shadowedSeqs) {
+      const msg = eventMessageOf(events[s])
+      if (msg !== null) shadowedTokenCount += meter.estimateMessage(msg)
+    }
+    try {
+      session.append('compaction/prune', {
+        shadowedRange: { start: fromSeq, end: toSeq },
+        shadowedSeqs: [...shadowedSeqs],
+        shadowedTokenCount,
+      })
+      metered = true
+    } catch (error) {
+      // 计量事件失败不阻断回退（上下文计数会轻微漂移，但不影响正确性）。
+      ctx.logger?.warn?.(`[webui-rewind] meter event failed for ${sessionId}#${seq}: ${String(error)}`)
+    }
+  }
+
+  const replacement = session.append('user/message', {
+    id: randomUUID(),
+    role: 'user',
+    content: [{ type: 'text', text: REWIND_NOTICE }],
+    source: { kind: 'plugin', plugin: 'webui-rewind', form: 'notice', summary: '对话已回退' },
+  }, {
+    surfaceOp: { op: 'replace', start: fromSeq, end: toSeq },
+    sourceEventSeqs: [...shadowedSeqs],
+  })
+  return {
+    ok: true,
+    result: {
+      fromSeq,
+      replacementSeq: replacement.seq,
+      shadowedSeqs: [...shadowedSeqs],
+      metered,
+    },
+  }
+}
+
 /** 当前内容是否与快照记录不同；v2 走 sha1 指纹比对，v1 走内容比对。 */
 async function entryDiffers(current: Buffer, entry: ViewEntry): Promise<boolean> {
   if (entry.content !== null) return !current.equals(Buffer.from(entry.content, 'base64'))
@@ -1784,6 +1942,51 @@ async function handle(ctx: Context, req: IncomingMessage, res: ServerResponse): 
         rightSize: right.size,
         leftTime: snapshotA.createdAt,
       })
+      return
+    }
+    if (method === 'POST' && rest === '/rewind') {
+      const body = await readBody(req)
+      const sessionId = requireString(body.sessionId, 'sessionId')
+      const seqRaw = body.seq
+      if (typeof seqRaw !== 'number' || !Number.isSafeInteger(seqRaw) || seqRaw < 0) {
+        json(res, 400, { ok: false, error: 'seq 必须是非负整数' })
+        return
+      }
+
+      // 1) 前置校验（无副作用）：会话 live + 空闲 + 目标仍在 surface。
+      const validated = validateRewind(ctx, sessionId, seqRaw)
+      if (!validated.ok) {
+        json(res, validated.status, { ok: false, error: validated.error })
+        return
+      }
+
+      // 2) 文件回退（先文件，成功后才回退上下文；失败时上下文未动，可重试）。
+      const snapshot = await findSnapshot(ctx, sessionId, seqRaw)
+      if (snapshot === null) {
+        json(res, 404, { ok: false, error: `未找到快照：session=${sessionId} seq=${seqRaw}（文件未回退，上下文未动）` })
+        return
+      }
+      let files: { restored: number; deleted: number; skippedLarge: number }
+      try {
+        // 只恢复/删除「本会话在快照时点之后写过的文件」——与 /diff 对应。
+        const written = writtenPathsAfterLineage(ctx, sessionId, snapshot.createdAt)
+        files = await restoreSnapshot(snapshot, undefined, written)
+      } catch (error) {
+        json(res, 500, { ok: false, error: `文件回退失败：${error instanceof Error ? error.message : String(error)}` })
+        return
+      }
+
+      // 3) 原地回退上下文（追加 surface 替换，不 fork、不归档、不切会话）。
+      const outcome = rewindContext(ctx, sessionId, seqRaw, validated.shadowedSeqs)
+      if (!outcome.ok) {
+        json(res, outcome.status, { ok: false, error: outcome.error })
+        return
+      }
+
+      // 4) 清理被消除消息的快照（幂等，失败不阻塞）。
+      await pruneFromSeq(sessionId, seqRaw).catch(() => { /* 清理失败不阻塞退回 */ })
+
+      json(res, 200, { ok: true, ...outcome.result, files })
       return
     }
     if (method === 'POST' && rest === '/restore') {

@@ -20,14 +20,18 @@ import { installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-sett
 import { launchEnvironmentOf } from '@deepseek-ai/dsh-launch-environment'
 import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-web'
+import { applyVoice } from './voice.js'
 import { applyZhThinking } from './zh-thinking.js'
+import { applyMood } from './mood.js'
 import { applyMessageWidth } from './message-width.js'
 import { applyTaskDoneSound } from './task-done-sound.js'
 import { applyDonePill } from './done-pill.js'
 import { applyUpdater } from './updater.js'
+import { applyPluginUpdate } from './plugin-update.js'
 import { applyProxy } from './proxy.js'
 import { applyBrowser } from './browser/index.js'
 import { applyBrowserSpeed } from './browser/speed.js'
+import { applyDiagram } from './diagram.js'
 import { applyMemory } from './memory/index.js'
 import { applyFileExplorer } from './file-explorer.js'
 import { applyWorkspaceDirPicker } from './workspace-dir-picker.js'
@@ -36,7 +40,7 @@ import { applyUsageHost } from './usage-host.js'
 import { applyVisionHelper } from './vision-helper.js'
 import { applyMail } from './mail.js'
 import { applyRewind } from './rewind.js'
-import { applyScreenshot } from './screenshot.js'
+import { applyScreenshot } from './screenshot/index.js'
 import { applyDeliverables } from './deliverables.js'
 import { apply as applySkillToggles } from './skill-toggles.js'
 import { applyPromptOptimize } from './prompt-optimize.js'
@@ -44,6 +48,7 @@ import { applySidebarFloat } from './sidebar-float.js'
 import { applyAppearance } from './appearance.js'
 import { applyAutomationHost } from './automation/index.js'
 import { applyPlanweaveHost } from './planweave/host.js'
+import { applyTeamHost } from './team/host.js'
 import { applyPerfBench } from './perf-bench.js'
 import { applyDevRoleProbe } from './devrole-probe.js'
 import { applyModulesHost } from './modules-host.js'
@@ -243,8 +248,15 @@ export async function apply(ctx: Context, config: WebuiConfig = {}): Promise<voi
   // 3) 中文思考开关（自 dsh-zh-thinking 合并）。
   if (modules.zhThinking) applyZhThinking(ctx)
 
+  // 3.2) MOOD 自述：按 Agent 预设的开关 + 人设，提示词段按当次 agent 渲染
+  //      （settings 命名空间 webui-mood + /api/webui-mood）。
+  if (modules.mood) applyMood(ctx)
+
   // 3.5) 发送对话宽度（本人消息气泡宽度）：settings 持久化 + /api/webui-message-width。
   if (modules.messageWidth) applyMessageWidth(ctx)
+
+  // 3.7) 语音播报：实时播报 + 对话完成总结播报（Windows 系统语音 / 模型语音）。
+  if (modules.voice) applyVoice(ctx)
 
   // 4) 任务完成提示音 + 对话完成桌面卡片（自 dsh-task-done-sound 合并）。
   // cardEnabled:false —— 桌面右下角完成卡片已按用户要求禁用（2026-08），
@@ -256,6 +268,9 @@ export async function apply(ctx: Context, config: WebuiConfig = {}): Promise<voi
 
   // 5) DSH 壳管理 + 一键更新（自 dsh-updater 合并；config.updater 可选覆盖）。
   if (modules.updater) applyUpdater(ctx, config.updater)
+
+  // 5.5) 插件自更新：检测 GitHub 上游新版本 + 一键就地更新（/api/webui-plugin-update）。
+  if (modules.pluginUpdate) applyPluginUpdate(ctx)
 
   // 6) 网络代理（自 dsh-proxy 合并）。
   if (modules.proxy) applyProxy(ctx)
@@ -298,13 +313,14 @@ export async function apply(ctx: Context, config: WebuiConfig = {}): Promise<voi
   // 13) 对话「退回」（自 dsh-rewind）：user 消息文件快照 + /api/webui-rewind 回退路由。
   if (modules.rewind) applyRewind(ctx)
 
-  // 14) 对话「截图渲染」：渲染会话长图（/api/webui-screenshot）。
+  // 14) 对话截图：常驻无头浏览器渲染卡片（/api/webui-screenshot 的 render/save/reveal/image）。
   if (modules.screenshot) applyScreenshot(ctx)
 
   // 15) 技能开关（/api/skill-toggles）：每个技能禁用/开启 + 技能包一键开关。
   if (modules.skills) await applySkillToggles(ctx)
 
-  // 16) 提示词优化（/api/webui-prompt-optimize）：对话框内用选中模型优化提示词。
+  // 16) 提示词优化（/api/webui-prompt-optimize）：对话框内用选中模型改写草稿，
+  //     结果经 prompt-optimize-clean 清洗后回传，由客户端确认后再写回输入框。
   if (modules.promptOptimize) applyPromptOptimize(ctx)
 
   // 17) 左侧悬浮侧边栏：设置项「启动服务时默认折叠」持久化 + /api/sidebar-float。
@@ -319,6 +335,15 @@ export async function apply(ctx: Context, config: WebuiConfig = {}): Promise<voi
 
   // 20) PlanWeave：本地计划任务图 + 认领/执行/评审/反馈循环（@planweave-ai/runtime 内核 + ctx.llm 执行器）。
   if (modules.planweave) applyPlanweaveHost(ctx)
+
+  // 20.2) 团队 Agent 编排器：多团队编制（一团队一文件）+ 接力运行引擎（llm/subagent 双通道）
+  //       + team_run/team_status/team_list 工具 + 对话框团队模式提示词注入
+  //       （/api/webui-team：teams / globals / providers / chat-mode / runs）。
+  if (modules.team) applyTeamHost(ctx)
+
+  // 20.5) 图表渲染支撑：mermaid 引擎按需下发（/dyn-assets/vendor/mermaid.min.js）
+  //       + 极短作图提示词（可关）；无图表会话零下载零开销。
+  if (modules.diagram) applyDiagram(ctx)
 
   // 21) 推理性能基准测试（/api/perf-bench）：TTFT / TPS / E2E / RPS / 预填充速度。
   applyPerfBench(ctx)

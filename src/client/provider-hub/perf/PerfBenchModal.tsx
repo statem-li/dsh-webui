@@ -138,6 +138,11 @@ export function PerfBenchModal({ provider, models, onClose }: {
           setState(d.state)
           setModelId(d.state.model)
           setPhase('running')
+          // 恢复视图必须同时恢复轮询：否则重开弹窗只能看到挂载那一瞬的快照，
+          // 阶段进度永远不动、也永远不会翻到「完成」（只有 start() 起过轮询）。
+          if (pollRef.current === null) {
+            pollRef.current = window.setInterval(() => { void pollOnce() }, 900)
+          }
         } else if (Date.now() - (d.state.finishedAt ?? 0) < 60_000) {
           setState(d.state)
           setModelId(d.state.model)

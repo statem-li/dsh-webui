@@ -91,7 +91,7 @@ export async function executeJob(
   llm: LlmLike,
   job: CronJob,
   signal?: AbortSignal,
-): Promise<{ summary: string, file?: string }> {
+): Promise<{ summary: string, file?: string, model: string }> {
   const { provider, model } = resolveRunModel(ctx, job)
   const prompt = buildCronPrompt(job)
   let output = ''
@@ -131,7 +131,17 @@ export async function executeJob(
     throw new Error(`模型未返回内容（${provider}/${model}）`)
   }
   const file = writeRunOutput(job.id, output, provider, model)
-  return { summary: output.slice(0, SUMMARY_MAX), ...(file !== null ? { file } : {}) }
+  const modelLabel = provider !== '' ? `${provider}/${model}` : model
+  return { summary: summarize(output), model: modelLabel, ...(file !== null ? { file } : {}) }
+}
+
+/**
+ * 输出摘要：压掉多余空行、截断到 SUMMARY_MAX，超长补省略号——原实现直接
+ * slice 会把 Markdown 结构截半，卡片副行显示成乱码般的片段。
+ */
+function summarize(output: string): string {
+  const flat = output.trim().replace(/\s*\n\s*\n\s*/g, ' / ').replace(/\s*\n\s*/g, ' ')
+  return flat.length > SUMMARY_MAX ? `${flat.slice(0, SUMMARY_MAX)}…` : flat
 }
 
 /** 完整产出的文件头（记录触发上下文，方便日后回看）。 */

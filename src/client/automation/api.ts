@@ -1,8 +1,11 @@
 /**
  * automation — host API 封装（/api/webui-automation）。
+ *
+ * 所有写操作都回 { jobs, running } 最新快照，调用方直接用返回值刷新状态，
+ * 不必再额外拉一次列表（原实现每个动作后再 loadData，一次操作两个往返）。
  */
 
-import type { AutomationEvent, CronJob, RunsResponse, SuggestionView } from './types.ts'
+import type { AutomationEvent, CronJob, JobsResponse, RunStatus, RunsResponse, SuggestionView } from './types.ts'
 
 const BASE = '/api/webui-automation'
 
@@ -23,8 +26,8 @@ function post<T>(path: string, body: unknown): Promise<T> {
   })
 }
 
-/** 任务列表。 */
-export function listJobs(): Promise<{ jobs: CronJob[] }> {
+/** 任务列表（含正在执行的任务 id）。 */
+export function listJobs(): Promise<JobsResponse> {
   return requestJson(`${BASE}/cron`)
 }
 
@@ -37,19 +40,24 @@ export interface AddJobPayload {
   enabled?: boolean
 }
 
-/** 新建任务（openhanako 同款「灰卡」流程：enabled:false 先建后编辑）。 */
-export function addJob(payload: AddJobPayload): Promise<{ job: CronJob, jobs: CronJob[] }> {
+/** 新建任务（灰卡流程：enabled:false 先建后编辑）。 */
+export function addJob(payload: AddJobPayload): Promise<JobsResponse & { job: CronJob }> {
   return post('/cron', { action: 'add', ...payload })
 }
 
-/** 删除任务。 */
-export function removeJob(id: string): Promise<{ jobs: CronJob[] }> {
+/** 删除任务（连带清运行历史与产出）。 */
+export function removeJob(id: string): Promise<JobsResponse> {
   return post('/cron', { action: 'remove', id })
 }
 
 /** 启用/停用切换。 */
-export function toggleJob(id: string): Promise<{ job: CronJob, jobs: CronJob[] }> {
+export function toggleJob(id: string): Promise<JobsResponse & { job: CronJob }> {
   return post('/cron', { action: 'toggle', id })
+}
+
+/** 复制为停用草稿。 */
+export function duplicateJob(id: string): Promise<JobsResponse & { job: CronJob }> {
+  return post('/cron', { action: 'duplicate', id })
 }
 
 export interface UpdateJobPayload {
@@ -63,19 +71,30 @@ export interface UpdateJobPayload {
 }
 
 /** 更新任务字段。 */
-export function updateJob(payload: UpdateJobPayload): Promise<{ job: CronJob, jobs: CronJob[] }> {
+export function updateJob(payload: UpdateJobPayload): Promise<JobsResponse & { job: CronJob }> {
   return post('/cron', { action: 'update', ...payload })
 }
 
-/** 立即运行（拨动游标到当下）。 */
-export function runNow(id: string): Promise<void> {
-  return post('/cron', { action: 'run_now', id }) as Promise<void>
+/** 立即运行（服务端同步派发，不影响定时游标）。 */
+export function runNow(id: string): Promise<JobsResponse> {
+  return post('/cron', { action: 'run_now', id })
 }
 
-/** 运行历史。 */
-export function getRuns(jobId?: string, limit = 20): Promise<RunsResponse> {
+/** 中止正在执行的运行。 */
+export function cancelRun(id: string): Promise<JobsResponse> {
+  return post('/cron', { action: 'cancel', id })
+}
+
+/** 清空某任务的运行历史与产出。 */
+export function clearRuns(id: string): Promise<{ ok: boolean }> {
+  return post('/cron', { action: 'clear_runs', id })
+}
+
+/** 运行历史（新 → 旧）；status 可筛选。 */
+export function getRuns(jobId?: string, limit = 20, status?: RunStatus | 'all'): Promise<RunsResponse> {
   const query = new URLSearchParams({ limit: String(limit) })
   if (jobId !== undefined && jobId !== '') query.set('jobId', jobId)
+  if (status !== undefined && status !== 'all') query.set('status', status)
   return requestJson(`${BASE}/runs?${query.toString()}`)
 }
 
@@ -97,6 +116,22 @@ export function applySuggestion(suggestionId: string, jobData?: Record<string, u
 /** 拒绝建议。 */
 export function dismissSuggestion(suggestionId: string): Promise<{ suggestions: SuggestionView[] }> {
   return post('/suggestions', { action: 'dismiss', suggestionId })
+}
+
+/** 面板设置（AI 免确认）。 */
+export interface AutomationSettings {
+  ok: boolean
+  autoApprove: boolean
+}
+
+/** 读取设置。 */
+export function getSettings(): Promise<AutomationSettings> {
+  return requestJson(`${BASE}/settings`)
+}
+
+/** 写入设置（settings.yaml 持久化）。 */
+export function saveSettings(patch: { autoApprove?: boolean }): Promise<AutomationSettings> {
+  return post('/settings', patch)
 }
 
 /** 拉取完成事件（供全局 toast 轮询）。 */

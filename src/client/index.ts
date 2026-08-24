@@ -35,8 +35,10 @@ import { registerAnySearchCard } from './AnySearchCard'
 import { registerMailCard } from './mail/MailCard'
 import { apply as registerZhThinking } from './zh-thinking'
 import { apply as registerTaskDoneSound } from './task-done-sound'
+import { applyVoiceClient } from './voice'
 import { applyDonePill } from './done-pill'
 import { apply as registerUpdater } from './updater'
+import { apply as registerPluginUpdateCard } from './plugin-update-card'
 import { applyMessageWidthClient } from './message-width'
 import { apply as registerProxy } from './proxy'
 import { applyBrowserClient } from './browser'
@@ -51,6 +53,12 @@ import { applyApprovalNotifier } from './approval-notify'
 import {
   BetterAssistantNodeView, DshCodeBlockNode, DshImageNode, DshInlineCodeNode, DshLinkNode,
 } from './markdown/renderer'
+// 图表渲染（mermaid 围栏 → 图，引擎按需加载）：模块开关。
+import { DiagramBlock, setDiagramEnabled } from './markdown/diagram'
+import { registerDiagramSetting } from './markdown/diagram-row'
+// MOOD：```mood 围栏渲染成自述卡片 + 设置页（按 Agent 预设的开关与人设）。
+import { setMoodEnabled } from './mood/MoodBlock'
+import { applyMoodSettings } from './mood/MoodSection'
 import { ToolGroupNodeView } from './tool-summary/ToolGroupNodeView'
 import { mountActivityDrawer } from './tool-summary/activity-drawer'
 import { injectStyles as injectToolSummaryStyles } from './tool-summary/styles'
@@ -61,8 +69,8 @@ import { injectStatsStyles } from './chat-stats/styles'
 import { applyRewindClient } from './rewind'
 // 对话输入框 Ctrl+Enter 换行。
 import { applyCtrlEnterNewline } from './ctrl-enter-newline'
-// 单条消息截图（樱花主题）：assistant 消息 actions 行的截图按钮。
-import { applyMessageScreenshot } from './screenshot'
+// 对话截图：assistant 消息 actions 行的相机按钮 → 截图面板（范围/主题/宽度 + 预览后保存）。
+import { applyMessageScreenshot } from './screenshot/index'
 // 会话产物大卡片已下线：文件浏览器统一弹窗（历史 + 页内编辑）覆盖其全部能力。
 // host 端 /api/webui-deliverables 记账与路由保留——产物 chip 点击预览、
 // workspace 外产物的读取授权仍依赖它；卡片本体（message-deliverables/）留档不挂载。
@@ -88,6 +96,8 @@ import { applyPlanweaveClient } from './planweave'
 import { applyAutomation } from './automation'
 // PlanWeave：插件配置页签的设置卡（项目名/执行模型/每轮步数）。
 import { registerPlanweaveSettingsCard } from './planweave/SettingsCard'
+// 团队编排：侧边栏「团队」面板 + 对话框团队开关 + 对话流执行 HUD。
+import { applyTeamClient } from './team'
 // 会话切换柔和过渡：内容区淡入浮入 + 侧边栏行选中底色平滑渐变。
 import { applySessionSwitchMotion } from './session-motion'
 // 会话置顶：置顶排序 + 行内归档按钮（替代三个点）+ 右键菜单（置顶/重命名/分叉/归档）。
@@ -164,6 +174,14 @@ export function apply(ctx: ClientContext): void {
     }, StatsLineShadow))
   }
 
+  // ---- 图表渲染：mermaid 围栏画成图（引擎按需从 host 拉，无图表零开销）----
+  setDiagramEnabled(on('diagram'))
+  if (on('diagram')) registerDiagramSetting(ctx)
+
+  // ---- MOOD：```mood 围栏渲染成自述卡片 + 设置页（每个 Agent 的开关与人设）----
+  setMoodEnabled(on('mood'))
+  if (on('mood')) applyMoodSettings(ctx)
+
   // ---- dsh-better-markdown：markstream 渲染 + 思考 chip -------------------
   ctx.effect(() => {
     setCustomComponents(CUSTOM_COMPONENT_SCOPE, {
@@ -171,6 +189,12 @@ export function apply(ctx: ClientContext): void {
       image: DshImageNode,
       inline_code: DshInlineCodeNode,
       link: DshLinkNode,
+      // markstream 对 ```mermaid 围栏走**专用分支**（在查 code_block 自定义组件
+      // 之前就命中），不注册这个 key 的话会落到它内置的 MermaidBlockNode ——
+      // 那个组件静态 import 'mermaid'，被我们的构建 stub 掉，只会显示源码占位。
+      // 按 key 覆盖后 mermaid 围栏才真正走 DiagramBlock（其余图种关键字如
+      // flowchart / graph 走 code_block 分支，由 DshCodeBlockNode 内部分派）。
+      ...on('diagram') ? { mermaid: DiagramBlock } : {},
     })
     return () => { removeCustomComponents(CUSTOM_COMPONENT_SCOPE) }
   }, 'webui: markstream component policy')
@@ -194,6 +218,9 @@ export function apply(ctx: ClientContext): void {
   // ---- dsh-task-done-sound：提示音开关 + 回合结束上报 ---------------------
   if (on('doneSound')) registerTaskDoneSound(ctx)
 
+  // ---- 语音播报：实时播报 + 总结播报（设置行 + 对话框开关 + 播报驱动）------
+  if (on('voice')) applyVoiceClient(ctx)
+
   // ---- 对话完成胶囊：顶部居中胶囊 + 完成记录面板（含对话全文）--------------
   if (on('donePill')) applyDonePill(ctx)
 
@@ -202,6 +229,9 @@ export function apply(ctx: ClientContext): void {
 
   // ---- dsh-updater：基础设置页签（宽度/自启/版本/更新）--------------------
   if (on('updater')) registerUpdater(ctx)
+
+  // ---- 插件更新：检测上游新版本 + 一键就地更新卡片 -------------------------
+  if (on('pluginUpdate')) registerPluginUpdateCard(ctx)
 
   // ---- dsh-proxy：网络代理设置行 -----------------------------------------
   if (on('proxy')) registerProxy(ctx)
@@ -239,7 +269,7 @@ export function apply(ctx: ClientContext): void {
   // ---- 对话输入框 Ctrl+Enter 换行 -------------------------------------------
   if (on('ctrlEnter')) applyCtrlEnterNewline()
 
-  // ---- 单条消息截图（樱花主题）：assistant 消息 actions 行截图按钮 -----------
+  // ---- 对话截图：assistant 消息 actions 行相机按钮 → 截图面板 ---------------
   if (on('screenshot')) applyMessageScreenshot(ctx)
 
   // ---- 会话产物大卡片：已下线（见文件头注释），产物入口收敛到文件浏览器 ------
@@ -284,4 +314,7 @@ export function apply(ctx: ClientContext): void {
 
   // ---- PlanWeave：插件配置页签的设置卡 --------------------------------------
   if (on('planweave')) registerPlanweaveSettingsCard(ctx)
+
+  // ---- 团队编排：侧边栏「团队」面板 + 对话框团队开关 + 对话流执行 HUD --------
+  if (on('team')) applyTeamClient(ctx)
 }

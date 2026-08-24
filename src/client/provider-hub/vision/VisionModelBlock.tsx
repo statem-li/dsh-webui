@@ -151,7 +151,15 @@ export function VisionModelBlock(): ReactNode {
                       <span style={{ display: 'inline-flex', gap: 2, flexShrink: 0 }}>
                         <IconButton label="上移" glyph="↑" disabled={saving || index === 0} onClick={() => { move(index, -1) }} />
                         <IconButton label="下移" glyph="↓" disabled={saving || index === list.length - 1} onClick={() => { move(index, 1) }} />
-                        <IconButton label="移除" glyph="✕" danger disabled={saving} onClick={() => { remove(index) }} />
+                        {/* 最后一条不可移除：host 拒绝空降级列表（400），点下去只会
+                            冒出「vision 列表为空或格式无效」这种无法行动的报错。 */}
+                        <IconButton
+                          label={list.length === 1 ? '至少保留一个模型' : '移除'}
+                          glyph="✕"
+                          danger
+                          disabled={saving || list.length === 1}
+                          onClick={() => { remove(index) }}
+                        />
                       </span>
                     </div>
                   ))}

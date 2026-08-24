@@ -8,13 +8,16 @@
  */
 import type { Context } from '@deepseek-ai/cordis';
 import type { CronStore } from './store.js';
+import type { CronScheduler } from './scheduler.js';
 import type { AutomationSuggestionStore } from './suggestions.js';
 export interface AutomationToolDeps {
     ctx: Context;
     store: CronStore;
     suggestions: AutomationSuggestionStore;
+    /** 调度器读取面（用于 run / status；llm 不可用时为 null）。 */
+    scheduler?: () => CronScheduler | null;
     /** true = create/update 直接提交，不生成待确认建议。 */
     isAutoApprove?: () => boolean;
 }
 /** 注册 automation 工具；返回 disposer（由调用方合并管理）。 */
-export declare function registerAutomationTool({ ctx, store, suggestions, isAutoApprove }: AutomationToolDeps): () => void;
+export declare function registerAutomationTool({ ctx, store, suggestions, scheduler, isAutoApprove }: AutomationToolDeps): () => void;

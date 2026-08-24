@@ -15,6 +15,8 @@ export declare function automationDataRoot(): string;
 export declare class CronStore {
     readonly jobsPath: string;
     readonly runsDir: string;
+    /** 完整产出目录根（runs/<jobId>/<stamp>.md，由 executor 写入）。 */
+    readonly outputsDir: string;
     private jobs;
     private nextNum;
     private storeRevision;
@@ -33,6 +35,7 @@ export declare class CronStore {
     private mutate;
     /** 新建任务。at 必须指向未来；every 最小 1 分钟；缺省 label 取 prompt 前 30 字。 */
     addJob(input: AddJobInput): CronJob;
+    /** 删除任务，并顺带清掉它的运行历史与完整产出目录（避免孤儿文件常驻）。 */
     removeJob(id: string): boolean;
     getJob(id: string): CronJob | null;
     listJobs(): CronJob[];
@@ -43,8 +46,6 @@ export declare class CronStore {
     updateJob(id: string, patch: UpdateJobPatch): CronJob | null;
     /** 启用/停用切换；重新启用时从当前时刻重算下次触发。 */
     toggleJob(id: string): CronJob | null;
-    /** 立即到期：把 nextRunAt 拨到当前时刻（供「立即运行」），由调度器下一 tick 执行。 */
-    dueNow(id: string): boolean;
     /**
      * 标记一次运行结束：更新 lastRunAt 并推进 nextRunAt。
      * 成功 → 清零连续错误、按计划推进；失败 → 连续错误 +1、按退避表取较晚者；
@@ -57,6 +58,10 @@ export declare class CronStore {
     }): boolean;
     /** 追加一条运行记录（jsonl）；超阈值时修剪旧行。 */
     logRun(jobId: string, run: Omit<RunRecord, 'timestamp'>): void;
+    /** 清空某任务的运行历史与完整产出（保留任务本体）。 */
+    clearRunHistory(id: string): void;
+    /** 删除某任务的 jsonl 历史与 runs/<id>/ 产出目录（幂等、失败静默）。 */
+    private purgeRunArtifacts;
     /** 读取某任务的运行记录（最新在后，最多 limit 条）。 */
     getRunHistory(jobId: string, limit?: number): RunRecord[];
     /** 计算下次执行时间；返回 ISO 字符串或 null（不再触发）。 */

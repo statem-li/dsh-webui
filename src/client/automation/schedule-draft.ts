@@ -9,7 +9,7 @@
  * 双向转换让已存任务回到最贴近的 UI 模式。
  */
 
-import { t } from './locales.ts'
+import { formatAbsolute, t } from './locales.ts'
 
 export type ScheduleMode = 'interval' | 'daily' | 'weekly' | 'monthly' | 'once' | 'advanced'
 export type IntervalUnit = 'minutes' | 'hours' | 'days'
@@ -146,17 +146,78 @@ export function storedScheduleFromDraft(draft: ScheduleDraft): StoredSchedule {
   return { type: 'cron', schedule: `${minute} ${hour} * * *` }
 }
 
+/**
+ * 校验草稿是否能算出一个有效计划；返回 null=合法，否则为本地化错误文案。
+ * 与 host 的 addJob/updateJob 守卫同语义——在提交前就把错误说清楚，
+ * 而不是等服务端抛一句英文原因。
+ */
+export function validateDraft(draft: ScheduleDraft): string | null {
+  if (draft.mode === 'interval') {
+    const value = Number.parseInt(draft.intervalValue, 10)
+    if (!Number.isFinite(value) || value < 1) return t('intervalMin')
+    return null
+  }
+  if (draft.mode === 'once') {
+    const date = new Date(draft.dateTime)
+    if (Number.isNaN(date.getTime()) || date.getTime() <= Date.now()) return t('onceInvalid')
+    return null
+  }
+  if (draft.mode === 'advanced') {
+    return isValidCron(draft.cron) ? null : t('cronInvalid')
+  }
+  if (draft.mode === 'monthly') {
+    const day = Number.parseInt(draft.monthDay, 10)
+    if (!Number.isFinite(day) || day < 1 || day > 31) return t('cronInvalid')
+  }
+  return null
+}
+
+/**
+ * 5 字段 cron 的语法校验（与 host store.parseSimpleCron 的接受面对齐：
+ * `*`、`*​/n`、`a-b`、`a-b/n`、逗号列表）。
+ */
+export function isValidCron(expr: string): boolean {
+  const parts = expr.trim().split(/\s+/)
+  if (parts.length !== 5) return false
+  const ranges: Array<[number, number]> = [[0, 59], [0, 23], [1, 31], [1, 12], [0, 6]]
+  return parts.every((part, index) => isValidCronField(part, ranges[index][0], ranges[index][1], index === 4))
+}
+
+function isValidCronField(field: string, min: number, max: number, isWeekday: boolean): boolean {
+  if (field === '') return false
+  const effectiveMax = isWeekday ? 7 : max
+  return field.split(',').every((segment) => {
+    if (segment === '*') return true
+    if (segment.startsWith('*/')) {
+      const step = Number.parseInt(segment.slice(2), 10)
+      return Number.isFinite(step) && step > 0
+    }
+    const range = segment.match(/^(\d+)-(\d+)(?:\/(\d+))?$/)
+    if (range !== null) {
+      const lo = Number.parseInt(range[1], 10)
+      const hi = Number.parseInt(range[2], 10)
+      const step = range[3] !== undefined ? Number.parseInt(range[3], 10) : 1
+      return lo <= hi && lo >= min && hi <= effectiveMax && step > 0
+    }
+    if (!/^\d+$/.test(segment)) return false
+    const num = Number.parseInt(segment, 10)
+    return num >= min && num <= effectiveMax
+  })
+}
+
 /** 卡片副行预览文案（人话）。 */
 export function schedulePreviewFromDraft(draft: ScheduleDraft): string {
   if (draft.mode === 'once') {
     const date = new Date(draft.dateTime)
-    const text = Number.isNaN(date.getTime())
-      ? draft.dateTime
-      : date.toLocaleString(undefined, { hour12: false })
+    const text = Number.isNaN(date.getTime()) ? draft.dateTime : formatAbsolute(date)
     return t('schedule.onceAt', { date: text })
   }
   if (draft.mode === 'advanced') {
-    return t('schedule.advancedCron', { cron: draft.cron || '' })
+    const cron = draft.cron.trim()
+    const human = cronToHuman(cron)
+    // 能翻成人话就直接给人话（`0 9 * * 1-5` → 周一/…/周五 9:00），
+    // 翻不动才回退展示原始表达式。
+    return human !== cron ? human : t('schedule.advancedCron', { cron })
   }
   const stored = storedScheduleFromDraft(draft)
   return stored.type === 'every' ? everyPreview(stored.schedule as number) : cronToHuman(String(stored.schedule))
@@ -194,10 +255,35 @@ export function cronToHuman(schedule: string): string {
   if (dow !== '*' && hour !== '*' && dayOfMonth === '*' && month === '*' && /^\d+$/.test(min)) {
     const names = dayNames()
     const weekPrefix = t('weekPrefix')
-    const days = dow.split(',').map(d => `${weekPrefix}${names[Number(d)] ?? d}`).join('/')
+    const expanded = expandWeekdays(dow)
+    if (expanded === null) return schedule
+    const days = expanded.map(d => `${weekPrefix}${names[d] ?? d}`).join('/')
     return t('weeklyAt', { days, hour, min: min.padStart(2, '0') })
   }
   return schedule
+}
+
+/**
+ * 展开 cron 周字段为 0-6 列表（支持 `1-5`、`1,3,5`、`7`=周日）；无法展开返回 null。
+ * 原实现只 split(',')，遇到 `1-5` 会渲染成「周NaN」。
+ */
+function expandWeekdays(field: string): number[] | null {
+  const values: number[] = []
+  for (const segment of field.split(',')) {
+    const range = segment.match(/^(\d+)-(\d+)$/)
+    if (range !== null) {
+      const lo = Number(range[1])
+      const hi = Number(range[2])
+      if (lo > hi || hi > 7) return null
+      for (let v = lo; v <= hi; v++) values.push(v === 7 ? 0 : v)
+      continue
+    }
+    if (!/^\d+$/.test(segment)) return null
+    const num = Number(segment)
+    if (num > 7) return null
+    values.push(num === 7 ? 0 : num)
+  }
+  return values.length > 0 ? [...new Set(values)] : null
 }
 
 /** 周日→周六的本地化单字名。 */

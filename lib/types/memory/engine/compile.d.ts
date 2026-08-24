@@ -19,9 +19,13 @@ export declare function renderIdentity(entries: MemoryEntry[]): string;
 export declare function renderFacts(entries: MemoryEntry[]): string;
 /** 渲染 pinned。 */
 export declare function renderPinned(entries: MemoryEntry[]): string;
-/** 身份/偏好判定。 */
+/** 身份/偏好判定（显式 kind 优先，回退标签匹配）。 */
 export declare function isIdentityEntry(entry: MemoryEntry): boolean;
-/** 事实判定（非 identity、非 pinned 且带事实标签或高重要性）。 */
+/**
+ * 事实判定：优先看显式 kind（schema v2），其次事实标签，最后才回退重要性。
+ * 旧实现只看 `importance >= 8`——初始 importance 就是 10，等于「几乎所有条目
+ * 都是事实」，facts.md 与 memory.md 内容重复。
+ */
 export declare function isFactEntry(entry: MemoryEntry): boolean;
 /** 全局层编译产物。 */
 export declare function compileGlobalArtifacts(entries: MemoryEntry[]): {
@@ -50,7 +54,12 @@ export interface InjectionSections {
 }
 /**
  * 组装注入文本与 sections。
- * @param entries - 注入可见条目（已按重要性排序）。
+ *
+ * 分组累积（不是"每段只取一条"）：pinned 无条件全量进入且不占预算；其余按
+ * 归属分入 identity / memory / facts 三段，按重要性降序逐条累积直到 token
+ * 预算耗尽。段头（[记忆·xxx]）本身也计入预算。
+ *
+ * @param entries - 注入可见条目（pinned + 检索命中）。
  * @param config - 注入预算。
  */
 export declare function buildInjectionText(entries: MemoryEntry[], config: MemoryConfig): {

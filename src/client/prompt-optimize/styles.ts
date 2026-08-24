@@ -1,97 +1,123 @@
 /**
- * webui — 提示词优化入口样式（运行时幂等注入 <style>）。
+ * webui — 提示词优化 UI 样式（运行时幂等注入 <style>，v2 重做）。
  *
- * 图标按钮规格对齐 DSH 官方工具行小控件（与模型座位 .webui-ms-trigger 同源）：
- * 28px 高、胶囊圆角、透明底、hover 用 interactive-bg-hover，主题变量一律走 DSH 令牌。
- * popover 面板规格对齐模型座位弹出菜单（菜单底色/阴影/圆角同源）；开关对齐官方
- * 开关规范（开启态 business-primary + 白钮，关闭态 border-l2 + 灰钮）。
+ * 规格对齐 DSH 官方设计语言（见 dsh-ui-style 技能）：
+ *  - 触发图标 = 官方工具行小控件：28px 高、胶囊圆角、透明底、hover 走
+ *    interactive-bg-hover（与模型座位同源）。
+ *  - 面板 = 官方菜单面（--dsw-specific-menu + shadow-lv3 + 14px 圆角）。
+ *  - 强调色一律 --dsw-alias-state-business-primary（brand-primary 是反色，
+ *    绝不能用作强调）。
+ *  - 行内小按钮 28px / 12px / r14；主按钮 36px / 14px / r18。
+ *
+ * v2 结构：图标 → 面板（风格 chips + 结果预览 + 应用/重试）。结果先落在
+ * 面板的预览区，用户点「应用」才写回输入框——旧版直接改草稿导致无法撤销、
+ * 也看不清模型到底改了什么。
  */
 
 /** 类名常量（组件引用）。 */
 export const css = {
   root: 'webui-po-root',
   trigger: 'webui-po-trigger',
-  busy: 'webui-po-busy',
+  triggerActive: 'webui-po-trigger-active',
+  spin: 'webui-po-spin',
   panel: 'webui-po-panel',
-  panelTitle: 'webui-po-panel-title',
-  caption: 'webui-po-caption',
+  head: 'webui-po-head',
+  title: 'webui-po-title',
+  sub: 'webui-po-sub',
+  close: 'webui-po-close',
+  section: 'webui-po-section',
+  sectionLabel: 'webui-po-section-label',
+  chips: 'webui-po-chips',
+  chip: 'webui-po-chip',
+  chipOn: 'webui-po-chip-on',
+  source: 'webui-po-source',
+  result: 'webui-po-result',
+  resultText: 'webui-po-result-text',
+  caret: 'webui-po-caret',
+  empty: 'webui-po-empty',
   status: 'webui-po-status',
-  statusOptimizing: 'webui-po-status-optimizing',
-  statusDone: 'webui-po-status-done',
+  statusBusy: 'webui-po-status-busy',
   statusError: 'webui-po-status-error',
-  options: 'webui-po-options',
-  option: 'webui-po-option',
+  actions: 'webui-po-actions',
+  btn: 'webui-po-btn',
+  btnPrimary: 'webui-po-btn-primary',
+  btnGhost: 'webui-po-btn-ghost',
+  btnDanger: 'webui-po-btn-danger',
+  optionRow: 'webui-po-option',
   optionLabel: 'webui-po-option-label',
   switch: 'webui-po-switch',
   switchOn: 'webui-po-switch-on',
-  knob: 'webui-po-switch-knob',
-  knobOn: 'webui-po-switch-knob-on',
-  stop: 'webui-po-stop',
-  panelMulti: 'webui-po-panel-multi',
-  panelClosing: 'webui-po-panel-closing',
-  multiBody: 'webui-po-multi-body',
-  sourceBlock: 'webui-po-source',
-  sourceLabel: 'webui-po-source-label',
-  sourceText: 'webui-po-source-text',
-  candidates: 'webui-po-candidates',
-  candidate: 'webui-po-candidate',
-  candidateHead: 'webui-po-candidate-head',
-  candidateLabel: 'webui-po-candidate-label',
-  candidateText: 'webui-po-candidate-text',
-  recommendBadge: 'webui-po-recommend',
-  closeCard: 'webui-po-close',
+  knob: 'webui-po-knob',
+  knobOn: 'webui-po-knob-on',
+  hint: 'webui-po-hint',
 } as const
 
 const STYLE_ID = 'dsh-webui-prompt-optimize-styles'
 
 const SHEET = `
 .webui-po-root{position:relative;display:grid;place-items:center}
-.webui-po-trigger{display:grid;place-items:center;width:28px;height:28px;padding:0;border:none;border-radius:14px;outline:none;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer}
+.webui-po-trigger{display:grid;place-items:center;width:28px;height:28px;padding:0;border:none;border-radius:14px;outline:none;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer;transition:background .15s,color .15s}
 .webui-po-trigger:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
 .webui-po-trigger:focus-visible{box-shadow:0 0 0 2px var(--dsw-alias-border-l3)}
 .webui-po-trigger:disabled{opacity:.5;cursor:default}
-.webui-po-busy{animation:webui-po-spin 1s linear infinite}
+.webui-po-trigger-active{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-state-business-primary)}
+.webui-po-spin{animation:webui-po-spin 1s linear infinite}
 @keyframes webui-po-spin{to{transform:rotate(360deg)}}
-.webui-po-panel{position:absolute;right:0;bottom:calc(100% + 10px);z-index:20;width:max-content;min-width:236px;max-width:320px;padding:14px 16px;border:1px solid var(--dsw-alias-border-inverted);border-radius:14px;background:var(--dsw-specific-menu);box-shadow:var(--dsw-shadow-lv3);color:var(--dsw-alias-label-primary);animation:webui-po-slide-in 160ms cubic-bezier(.2,.8,.2,1)}
-/* 透明桥接：覆盖卡片与图标之间的间隙，鼠标移动时命中卡片不中断 hover。 */
-.webui-po-panel::before{content:'';position:absolute;left:0;right:0;bottom:-10px;height:10px}
-@keyframes webui-po-slide-in{from{opacity:0;transform:translateY(6px) scale(.98)}to{opacity:1;transform:none}}
-.webui-po-panel-title{font-size:14px;font-weight:600;line-height:20px;margin-bottom:4px}
-.webui-po-caption{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary);margin-bottom:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.webui-po-options{display:flex;flex-direction:column;gap:10px;margin-top:12px;padding-top:12px;border-top:1px solid var(--dsw-alias-border-l2)}
+
+/* ── 面板：贴图标上方弹出（fixed 定位由组件按锚点计算，避免被输入区裁剪）── */
+.webui-po-panel{position:fixed;z-index:1000;display:flex;flex-direction:column;gap:14px;box-sizing:border-box;width:min(560px,calc(100vw - 24px));max-height:min(560px,calc(100vh - 96px));padding:16px;border:1px solid var(--dsw-alias-border-inverted);border-radius:14px;background:var(--dsw-specific-menu);box-shadow:var(--dsw-shadow-lv3);color:var(--dsw-alias-label-primary);overflow:hidden;animation:webui-po-rise 160ms cubic-bezier(.2,.8,.2,1)}
+@keyframes webui-po-rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.webui-po-panel[data-closing='1']{animation:webui-po-sink 140ms cubic-bezier(.4,0,.6,1) forwards!important}
+@keyframes webui-po-sink{from{opacity:1;transform:none}to{opacity:0;transform:translateY(8px)}}
+
+.webui-po-head{display:flex;align-items:flex-start;gap:8px}
+.webui-po-title{flex:1;min-width:0;font-size:14px;font-weight:600;line-height:20px}
+.webui-po-sub{margin-top:2px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.webui-po-close{flex:none;display:grid;place-items:center;width:28px;height:28px;margin:-4px -4px 0 0;padding:0;border:none;border-radius:14px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer}
+.webui-po-close:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+
+.webui-po-section{display:flex;flex-direction:column;gap:8px;min-height:0}
+.webui-po-section-label{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}
+.webui-po-chips{display:flex;flex-wrap:wrap;gap:8px}
+.webui-po-chip{height:28px;padding:0 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:14px;background:transparent;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:26px;cursor:pointer;transition:border-color .15s,color .15s,background .15s}
+.webui-po-chip:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+.webui-po-chip:disabled{opacity:.5;cursor:default}
+.webui-po-chip-on{border-color:var(--dsw-alias-state-business-primary);color:var(--dsw-alias-state-business-primary)}
+
+/* 原文 / 结果块 */
+.webui-po-source,.webui-po-result{padding:10px 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;background:var(--dsw-alias-bg-layer-1);font-size:13px;line-height:21px;white-space:pre-wrap;word-break:break-word;overflow-y:auto}
+.webui-po-source{max-height:88px;color:var(--dsw-alias-label-secondary)}
+.webui-po-result{flex:1;min-height:96px;max-height:280px;color:var(--dsw-alias-label-primary)}
+.webui-po-empty{color:var(--dsw-alias-label-tertiary)}
+/* 流式光标：跟在已生成文本后面轻微闪烁 */
+.webui-po-caret{display:inline-block;width:2px;height:14px;margin-left:1px;vertical-align:-2px;background:var(--dsw-alias-state-business-primary);animation:webui-po-blink 1s steps(2,start) infinite}
+@keyframes webui-po-blink{to{visibility:hidden}}
+
+.webui-po-status{display:flex;align-items:center;gap:6px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}
+.webui-po-status-busy{color:var(--dsw-alias-state-business-primary)}
+.webui-po-status-error{color:var(--dsw-alias-state-error-primary)}
+
 .webui-po-option{display:flex;align-items:center;justify-content:space-between;gap:12px}
 .webui-po-option-label{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}
-.webui-po-switch{position:relative;width:34px;height:18px;border-radius:9px;border:none;padding:0;cursor:pointer;flex:none;background:var(--dsw-alias-border-l2);transition:background .15s}
+.webui-po-switch{position:relative;width:34px;height:18px;flex:none;padding:0;border:none;border-radius:9px;background:var(--dsw-alias-border-l2);cursor:pointer;transition:background .15s}
 .webui-po-switch-on{background:var(--dsw-alias-state-business-primary)}
-.webui-po-switch-knob{position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:var(--dsw-alias-label-tertiary);transition:left .15s,background .15s;box-shadow:0 1px 2px rgba(0,0,0,.15)}
-.webui-po-switch-knob-on{left:18px;background:#fff}
-.webui-po-status{display:flex;align-items:center;gap:6px;margin-top:12px;padding-top:12px;border-top:1px solid var(--dsw-alias-border-l2);font-size:12px;line-height:18px;color:var(--dsw-alias-label-primary)}
-.webui-po-status-optimizing{color:var(--dsw-alias-state-business-primary)}
-.webui-po-status-done{color:var(--dsw-alias-state-success-primary)}
-.webui-po-status-error{color:var(--dsw-alias-state-error-primary)}
-.webui-po-stop{display:flex;align-items:center;justify-content:center;width:100%;height:28px;margin-top:10px;border:1px solid var(--dsw-alias-state-error-primary);border-radius:8px;background:var(--dsw-alias-interactive-bg-hover-danger);color:var(--dsw-alias-state-error-primary);font-size:12px;font-weight:600;cursor:pointer;transition:background .15s,color .15s}
-.webui-po-stop:hover{background:var(--dsw-alias-state-error-primary);color:#fff}
-/* 多轮候选卡片：滑出动画（滑入沿用 .webui-po-panel 的 slide-in / glass rise）。
- * important 覆盖玻璃模式 html[data-dsh-glass] 的 rise 强制 animation。 */
-.webui-po-panel-closing{animation:webui-po-slide-out 140ms cubic-bezier(.4,0,.6,1) forwards!important}
-@keyframes webui-po-slide-out{from{opacity:1;transform:translateY(0)}to{opacity:0;transform:translateY(6px)}}
-.webui-po-panel-multi{position:fixed;left:0;right:0;top:0;bottom:0;margin:auto;width:800px;max-width:calc(100vw - 32px);height:fit-content;max-height:82vh;padding:20px 24px;overflow-y:auto;z-index:1000}
-.webui-po-multi-body{display:flex;flex-direction:column;gap:14px;min-width:0}
-.webui-po-source{margin-top:2px;padding:14px 16px;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;background:var(--dsw-alias-bg-layer-1)}
-.webui-po-source-label{font-size:13px;font-weight:600;line-height:20px;color:var(--dsw-alias-label-secondary);margin-bottom:6px}
-.webui-po-source-text{font-size:15px;line-height:24px;color:var(--dsw-alias-label-primary);white-space:pre-wrap;word-break:break-word}
-.webui-po-candidates{display:flex;flex-direction:column;gap:12px;min-width:0}
-.webui-po-candidate{display:flex;flex-direction:column;gap:8px;padding:14px 16px;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;background:transparent;text-align:left;cursor:pointer;transition:border-color .15s,background .15s}
-.webui-po-candidate:hover{border-color:var(--dsw-alias-state-business-primary);background:var(--dsw-alias-interactive-bg-hover)}
-.webui-po-candidate-head{display:flex;align-items:center;gap:10px}
-.webui-po-candidate-label{font-size:14px;font-weight:600;line-height:20px;color:var(--dsw-alias-label-primary)}
-.webui-po-recommend{font-size:13px;line-height:18px;font-weight:600;padding:0 8px;border-radius:6px;background:var(--dsw-alias-state-business-primary);color:#fff}
-.webui-po-candidate-text{font-size:15px;line-height:24px;color:var(--dsw-alias-label-secondary);white-space:pre-wrap;word-break:break-word}
-.webui-po-close{display:flex;align-items:center;justify-content:center;width:100%;height:36px;margin-top:4px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:transparent;color:var(--dsw-alias-label-secondary);font-size:14px;font-weight:600;cursor:pointer;transition:background .15s,color .15s}
-.webui-po-close:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
-`
+.webui-po-knob{position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:var(--dsw-alias-label-tertiary);box-shadow:0 1px 2px rgba(0,0,0,.15);transition:left .15s,background .15s}
+.webui-po-knob-on{left:18px;background:#fff}
 
-let injected = false
+.webui-po-actions{display:flex;align-items:center;gap:8px}
+.webui-po-btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:36px;padding:0 16px;border:1px solid transparent;border-radius:18px;font-size:14px;font-weight:500;cursor:pointer;transition:background .15s,color .15s,border-color .15s}
+.webui-po-btn:disabled{opacity:.45;cursor:default}
+.webui-po-btn-primary{flex:1;background:var(--dsw-alias-state-business-primary);color:#fff}
+.webui-po-btn-primary:hover:not(:disabled){filter:brightness(1.08)}
+.webui-po-btn-ghost{border-color:var(--dsw-alias-border-l2);background:transparent;color:var(--dsw-alias-label-secondary)}
+.webui-po-btn-ghost:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+.webui-po-btn-danger{border-color:var(--dsw-alias-state-error-primary);background:transparent;color:var(--dsw-alias-state-error-primary)}
+.webui-po-btn-danger:hover:not(:disabled){background:var(--dsw-alias-state-error-primary);color:#fff}
+.webui-po-hint{font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary)}
+@media (prefers-reduced-motion:reduce){
+  .webui-po-panel,.webui-po-panel[data-closing='1'],.webui-po-spin,.webui-po-caret{animation:none!important}
+}
+`
 
 /** 注入样式表（幂等；loader 卸载插件时会移除其 style 标签）。 */
 export function ensureStyles(): void {
@@ -103,7 +129,4 @@ export function ensureStyles(): void {
   tag.dataset.pluginCss = 'webui/prompt-optimize'
   tag.textContent = SHEET
   document.head.appendChild(tag)
-  injected = true
 }
-
-export { injected }

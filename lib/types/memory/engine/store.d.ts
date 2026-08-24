@@ -89,7 +89,14 @@ export declare class MemoryStore {
         created: boolean;
         entry: MemoryEntry;
     }>;
-    /** 替换单条（用于裁决操作：改标签/移项目/置顶）。返回新条目；不存在返回 undefined。 */
+    /**
+     * 替换单条（用于裁决操作：改内容/标签/移项目/置顶/启用）。返回新条目；不存在返回 undefined。
+     *
+     * id 是 content+scope+projectHash 的稳定派生值，所以内容或归属变化时必须重算 id，
+     * 否则 id 与内容脱钩：后续 upsertEntry（提取/手动添加）算出的新 id 找不到本条，
+     * 会把同一条记忆再插一遍（面板出现重复条目）。若新 id 已存在（改成了与另一条
+     * 完全相同的内容），把两条合并为一条，保留较高的 importance 与并集标签。
+     */
     patchEntry(id: string, patch: Partial<Omit<MemoryEntry, 'id' | 'createdAt'>>): Promise<MemoryEntry | undefined>;
     /** 删除条目。返回是否删除成功。 */
     removeEntry(id: string): Promise<boolean>;

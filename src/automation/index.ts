@@ -5,11 +5,15 @@
  *  - CronStore：任务持久化（${DSH_HOME}/automation/dsh-webui/）
  *  - CronScheduler：服务进程内 60s tick 调度（GUI 关闭也照常触发）
  *  - 执行器：到期任务经 ctx.llm 以绑定模型真实执行
- *  - automation 工具：Agent 可 list / 建议 create / 建议 update
+ *  - automation 工具：Agent 可 list / 建议 create / 建议 update / 立即运行
  *  - HTTP 路由：UI 的 CRUD、建议确认、运行历史、完成事件流
+ *
+ * 「立即运行」由调度器同步派发（不再靠拨 nextRunAt 等下一个 tick），
+ * 因此路由层需要拿到 scheduler——装配顺序为 store → scheduler → routes。
  */
 
 import type { Context } from '@deepseek-ai/cordis'
+import z from '@deepseek-ai/schemastery'
 import { settingsNamespace } from '@deepseek-ai/dsh-settings'
 import { CronStore } from './store.js'
 import { AutomationSuggestionStore } from './suggestions.js'
@@ -58,7 +62,33 @@ interface AutomationSettings {
 
 export const AUTOMATION_SETTINGS_NAMESPACE = settingsNamespace('webui-automation')
 
-function readAutoApprove(ctx: Context): boolean {
+/** 设置读写面（register 成功时可写；重复注册时降级为只读默认值）。 */
+interface SettingsScopeLike {
+  get: () => AutomationSettings
+  update: (patch: object) => Promise<void>
+}
+
+/**
+ * 注册 settings 命名空间。原实现只 get 从未 register——命名空间不存在，
+ * autoApprove 永远读到 undefined，「AI 免确认」开关形同不存在。
+ */
+function registerSettings(ctx: Context): SettingsScopeLike | null {
+  try {
+    return ctx.settings.register(AUTOMATION_SETTINGS_NAMESPACE, z.object({
+      autoApprove: z.boolean().default(false),
+    })) as unknown as SettingsScopeLike
+  } catch {
+    // 已注册（插件被加载两次）：退化为只读。
+    return null
+  }
+}
+
+function readAutoApprove(ctx: Context, scope: SettingsScopeLike | null): boolean {
+  if (scope !== null) {
+    try {
+      return scope.get().autoApprove === true
+    } catch { /* fallthrough */ }
+  }
   try {
     const config = ctx.settings?.get?.(AUTOMATION_SETTINGS_NAMESPACE) as AutomationSettings | undefined
     return config?.autoApprove === true
@@ -75,24 +105,9 @@ export function applyAutomationHost(ctx: Context): void {
   const store = new CronStore()
   const suggestions = new AutomationSuggestionStore()
   const events = createAutomationEventBuffer()
+  const settings = registerSettings(ctx)
 
-  // ── HTTP 路由 ──
-  const disposeRoutes = registerAutomationRoutes({ ctx, webServer, store, suggestions, events })
-
-  // ── Agent 工具 ──
-  let disposeTool: (() => void) | null = null
-  try {
-    disposeTool = registerAutomationTool({
-      ctx,
-      store,
-      suggestions,
-      isAutoApprove: () => readAutoApprove(ctx),
-    })
-  } catch {
-    // tools 服务不可达时仅降级 UI/HTTP 能力，不影响调度执行。
-  }
-
-  // ── 调度器 ──
+  // ── 调度器（先于路由：run_now 需要它同步派发执行）──
   const llm = ctx.get('llm') as LlmServiceLike | undefined
   const executing = new Map<string, AbortController>()
   let scheduler: CronScheduler | null = null
@@ -123,6 +138,37 @@ export function applyAutomationHost(ctx: Context): void {
     scheduler.start()
   } else {
     ctx.logger?.warn?.('[webui-automation] llm 服务不可用，调度器未启动（CRUD 与建议仍可用）')
+  }
+
+  // ── HTTP 路由 ──
+  const disposeRoutes = registerAutomationRoutes({
+    ctx,
+    webServer,
+    store,
+    suggestions,
+    events,
+    scheduler: () => scheduler,
+    settings: {
+      read: () => ({ autoApprove: readAutoApprove(ctx, settings) }),
+      write: async (patch) => {
+        if (settings === null) throw new Error('自动化设置不可写（命名空间未注册）')
+        await settings.update(patch)
+      },
+    },
+  })
+
+  // ── Agent 工具 ──
+  let disposeTool: (() => void) | null = null
+  try {
+    disposeTool = registerAutomationTool({
+      ctx,
+      store,
+      suggestions,
+      scheduler: () => scheduler,
+      isAutoApprove: () => readAutoApprove(ctx, settings),
+    })
+  } catch {
+    // tools 服务不可达时仅降级 UI/HTTP 能力，不影响调度执行。
   }
 
   ctx.effect(() => () => {

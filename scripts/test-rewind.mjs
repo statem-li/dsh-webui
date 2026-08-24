@@ -32,7 +32,7 @@ process.env.DSH_HOME = storageRoot
 const {
   captureSnapshotSync, persistSnapshot, restoreSnapshot, diffSnapshot,
   readSnapshot, gcBlobs, runMaintenance, rewindHome, blobHome, writtenPathsFor,
-  writtenPathsAfter,
+  writtenPathsAfter, validateRewind, rewindContext,
 } = await import('../lib/rewind.js')
 
 let passed = 0
@@ -697,6 +697,150 @@ async function testCrossSessionProtection() {
   rmSync(root, { recursive: true, force: true })
 }
 
+// ── 原地回退（surface replace）测试：mock live session，不依赖 DSH 运行时 ──
+
+/** 构造一个模拟 live 会话：events 追加日志 + 维护 surface 节点序列。 */
+function makeSession() {
+  const log = []
+  const surface = []
+  return {
+    id: 'test-session',
+    header: { cwd: 'C:\\work' },
+    events: log,
+    surface: { get nodes() { return [...surface] } },
+    append(type, data, opts) {
+      const seq = log.length
+      const event = { type, seq, data, ...(opts ?? {}) }
+      log.push(event)
+      if (event.surfaceOp !== undefined) {
+        if (event.surfaceOp === 'append') {
+          surface.push(seq)
+        } else {
+          const startIdx = surface.indexOf(event.surfaceOp.start)
+          const endIdx = surface.indexOf(event.surfaceOp.end)
+          surface.splice(startIdx, endIdx - startIdx + 1, seq)
+        }
+      }
+      return event
+    },
+  }
+}
+
+/** 模拟「两轮完整对话」的日志：turn 配对、user/assistant 表面节点。 */
+function seedTwoTurns(session) {
+  const append = (type, data, opts) => session.append(type, data, opts)
+  append('turn/start', { turn: 1 })
+  append('user/message', { id: 'm1', role: 'user', content: [{ type: 'text', text: '第一问' }], source: { kind: 'user' } }, { surfaceOp: 'append' })
+  append('assistant/message', { turn: 1, step: 1, message: { id: 'a1', role: 'assistant', content: [{ type: 'text', text: '第一答' }], source: { kind: 'model', provider: 'p', model: 'm' } } }, { surfaceOp: 'append' })
+  append('turn/end', { turn: 1, reason: 'complete' })
+  append('turn/start', { turn: 2 })
+  append('user/message', { id: 'm2', role: 'user', content: [{ type: 'text', text: '第二问' }], source: { kind: 'user' } }, { surfaceOp: 'append' })
+  append('assistant/message', { turn: 2, step: 1, message: { id: 'a2', role: 'assistant', content: [{ type: 'text', text: '第二答' }], source: { kind: 'model', provider: 'p', model: 'm' } } }, { surfaceOp: 'append' })
+  append('turn/end', { turn: 2, reason: 'complete' })
+}
+
+/** mock ctx：sessions 可解析，tokenMeter 可选。 */
+function makeCtx(session, withMeter = false) {
+  return {
+    get(name) {
+      if (name === 'sessions') return { get: () => session }
+      if (name === 'tokenMeter') return withMeter ? { estimateMessage: () => 3 } : undefined
+      return undefined
+    },
+    logger: { warn() {} },
+  }
+}
+
+function testInPlaceRewind() {
+  console.log('\n[15] 原地回退（surface replace 事件追加顺序，不 fork/不归档）：')
+
+  // 15.1 基本回退：遮蔽第 2 条 user 消息及其 assistant 回复（tokenMeter 可用）。
+  {
+    const session = makeSession()
+    seedTwoTurns(session)
+    const ctx = makeCtx(session, true)
+    const v = validateRewind(ctx, 'test-session', 5)
+    if (!v.ok || v.shadowedSeqs.join(',') !== '5,6') {
+      fail('validateRewind(seq=5) 应遮蔽 [5,6]', JSON.stringify(v))
+    } else {
+      ok('validateRewind 计算出正确遮蔽范围 [5,6]')
+    }
+    const out = rewindContext(ctx, 'test-session', 5, v.shadowedSeqs)
+    if (!out.ok) {
+      fail('rewindContext 应成功', JSON.stringify(out))
+      return
+    }
+    const tail = session.events.slice(-2)
+    const prune = tail[0]
+    const replace = tail[1]
+    const surface = session.surface.nodes
+    // seed 8 个事件(seq 0..7)；prune=seq8、replace=seq9。
+    if (prune.type !== 'compaction/prune') {
+      fail('应追加 compaction/prune 计量事件', `got=${prune.type}`)
+    } else if (prune.data.shadowedRange.start !== 5 || prune.data.shadowedRange.end !== 6) {
+      fail('compaction/prune shadowedRange 应为 [5,6]', JSON.stringify(prune.data.shadowedRange))
+    } else {
+      ok('compaction/prune 计量声明范围正确')
+    }
+    if (replace.type !== 'user/message' || replace.surfaceOp.op !== 'replace'
+      || replace.surfaceOp.start !== 5 || replace.surfaceOp.end !== 6) {
+      fail('应追加 user/message surfaceOp replace [5,6]', JSON.stringify(replace))
+    } else if (!replace.sourceEventSeqs.includes(5) || !replace.sourceEventSeqs.includes(6)) {
+      fail('sourceEventSeqs 应包含全部被遮蔽节点', JSON.stringify(replace.sourceEventSeqs))
+    } else if (replace.data.source.plugin !== 'webui-rewind') {
+      fail('替换事件 source.plugin 应为 webui-rewind', JSON.stringify(replace.data.source))
+    } else if (surface.join(',') !== '1,2,9') {
+      fail('回退后 surface 应只剩 [1,2,9]（replacement 节点入表面）', `got=[${surface.join(', ')}]`)
+    } else {
+      ok('user/message replace 遮蔽正确，surface 回到 [1,2,9]')
+    }
+    // 重复回退同一消息应被拒绝。
+    const again = validateRewind(ctx, 'test-session', 5)
+    if (again.ok) {
+      fail('已遮蔽的消息不应允许再次回退', '')
+    } else {
+      ok('已遮蔽消息的再次回退被拒绝')
+    }
+  }
+
+  // 15.2 运行中会话应被拒绝（turn 未闭合）。
+  {
+    const session = makeSession()
+    session.append('turn/start', { turn: 1 })
+    session.append('user/message', { id: 'm1', role: 'user', content: [{ type: 'text', text: 'x' }], source: { kind: 'user' } }, { surfaceOp: 'append' })
+    const v = validateRewind(makeCtx(session), 'test-session', 1)
+    if (v.ok) {
+      fail('运行中（turn 未闭合）的会话应拒绝回退', '')
+    } else {
+      ok('运行中会话的回退被拒绝（409）')
+    }
+  }
+
+  // 15.3 第一条消息回退：遮蔽 [1,2]，surface 只剩 replacement 节点。
+  {
+    const session = makeSession()
+    seedTwoTurns(session)
+    const ctx = makeCtx(session, true)
+    const v = validateRewind(ctx, 'test-session', 1)
+    if (!v.ok || v.shadowedSeqs.join(',') !== '1,2,5,6') {
+      fail('validateRewind(seq=1) 应遮蔽 [1,2,5,6]', JSON.stringify(v))
+    } else {
+      ok('validateRewind(seq=1) 覆盖全部四条消息')
+    }
+    const out = rewindContext(ctx, 'test-session', 1, v.shadowedSeqs)
+    if (!out.ok) {
+      fail('第一条消息回退应成功', JSON.stringify(out))
+      return
+    }
+    const surface = session.surface.nodes
+    if (surface.length !== 1 || surface[0] !== session.events.length - 1) {
+      fail('第一条消息回退后 surface 应只剩 replacement 节点', `got=[${surface.join(', ')}]`)
+    } else {
+      ok('第一条消息回退后 surface 只剩 replacement 节点')
+    }
+  }
+}
+
 async function main() {
   try {
     await testMultiRound()
@@ -713,6 +857,7 @@ async function main() {
     await testWrittenLogPersistence()
     await testExternalDirs()
     await testCrossSessionProtection()
+    testInPlaceRewind()
   } finally {
     rmSync(storageRoot, { recursive: true, force: true })
   }

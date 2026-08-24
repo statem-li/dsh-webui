@@ -79,6 +79,10 @@ export interface RunRecord {
   schemaVersion?: number
   /** 成功时完整产出的文件名（runs/<jobId>/ 目录下）。 */
   file?: string
+  /** 触发来源：schedule=调度器到期触发；manual=用户/AI 手动「立即运行」。 */
+  trigger?: 'schedule' | 'manual'
+  /** 本次执行实际使用的模型（provider/model）。 */
+  model?: string
 }
 
 /** addJob 入参。 */

@@ -28,9 +28,14 @@ export interface BrowserActivityStore {
 }
 
 const STORE_KEY = '__dshBrowserActivityStore__'
-const POLL_MS = 800
+/** 有活跃会话时的轮询间隔。 */
+const POLL_ACTIVE_MS = 800
+/** 无活跃会话时的轮询间隔（降频省主线程与请求；有活动立即回到高频）。 */
+const POLL_IDLE_MS = 3000
 
 let pollTimer: number | null = null
+
+let visibilityCleanup: (() => void) | null = null
 
 function sameValue(a: ActiveBrowserSession | undefined, b: ActiveBrowserSession): boolean {
   if (a === undefined) return false
@@ -63,7 +68,15 @@ export function browserActivityStore(): BrowserActivityStore {
     },
     startPolling: () => {
       if (pollTimer !== null) return
+      let intervalMs = POLL_IDLE_MS
+      const restart = (ms: number): void => {
+        intervalMs = ms
+        if (pollTimer !== null) window.clearInterval(pollTimer)
+        pollTimer = window.setInterval(() => { void poll() }, ms)
+      }
       const poll = async (): Promise<void> => {
+        // 页面不可见时不轮询（后台标签页里没人看活动标识）。
+        if (typeof document !== 'undefined' && document.hidden) return
         try {
           const res = await fetch('/api/dsh-browser/active-sessions', { cache: 'no-store' })
           const data: any = await res.json()
@@ -79,15 +92,28 @@ export function browserActivityStore(): BrowserActivityStore {
             || [...next.entries()].some(([key, value]) => !sameValue(active.get(key), value))
           active = next
           if (changed) notify()
+          // 有活跃会话 → 高频跟进；全空闲 → 降频（多数时间是这个状态）。
+          const want = next.size > 0 ? POLL_ACTIVE_MS : POLL_IDLE_MS
+          if (want !== intervalMs) restart(want)
         } catch { /* 轮询失败保持上次状态 */ }
       }
-      pollTimer = window.setInterval(() => { void poll() }, POLL_MS)
+      // 标签页重新可见时立刻补一次，避免显示滞后。
+      const onVisible = (): void => { if (!document.hidden) void poll() }
+      if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVisible)
+      visibilityCleanup = () => {
+        if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisible)
+      }
+      restart(POLL_IDLE_MS)
       void poll()
     },
     stopPolling: () => {
       if (pollTimer !== null) {
         window.clearInterval(pollTimer)
         pollTimer = null
+      }
+      if (visibilityCleanup !== null) {
+        visibilityCleanup()
+        visibilityCleanup = null
       }
     },
   }

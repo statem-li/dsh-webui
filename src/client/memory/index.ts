@@ -19,7 +19,9 @@ import { ensureNavMount } from '../sidebar-nav.js'
 export type { MemoryToggleProps } from './Toggle.js'
 export type { MemoryPanelProps, MemoryTab } from './Panel.js'
 export type { MemoryLocaleKey } from './locales.js'
-export type { MemoryApi, MemoryEntryView, ProjectView, ChangeView } from './api.js'
+export type { MemoryApi, MemoryEntryView, MemoryKind, ProjectView, ChangeView } from './api.js'
+
+export { changeActionLabel } from './Panel.js'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
@@ -27,8 +29,6 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
     dshMemory: MemoryLocaleKey
   }
 }
-
-/** Services required by the footer registration. */
 
 /** Contribute the nav-row entry wired to the dsh-memory HTTP API. */
 export function applyMemoryClient(ctx: ClientContext): void {

@@ -81,11 +81,13 @@ function clamp01(v: number): number {
   return Math.min(1, Math.max(0, v))
 }
 
-/** 把位置夹回视口内并取整（防拖出屏幕；非整数像素会让文字发糊）。 */
-function clampPos(x: number, y: number): PillPos {
+/** 把位置夹回视口内并取整（防拖出屏幕；非整数像素会让文字发糊）。
+ *  w/h = 胶囊**实际渲染尺寸**：旧实现固定按 160×56 估算，600px 宽的胶囊
+ *  能被拖出屏幕大半（右缘算不进去）；缩放到 160% 时高度同理。 */
+function clampPos(x: number, y: number, w = 160, h = 30): PillPos {
   const margin = 8
-  const maxX = Math.max(margin, window.innerWidth - 160)
-  const maxY = Math.max(margin, window.innerHeight - 56)
+  const maxX = Math.max(margin, window.innerWidth - w - margin)
+  const maxY = Math.max(margin, window.innerHeight - h - margin)
   return {
     x: Math.round(Math.min(Math.max(x, margin), maxX)),
     y: Math.round(Math.min(Math.max(y, margin), maxY)),
@@ -128,11 +130,19 @@ function saveAnchor(anchor: PillAnchor): void {
   try { localStorage.setItem(POS_KEY, JSON.stringify(anchor)) } catch { /* 忽略 */ }
 }
 
-/** 中心锚点 → 当前视口下的左上角坐标（shellWidth 为当前渲染宽度）。 */
-function anchorToPos(anchor: PillAnchor, shellWidth: number): PillPos {
+/** 胶囊外壳高度（px）：与 pillShellStyle 的 height 同源（30px × 缩放）。 */
+function pillHeight(scale: number): number {
+  return Math.max(1, Math.round(30 * scale))
+}
+
+/** 中心锚点 → 当前视口下的左上角坐标（shellWidth/shellHeight 为当前渲染尺寸）。
+ *  高度必须参与换算：缩放到 160% 时半高是 24px 而非 15px，写死会让垂直位置漂移。 */
+function anchorToPos(anchor: PillAnchor, shellWidth: number, shellHeight = 30): PillPos {
   return clampPos(
     Math.round(anchor.xc * window.innerWidth - shellWidth / 2),
-    Math.round(anchor.yc * window.innerHeight - 15),
+    Math.round(anchor.yc * window.innerHeight - shellHeight / 2),
+    shellWidth,
+    shellHeight,
   )
 }
 
@@ -335,7 +345,7 @@ const FUN_LINES: FunLine[] = [
   { icon: 'bulb', text: '缓存 Cache：缓存重复请求，省钱又提速' },
 ]
 
-/** 轮播间隔（ms）。 */
+/** 轮播间隔（ms）：30 秒换一条。 */
 const FUN_INTERVAL_MS = 30000
 
 // ---- 胶囊外观（大小缩放 + 字体风格）----
@@ -464,18 +474,101 @@ function toggleFileExplorer(): void {
   window.dispatchEvent(new CustomEvent('dsh-file-explorer-toggle'))
 }
 
-/** 主文案整行淡入的 keyframes（一次性注入）：纯 opacity 淡入。
- *  不做位移/模糊——上浮 + blur 会在每次轮播换文案时让胶囊看起来
- *  「蹦一下」，非常出戏；安静地淡入替代。 */
+/**
+ * 胶囊自带样式表（一次性注入）：keyframes + 全部配色规则。
+ *
+ * ⚠ 必须由胶囊自己注入，不能塞进 client/styles.ts 的 dsh-webui-styles 表——
+ * 那张表由 Webui.tsx 在**会话视图内**挂载时才注入，而胶囊挂在 shell.overlay
+ * 上全局常驻：打开首页/无会话时胶囊拿不到任何样式（透明无底无描边，浅色
+ * 主题下彻底看不见）。实测就是「浅色主题看不出胶囊」的根因之一。
+ *
+ * 配色跟随主题：旧实现把「黑底白字 + 蓝辉光」写死在内联样式里，浅色主题下
+ * 白字落在白底上直接隐形。这里收敛成一组 --dpl-* 变量（深/浅各一套），
+ * 组件内联样式只负责几何，颜色全部引用变量。
+ */
 function ensurePillKeyframes(): void {
-  if (document.getElementById('dsh-done-pill-kf') !== null) return
+  if (document.getElementById(PILL_STYLE_ID) !== null) return
   const style = document.createElement('style')
-  style.id = 'dsh-done-pill-kf'
-  style.textContent = '@keyframes dpLineIn{from{opacity:0}to{opacity:1}}'
+  style.id = PILL_STYLE_ID
+  style.dataset.plugin = '@dsh-external/dsh-webui'
+  style.dataset.pluginCss = 'webui/done-pill'
+  style.textContent = PILL_CSS
   document.head.appendChild(style)
 }
 
-// ---- 样式（黑色系固定配色：黑底白字，不随主题翻转）----
+const PILL_STYLE_ID = 'dsh-done-pill-css'
+
+const PILL_CSS = `
+@keyframes dpLineIn{from{opacity:0}to{opacity:1}}
+/* 浅色主题（默认）：白色半透明表面 + 深色文字 + 实体描边与投影。辉光在白底
+   上几乎不可见，形状感必须靠描边 + 投影建立。 */
+.dsh-done-pill{
+  --dpl-fg:var(--dsw-alias-label-primary,#0f1115);
+  --dpl-fg-dim:var(--dsw-alias-label-secondary,#61666b);
+  --dpl-fg-weak:var(--dsw-alias-label-tertiary,#81858c);
+  --dpl-accent:var(--dsw-alias-state-business-primary,#4176e6);
+  --dpl-warn:var(--dsw-alias-state-warn-label,#dd8629);
+  --dpl-ok:var(--dsw-alias-state-success-primary,#22c55e);
+  --dpl-surface:rgba(255,255,255,.88);
+  --dpl-surface-hover:#ffffff;
+  --dpl-border:rgba(15,17,21,.12);
+  --dpl-border-hover:color-mix(in srgb,var(--dpl-accent) 34%,transparent);
+  --dpl-divider:rgba(15,17,21,.10);
+  --dpl-hover:rgba(15,17,21,.06);
+  --dpl-shadow:0 1px 2px rgba(15,17,21,.06),0 4px 14px rgba(15,17,21,.10);
+  --dpl-shadow-hover:0 2px 4px rgba(15,17,21,.08),0 8px 22px rgba(15,17,21,.16),0 0 0 3px color-mix(in srgb,var(--dpl-accent) 12%,transparent);
+  --dpl-panel-bg:var(--dsw-specific-menu,#ffffff);
+  --dpl-panel-border:var(--dsw-alias-border-l2,rgba(0,0,0,.1));
+  --dpl-panel-shadow:0 12px 40px rgba(15,17,21,.16),0 2px 8px rgba(15,17,21,.06);
+}
+/* 深色主题：回到原来的「浅纱浮层 + 蓝辉光」观感。 */
+body[data-ds-dark-theme] .dsh-done-pill{
+  --dpl-surface:rgba(255,255,255,.07);
+  --dpl-surface-hover:rgba(255,255,255,.12);
+  --dpl-border:rgba(255,255,255,.14);
+  --dpl-divider:rgba(255,255,255,.14);
+  --dpl-hover:rgba(255,255,255,.12);
+  --dpl-shadow:0 2px 10px rgba(0,0,0,.36);
+  --dpl-shadow-hover:0 4px 18px rgba(0,0,0,.46),0 0 12px color-mix(in srgb,var(--dpl-accent) 30%,transparent);
+  --dpl-panel-bg:var(--dsw-specific-menu,#1b1b1c);
+  --dpl-panel-border:var(--dsw-alias-border-l2,rgba(255,255,255,.12));
+  --dpl-panel-shadow:0 16px 44px rgba(0,0,0,.5);
+}
+/* 外壳：几何由内联样式给，表面/描边/投影/文字色在此（内联写死会盖掉这里）。 */
+.dsh-done-pill-shell{
+  border:1px solid var(--dpl-border);
+  background:var(--dpl-surface);
+  color:var(--dpl-fg-dim);
+  box-shadow:var(--dpl-shadow);
+}
+.dsh-done-pill-shell:hover{
+  background:var(--dpl-surface-hover);
+  border-color:var(--dpl-border-hover);
+  box-shadow:var(--dpl-shadow-hover);
+}
+/* 未读态：文字转主色号 + 加重，描边染一点品牌蓝（不改底色，避免浅色下发灰）。 */
+.dsh-done-pill-shell[data-unread="1"]{
+  color:var(--dpl-fg);
+  font-weight:500;
+  border-color:color-mix(in srgb,var(--dpl-accent) 30%,var(--dpl-border));
+}
+/* 拖拽中：保持抬升态，不随指针进出闪烁。 */
+.dsh-done-pill-shell[data-dragging="1"]{box-shadow:var(--dpl-shadow-hover)}
+/* 面板内可点行（任务行 / 完成记录卡）：原先无任何 hover 反馈，看不出可点。 */
+.dsh-done-pill-row{transition:background .12s ease}
+.dsh-done-pill-row:hover{background:var(--dpl-hover)}
+.dsh-done-pill-row:focus-visible{outline:2px solid var(--dpl-accent);outline-offset:-2px}
+.dsh-done-pill-close{transition:background .12s ease,color .12s ease}
+.dsh-done-pill-close:hover{background:var(--dpl-hover);color:var(--dpl-fg)}
+/* 面板滚动条跟随主题（默认深色滚动条压在浅色面板上很突兀）。 */
+.dsh-done-pill [role="dialog"]{scrollbar-width:thin;scrollbar-color:var(--dpl-border) transparent}
+.dsh-done-pill [role="dialog"]::-webkit-scrollbar{width:8px}
+.dsh-done-pill [role="dialog"]::-webkit-scrollbar-thumb{background:var(--dpl-border);border-radius:4px}
+.dsh-done-pill [role="dialog"]::-webkit-scrollbar-track{background:transparent}
+`
+
+// ---- 样式（配色跟随主题：颜色全部走 .dsh-done-pill 上的 --dpl-* 变量 +
+// 官方主题令牌，浅色下白底深字、深色下深底浅字；变量定义见上方 PILL_CSS）----
 // 尺寸缩放：wrap 上注入 --dps（缩放系数），核心尺寸用 calc 等比缩放，
 // 字体随之变大变小；不用 transform scale（非整数渲染会发糊）。
 
@@ -494,11 +587,15 @@ const wrapStyle = (dragging: boolean, pos: PillPos | null, scale: number, fontSt
   touchAction: 'none',
   ...(fontStack !== '' ? { fontFamily: fontStack } : {}),
   '--dps': String(scale),
-  // 底部内衬：面板贴着它定位（top:100%），胶囊与面板之间的 8px 视觉缝隙
-  // 落在容器内，鼠标滑过去不会触发 mouseleave。
+  // 上下内衬各 8px：面板贴着 padding box 定位（下方 top:100% / 上方
+  // bottom:100%），胶囊与面板之间的视觉缝隙落在容器内，鼠标滑过去不会触发
+  // mouseleave。marginTop 抵消上内衬——外壳本体仍精确落在 pos.y，拖拽与
+  // 锚点换算都以**外壳**矩形为基准（见 onPointerDown 用 shellRef 取 rect）。
+  paddingTop: 'calc(8px * var(--dps))',
   paddingBottom: 'calc(8px * var(--dps))',
-  // 核心动画：left 与外壳 width 同节奏（.18s ease）过渡。位置按目标宽
-  // 一步算准（见 applyAnchor/recenter），Δw 的过渡期里左缘滑动的量恒为
+  marginTop: 'calc(-8px * var(--dps))',
+  // 核心动画：left 与外壳 width 同节奏（MORPH_DUR）过渡。位置按目标宽
+  // 一步算准（见 syncPosition），Δw 的过渡期里左缘滑动的量恒为
   // ∓Δw/2，与右缘对称——胶囊呈「两侧拉伸 / 两侧收窄」，而不是先单边
   // 伸缩、再瞬移回中。拖拽中必须关闭，否则位置被过渡拖着走、毫无跟手性。
   ...(dragging ? {} : { transition: `left ${MORPH_DUR} ease` }),
@@ -517,25 +614,26 @@ function effectiveShellWidth(target: number | null, el: HTMLDivElement | null): 
   return el !== null ? el.getBoundingClientRect().width : 160
 }
 
-/** 胶囊外壳：透明背景、无外圈线条（融入页面，hover 光影由样式表
- * .dsh-done-pill-shell 提供），宽度受控 + 过渡。 */
-const pillShellStyle = (unread: number, width: number | null): CSSProperties => ({
+/** 胶囊外壳：只管几何（尺寸/圆角/受控宽度）。表面色、描边、文字色、投影与
+ *  hover/未读态一律由样式表 .dsh-done-pill-shell 提供——内联写死
+ *  background:'transparent' + 白字曾造成两个 bug：① 优先级高于样式表，
+ *  把常态底色整个盖掉（胶囊只剩一圈辉光）；② 白字在浅色主题下等于隐形。
+ *  boxSizing:border-box：受控 width 已含左右各 1px 描边（见宽度测量 +2）。 */
+const pillShellStyle = (width: number | null): CSSProperties => ({
+  boxSizing: 'border-box',
   display: 'flex',
   alignItems: 'stretch',
   height: 'calc(30px * var(--dps))',
   maxWidth: `min(${SHELL_MAX_W}px, calc(100vw - 48px))`,
   ...(width !== null ? { width } : {}),
   borderRadius: 'calc(15px * var(--dps))',
-  border: 'none',
-  background: 'transparent',
-  color: unread > 0 ? '#ffffff' : 'rgba(255,255,255,.74)',
   fontSize: 'calc(12px * var(--dps))',
   lineHeight: 'calc(18px * var(--dps))',
-  fontWeight: unread > 0 ? 500 : 400,
   whiteSpace: 'nowrap',
   overflow: 'hidden',
-  // 宽度伸缩与位置滑动/文字淡入同节奏（MORPH_DUR）。
-  transition: `width ${MORPH_DUR} ease`,
+  // 宽度伸缩与位置滑动/文字淡入同节奏（MORPH_DUR）；颜色类过渡也写在内联，
+  // 否则内联 transition 会整条覆盖样式表里的 transition。
+  transition: `width ${MORPH_DUR} ease, background-color .14s ease, box-shadow .14s ease, border-color .14s ease, color .14s ease`,
 })
 
 /** 胶囊主体（点击 = 进入最新完成的会话；按住拖动 = 移动胶囊）。 */
@@ -554,7 +652,8 @@ const pillMainStyle: CSSProperties = {
   overflow: 'hidden',
 }
 
-/** ✓ 状态点：未读 = 品牌蓝底白勾；已读 = 深灰底绿勾。 */
+/** ✓ 状态点：未读 = 品牌蓝底白勾；已读 = 中性底绿勾（底色随主题，
+ *  原先的 rgba(255,255,255,.10) 在浅色主题下是隐形的白）。 */
 const checkIconStyle = (unread: number): CSSProperties => ({
   flex: 'none',
   width: 'calc(15px * var(--dps))',
@@ -563,10 +662,10 @@ const checkIconStyle = (unread: number): CSSProperties => ({
   display: 'inline-flex',
   alignItems: 'center',
   justifyContent: 'center',
-  fontSize: 10,
+  fontSize: 'calc(10px * var(--dps))',
   lineHeight: 1,
-  background: unread > 0 ? 'var(--dsw-alias-state-business-primary)' : 'rgba(255,255,255,.10)',
-  color: unread > 0 ? '#ffffff' : '#34c759',
+  background: unread > 0 ? 'var(--dpl-accent)' : 'var(--dpl-hover)',
+  color: unread > 0 ? '#ffffff' : 'var(--dpl-ok)',
 })
 
 /** 健康提醒态图标（月亮 / 咖啡）：单色 SVG。 */
@@ -586,7 +685,8 @@ const reminderBadgeStyle: CSSProperties = {
   alignItems: 'center',
   gap: 'calc(5px * var(--dps))',
   padding: '0 calc(10px * var(--dps)) 0 calc(14px * var(--dps))',
-  color: '#f5c542',
+  // 琥珀色走官方 warn-label 令牌：浅色主题下 #f5c542 对白底几乎不可读。
+  color: 'var(--dpl-warn)',
   fontSize: 'calc(12px * var(--dps))',
   lineHeight: 'calc(18px * var(--dps))',
   fontWeight: 500,
@@ -644,7 +744,7 @@ const pillDividerStyle: CSSProperties = {
   flex: 'none',
   width: 1,
   margin: 'calc(7px * var(--dps)) 0',
-  background: 'rgba(255,255,255,.16)',
+  background: 'var(--dpl-divider)',
 }
 
 /** 胶囊右侧「文件」按钮：点击打开文件浏览器抽屉。 */
@@ -656,9 +756,10 @@ const fileButtonStyle = (hovered: boolean): CSSProperties => ({
   justifyContent: 'center',
   border: 'none',
   borderRadius: 0,
-  background: hovered ? 'rgba(255,255,255,.14)' : 'transparent',
-  color: 'rgba(255,255,255,.74)',
+  background: hovered ? 'var(--dpl-hover)' : 'transparent',
+  color: hovered ? 'var(--dpl-fg)' : 'var(--dpl-fg-dim)',
   cursor: 'pointer',
+  transition: 'background .12s ease, color .12s ease',
 })
 
 /** shell 直接子项统一禁止收缩：宽度测量（子块求和）才不受受控宽度污染。 */
@@ -669,25 +770,36 @@ const DONE_PANEL_W = 600
 /** 运行中任务面板宽度。 */
 const RUN_PANEL_W = 320
 
-/** 记录面板：黑色浮层，悬停时从胶囊下方滑出（opacity + translateY 过渡）。 */
-const panelStyle = (open: boolean, shiftX: number): CSSProperties => ({
+/** 悬停滑出面板的公共骨架：底色/描边/投影走 --dpl-panel-*（随主题），
+ *  `up` = 向上翻转（胶囊被拖到视口下半时，面板改从上方滑出，否则会掉出
+ *  屏幕底部且无法滚动到）。滑入方向随之取反，动画方向与位置一致。 */
+const floatPanelStyle = (
+  open: boolean,
+  shiftX: number,
+  up: boolean,
+  width: number,
+  maxHeight: string,
+  gap: number,
+  padding: number,
+): CSSProperties => ({
   position: 'absolute',
-  top: '100%',
+  ...(up ? { bottom: '100%' } : { top: '100%' }),
   left: shiftX,
-  width: `min(${DONE_PANEL_W}px, calc(100vw - 24px))`,
-  maxHeight: 'min(66vh, 600px)',
+  width: `min(${width}px, calc(100vw - 24px))`,
+  maxHeight,
   overflowY: 'auto',
   boxSizing: 'border-box',
   display: 'flex',
   flexDirection: 'column',
-  gap: 8,
-  padding: 12,
+  gap,
+  padding,
   borderRadius: 12,
-  border: '1px solid rgba(255,255,255,.14)',
-  background: 'rgba(12,12,13,.94)',
-  boxShadow: '0 16px 44px rgba(0,0,0,.5)',
+  border: '1px solid var(--dpl-panel-border)',
+  background: 'var(--dpl-panel-bg)',
+  color: 'var(--dpl-fg)',
+  boxShadow: 'var(--dpl-panel-shadow)',
   opacity: open ? 1 : 0,
-  transform: `translateY(${open ? 0 : -8}px)`,
+  transform: `translateY(${open ? 0 : (up ? 8 : -8)}px)`,
   visibility: open ? 'visible' : 'hidden',
   pointerEvents: open ? 'auto' : 'none',
   // 收起时 visibility 延迟到过渡结束再隐藏，滑出动画才完整可见。
@@ -696,31 +808,13 @@ const panelStyle = (open: boolean, shiftX: number): CSSProperties => ({
     : 'opacity .18s ease, transform .18s ease, visibility 0s linear .18s',
 })
 
-/** 运行中任务面板：从胶囊下方滑出的窄列表。 */
-const runPanelStyle = (open: boolean, shiftX: number): CSSProperties => ({
-  position: 'absolute',
-  top: '100%',
-  left: shiftX,
-  width: `min(${RUN_PANEL_W}px, calc(100vw - 24px))`,
-  maxHeight: 'min(60vh, 480px)',
-  overflowY: 'auto',
-  boxSizing: 'border-box',
-  display: 'flex',
-  flexDirection: 'column',
-  gap: 4,
-  padding: 10,
-  borderRadius: 12,
-  border: '1px solid rgba(255,255,255,.14)',
-  background: 'rgba(12,12,13,.94)',
-  boxShadow: '0 16px 44px rgba(0,0,0,.5)',
-  opacity: open ? 1 : 0,
-  transform: `translateY(${open ? 0 : -8}px)`,
-  visibility: open ? 'visible' : 'hidden',
-  pointerEvents: open ? 'auto' : 'none',
-  transition: open
-    ? 'opacity .18s ease, transform .18s ease, visibility 0s'
-    : 'opacity .18s ease, transform .18s ease, visibility 0s linear .18s',
-})
+/** 记录面板：悬停主体时滑出（宽卡列表）。 */
+const panelStyle = (open: boolean, shiftX: number, up: boolean): CSSProperties =>
+  floatPanelStyle(open, shiftX, up, DONE_PANEL_W, 'min(66vh, 600px)', 8, 12)
+
+/** 运行中任务面板：悬停左块时滑出的窄列表。 */
+const runPanelStyle = (open: boolean, shiftX: number, up: boolean): CSSProperties =>
+  floatPanelStyle(open, shiftX, up, RUN_PANEL_W, 'min(60vh, 480px)', 4, 10)
 
 /** 胶囊左侧「运行中」区块：黄点 + 数量，悬停滑出任务列表。 */
 const runningBlockStyle = (hasRunning: boolean): CSSProperties => ({
@@ -731,19 +825,29 @@ const runningBlockStyle = (hasRunning: boolean): CSSProperties => ({
   padding: '0 calc(10px * var(--dps)) 0 calc(14px * var(--dps))',
   border: 'none',
   background: 'transparent',
-  color: hasRunning ? '#ffffff' : 'rgba(255,255,255,.55)',
+  color: hasRunning ? 'var(--dpl-fg)' : 'var(--dpl-fg-weak)',
   font: 'inherit',
   fontWeight: hasRunning ? 500 : 400,
   cursor: 'pointer',
 })
 
+/** 运行中黄点：缩放跟随 --dps（原先写死 8px，胶囊放大到 160% 时点显得干瘪）。 */
 const runDotStyle: CSSProperties = {
+  flex: 'none',
+  width: 'calc(8px * var(--dps))',
+  height: 'calc(8px * var(--dps))',
+  borderRadius: '50%',
+  background: 'var(--dpl-warn)',
+  boxShadow: '0 0 6px color-mix(in srgb, var(--dpl-warn) 55%, transparent)',
+}
+
+/** 面板内列表项的黄点：面板不参与胶囊缩放，固定 8px。 */
+const panelDotStyle: CSSProperties = {
   flex: 'none',
   width: 8,
   height: 8,
   borderRadius: '50%',
-  background: '#f5a623',
-  boxShadow: '0 0 6px rgba(245,166,35,.7)',
+  background: 'var(--dpl-warn)',
 }
 
 const runRowStyle: CSSProperties = {
@@ -755,7 +859,7 @@ const runRowStyle: CSSProperties = {
   borderRadius: 8,
   border: 'none',
   background: 'transparent',
-  color: '#e8e8ec',
+  color: 'var(--dpl-fg)',
   fontSize: 12,
   lineHeight: '18px',
   textAlign: 'left',
@@ -770,17 +874,11 @@ const runRowTitleStyle: CSSProperties = {
   whiteSpace: 'nowrap',
 }
 
-const runRowTagStyle: CSSProperties = {
-  flex: 'none',
-  fontSize: 11,
-  color: '#f5a623',
-}
-
 /** 运行中任务的实时执行时长（等宽数字避免跳动）。 */
 const runRowTimeStyle: CSSProperties = {
   flex: 'none',
   fontSize: 11,
-  color: '#9a9aa2',
+  color: 'var(--dpl-fg-weak)',
   fontVariantNumeric: 'tabular-nums',
 }
 
@@ -788,19 +886,27 @@ const headStyle: CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'space-between',
+  gap: 8,
   padding: '2px 2px 6px',
-  borderBottom: '1px solid rgba(255,255,255,.12)',
+  borderBottom: '1px solid var(--dpl-panel-border)',
 }
 
 const headTitleStyle: CSSProperties = {
+  flex: 'none',
   fontSize: 13,
   fontWeight: 600,
-  color: '#f2f2f4',
+  color: 'var(--dpl-fg)',
 }
 
 const headMetaStyle: CSSProperties = {
+  flex: 1,
+  minWidth: 0,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+  textAlign: 'right',
   fontSize: 11,
-  color: '#9a9aa2',
+  color: 'var(--dpl-fg-weak)',
 }
 
 const cardStyle: CSSProperties = {
@@ -826,7 +932,7 @@ const unreadDotStyle: CSSProperties = {
   width: 8,
   height: 8,
   borderRadius: '50%',
-  background: 'var(--dsw-alias-state-business-primary)',
+  background: 'var(--dpl-accent)',
 }
 
 const sessionTitleStyle: CSSProperties = {
@@ -837,7 +943,7 @@ const sessionTitleStyle: CSSProperties = {
   whiteSpace: 'nowrap',
   fontSize: 13,
   fontWeight: 500,
-  color: '#ffffff',
+  color: 'var(--dpl-fg)',
 }
 
 const metaStyle: CSSProperties = {
@@ -845,7 +951,7 @@ const metaStyle: CSSProperties = {
   minWidth: 0,
   textAlign: 'right',
   fontSize: 11,
-  color: '#9a9aa2',
+  color: 'var(--dpl-fg-weak)',
   whiteSpace: 'nowrap',
 }
 
@@ -856,7 +962,7 @@ const closeStyle: CSSProperties = {
   borderRadius: 6,
   border: 'none',
   background: 'transparent',
-  color: '#9a9aa2',
+  color: 'var(--dpl-fg-weak)',
   fontSize: 13,
   lineHeight: '20px',
   cursor: 'pointer',
@@ -870,22 +976,24 @@ const answerStyle: CSSProperties = {
   wordBreak: 'break-word',
   fontSize: 12,
   lineHeight: '19px',
-  color: '#e8e8ec',
-  borderTop: '1px dashed rgba(255,255,255,.14)',
+  color: 'var(--dpl-fg-dim)',
+  borderTop: '1px dashed var(--dpl-panel-border)',
   paddingTop: 6,
+  // 字体族显式跟随容器：<pre> 默认 monospace，会无视胶囊字体设置。
+  fontFamily: 'inherit',
 }
 
 const errorTagStyle: CSSProperties = {
   flex: 'none',
   fontSize: 11,
-  color: '#f5a623',
+  color: 'var(--dpl-warn)',
 }
 
 const emptyStyle: CSSProperties = {
   padding: '18px 8px',
   textAlign: 'center',
   fontSize: 12,
-  color: '#8a8a92',
+  color: 'var(--dpl-fg-weak)',
 }
 
 // ---- 基础设置行（与 General 区条目一致的 Setting-Cell 布局）----
@@ -1105,6 +1213,8 @@ interface DragState {
   ox: number
   oy: number
   moved: boolean
+  /** 按下时所在的功能区（data-dp-zone），决定「点击」落到哪个动作。 */
+  zone: string
 }
 
 /** 顶部悬浮「对话完成」胶囊：点击进会话、悬停滑出记录、可拖拽、常驻显示。 */
@@ -1122,7 +1232,8 @@ export function DonePill(props: DonePillProps): JSX.Element | null {
   const [pos, setPos] = useState<PillPos | null>(() => {
     const anchor = loadAnchor()
     // 挂载前无法测实际宽度，用估算宽度 160 定位；挂载后宽度同步 effect 会按中心重放一次。
-    return anchor === null ? null : anchorToPos(anchor, 160)
+    // 高度按已持久化的缩放系数推算（不是写死 30），首帧垂直位置就落在正确处。
+    return anchor === null ? null : anchorToPos(anchor, 160, pillHeight(appearanceStore.get().scale))
   })
   const [dragging, setDragging] = useState(false)
   // 正在执行回合的信息（host 下发）：sessionId → { since, question }，
@@ -1137,12 +1248,21 @@ export function DonePill(props: DonePillProps): JSX.Element | null {
   // 外观：缩放系数 + 字体风格。
   const [appearance, setAppearance] = useState<AppearanceConfig>(() => appearanceStore.get())
   const scale = appearance.scale
+  // 缩放系数镜像：拖拽/锚点等稳定回调里要读最新值（进依赖数组会让回调重建，
+  // 拖拽中重建会丢 pointer capture）。
+  const scaleRef = useRef(scale)
+  scaleRef.current = scale
   // 平时轮播：随机开心话术 / AI 名词的下标。
   const [funIdx, setFunIdx] = useState(() => Math.floor(Math.random() * FUN_LINES.length))
   // 胶囊宽度受控值（跟随内容自然宽度平滑过渡）。
   const [shellWidth, setShellWidth] = useState<number | null>(null)
   const shellRef = useRef<HTMLDivElement | null>(null)
   const shellWidthRef = useRef<number | null>(null)
+  // 主文案之外的固有宽度（内边距 + 图标 + 分隔线 + 文件按钮 + 提醒徽章 +
+  // 运行中计数块）。文案的 maxWidth 由「外壳上限 − 这个值」算出，才能在
+  // 任何组合下都以省略号收尾（写死一个常数在带徽章时会算多，文字仍被硬切）。
+  const [decoWidth, setDecoWidth] = useState(80)
+  const labelRef = useRef<HTMLSpanElement | null>(null)
   // 增量水位仅存内存：首次 tick 用 0 全量拉（恢复最近记录），之后增量。
   const sinceRef = useRef(0)
   const wrapRef = useRef<HTMLDivElement | null>(null)
@@ -1150,14 +1270,21 @@ export function DonePill(props: DonePillProps): JSX.Element | null {
   // 「正在执行」面板的左缘锚点：运行中区块相对胶囊左缘的偏移（每渲染实测）。
   const [runBlockLeft, setRunBlockLeft] = useState(0)
   const runBlockRef = useRef<HTMLButtonElement | null>(null)
+  // 视口高度（resize 时更新）：决定悬停面板朝下还是朝上滑出。
+  // 兜底 900：窗口最小化/离屏时 innerHeight 可能是 0，按 0 判会把面板永久
+  // 翻到上方（实测在离屏实例里就是这样）。
+  const [viewportH, setViewportH] = useState(() => window.innerHeight || 900)
 
   // 设置开关：关闭即整体隐藏。
   useEffect(() => enabledStore.subscribe(setEnabled), [])
   useEffect(() => restStore.subscribe(setRestConfig), [])
   useEffect(() => lateStore.subscribe(setLateConfig), [])
   useEffect(() => appearanceStore.subscribe(setAppearance), [])
-  // 逐字符淡入动画的 keyframes（一次性注入）。
-  useEffect(() => { ensurePillKeyframes() }, [])
+  // 样式表兜底注入（幂等）：正常路径在 applyDonePill 注册时就注入好了——
+  // 必须早于首次渲染，否则外壳先以「无样式」算一遍布局，样式到位时
+  // background-color/box-shadow 会走一次过渡淡入（实测在某些环境里首帧
+  // 停在透明态上，看着就是「胶囊不见了」）。
+  useLayoutEffect(() => { ensurePillKeyframes() }, [])
   useEffect(() => {
     setReminderTick(t => t + 1)
     const timer = window.setInterval(() => { setReminderTick(t => t + 1) }, 30000)
@@ -1172,60 +1299,52 @@ export function DonePill(props: DonePillProps): JSX.Element | null {
   })()
   const lateActive = lateConfig.enabled && inTimeRange(nowMinutes, lateConfig)
   const restActive = !lateActive && restConfig.enabled && inTimeRange(nowMinutes, restConfig)
-  const reminderActive = lateActive || restActive
 
   // 自动居中模式（从未手动拖拽过）：胶囊宽度随文字变化（任务完成时变长），
-  // 固定 left 会偏离居中——用 ResizeObserver 跟随宽度实时重算水平居中，
+  // 固定 left 会偏离居中——每次渲染后按目标宽重算水平居中（见 syncPosition），
   // 并保持整数像素（translateX(-50%) 的半像素会让文字发糊）。
   // 一旦用户拖拽（onPointerUp moved），autoCenterRef 置 false，锁定锚点位置。
   const anchorRef = useRef<PillAnchor | null>(loadAnchor())
   const autoCenterRef = useRef(anchorRef.current === null)
 
-  // 锁定模式：窗口尺寸变化 / 内容宽度变化时按**中心锚点**比率还原位置
-  // （小窗拖到中间、最大化后仍在中间；宽度伸缩时向两侧对称扩缩）。
-  const applyAnchor = useCallback((): void => {
-    if (autoCenterRef.current) return
-    const anchor = anchorRef.current
-    if (anchor === null) return
-    // 按受控**目标宽**计算（而非实测）：实测值在宽度过渡期间是中间值，
-    // 算出的位置永远追着动画尾巴；目标宽一步到位，left 过渡与 width
-    // 过渡同一时刻抵达终点，合成对称伸缩。
+  /**
+   * 位置同步（两种模式共用一个入口）：
+   *  - 自动居中模式（从未拖拽过）：按当前目标宽水平居中；
+   *  - 锁定模式：按持久化的**中心锚点**比率还原位置。
+   * 两者都按受控**目标宽**（宽度过渡的终点）计算，而不是实测宽——实测值在
+   * 过渡期间是中间值，算出的坐标永远追着动画尾巴；用目标宽则 left 过渡与
+   * width 过渡同时抵达终点，合成「两侧对称伸缩」。
+   * 相等性检查：位置没变就返回原 state（React bail out），不会死循环。
+   *
+   * 每次渲染后由下方宽度测量的 layout effect 调用。原实现把居中逻辑挂在
+   * ResizeObserver 上，而 RO 的回调派发依赖帧生命周期——离屏/最小化窗口里
+   * 帧被冻结时回调不来，胶囊变宽后就一直偏在旧位置（实测偏移半个 Δw）。
+   */
+  const syncPosition = useCallback((): void => {
     const w = effectiveShellWidth(shellWidthRef.current, shellRef.current)
-    const next = anchorToPos(anchor, w)
-    // 相等性检查：位置没变就不产生新 state（否则每渲染循环 setPos 无限重渲染）。
-    setPos(prev => (prev !== null && prev.x === next.x && prev.y === next.y ? prev : next))
-  }, [])
-  useEffect(() => {
-    const onResize = (): void => { applyAnchor() }
-    window.addEventListener('resize', onResize)
-    return () => { window.removeEventListener('resize', onResize) }
-  }, [applyAnchor])
-  useLayoutEffect(() => {
-    if (!autoCenterRef.current) return
-    const el = wrapRef.current
-    if (el === null) return
-    const recenter = (): void => {
-      if (!autoCenterRef.current) return
-      // 与 applyAnchor 同理：按受控目标宽求终点坐标，ResizeObserver 只是
-      // 触发器——过渡期间反复触发也得到同一个 x（setPos 相等即 bail out），
-      // 不会打断/叠加 left 过渡。
-      const w = effectiveShellWidth(shellWidthRef.current, el)
-      if (w <= 0) return
+    if (w <= 0) return
+    const h = pillHeight(scaleRef.current)
+    if (autoCenterRef.current) {
       const x = Math.max(8, Math.round((window.innerWidth - w) / 2))
       setPos(prev => {
         const next = { x, y: prev?.y ?? 40 }
         return prev !== null && prev.x === next.x && prev.y === next.y ? prev : next
       })
+      return
     }
-    recenter()
-    const observer = new ResizeObserver(recenter)
-    observer.observe(el)
-    window.addEventListener('resize', recenter)
-    return () => {
-      observer.disconnect()
-      window.removeEventListener('resize', recenter)
-    }
+    const anchor = anchorRef.current
+    if (anchor === null) return
+    const next = anchorToPos(anchor, w, h)
+    setPos(prev => (prev !== null && prev.x === next.x && prev.y === next.y ? prev : next))
   }, [])
+  useEffect(() => {
+    const onResize = (): void => {
+      if (window.innerHeight > 0) setViewportH(window.innerHeight)
+      syncPosition()
+    }
+    window.addEventListener('resize', onResize)
+    return () => { window.removeEventListener('resize', onResize) }
+  }, [syncPosition])
 
   // 合并新条目：按 id 去重、降序、截断上限。
   const mergeEntries = useCallback((incoming: DoneEntry[]): void => {
@@ -1288,8 +1407,11 @@ export function DonePill(props: DonePillProps): JSX.Element | null {
   const unreadCount = useMemo(() => entries.filter(item => !readIds.has(item.id)).length, [entries, readIds])
   const latest = entries[0]
 
-  // 平时轮播（无健康提醒、无未读时）：每 15 秒随机换一条开心话术 / AI 名词。
-  const funIdle = !reminderActive && unreadCount === 0
+  // 轮播（无未读时）：每 FUN_INTERVAL_MS 随机换一条开心话术 / AI 名词。
+  // 提醒态**不再暂停**轮播：提醒已独立成左侧徽章、不占主文案，旧实现却仍
+  // 按「提醒激活」停掉定时器——设了长时段提醒（如 22:00-07:00）时主文案
+  // 整夜冻在同一条上。
+  const funIdle = unreadCount === 0
   useEffect(() => {
     if (!funIdle) return
     const timer = window.setInterval(() => {
@@ -1311,6 +1433,9 @@ export function DonePill(props: DonePillProps): JSX.Element | null {
       .map(([sessionId, info]) => ({ id: sessionId, displayTitle: info.title, since: info.since }))
       .sort((a, b) => b.since - a.since)
   ), [runInfo])
+  // 镜像：点击回调（稳定引用）里要读最新运行列表，不进依赖数组。
+  const runningSessionsRef = useRef(runningSessions)
+  runningSessionsRef.current = runningSessions
 
   const markAllRead = useCallback((): void => {
     setReadIds(prev => {
@@ -1321,9 +1446,15 @@ export function DonePill(props: DonePillProps): JSX.Element | null {
     })
   }, [entries])
 
-  // 悬停展开面板 = 全部已读（胶囊转低调态）。
+  // 已读时机 = 面板**关闭**时（看过即已读）。旧实现在 hovered 变 true 的同一
+  // 帧就 markAllRead，未读圆点在面板出现的瞬间全部消失，等于看不出哪几条是新的。
+  const wasHoveredRef = useRef(false)
   useEffect(() => {
-    if (hovered) markAllRead()
+    if (hovered) { wasHoveredRef.current = true; return }
+    if (wasHoveredRef.current) {
+      wasHoveredRef.current = false
+      markAllRead()
+    }
   }, [hovered, markAllRead])
 
   // 实时时钟：运行中任务面板展开时每秒刷新，时长走字。
@@ -1364,8 +1495,13 @@ export function DonePill(props: DonePillProps): JSX.Element | null {
     if (event.button !== 0) return
     const el = wrapRef.current
     if (el === null) return
-    const rect = el.getBoundingClientRect()
-    dragRef.current = { px: event.clientX, py: event.clientY, ox: rect.left, oy: rect.top, moved: false }
+    // 起点必须取**外壳**矩形：wrap 有上下各 8px 内衬（面板缝隙热区），
+    // 用 wrap 的 rect.top 会比 pos.y 小 8px，一按下就整体跳一截。
+    const rect = (shellRef.current ?? el).getBoundingClientRect()
+    const zone = event.target instanceof Element
+      ? (event.target.closest('[data-dp-zone]')?.getAttribute('data-dp-zone') ?? '')
+      : ''
+    dragRef.current = { px: event.clientX, py: event.clientY, ox: rect.left, oy: rect.top, moved: false, zone }
     try { el.setPointerCapture(event.pointerId) } catch { /* 合成事件等场景无有效 pointerId，忽略 */ }
   }, [])
 
@@ -1381,7 +1517,17 @@ export function DonePill(props: DonePillProps): JSX.Element | null {
       setHovered(false)
       setHoveredRunning(false)
     }
-    setPos(clampPos(drag.ox + dx, drag.oy + dy))
+    // 钳制按胶囊**实际尺寸**：宽胶囊（数百 px）以前能被拖到只剩左端露在屏内。
+    const w = effectiveShellWidth(shellWidthRef.current, shellRef.current)
+    setPos(clampPos(drag.ox + dx, drag.oy + dy, w, pillHeight(scaleRef.current)))
+  }, [])
+
+  /** 指针取消（系统手势打断、设备失联等）：必须清干净拖拽态，
+   *  否则 dragRef 常驻非空，之后 hover 被 `dragRef.current === null` 判死，
+   *  面板再也展不开（旧实现无此分支，实测能把胶囊「冻」住）。 */
+  const onPointerCancel = useCallback((): void => {
+    dragRef.current = null
+    setDragging(false)
   }, [])
 
   const onPointerUp = useCallback((): void => {
@@ -1397,9 +1543,10 @@ export function DonePill(props: DonePillProps): JSX.Element | null {
         if (current !== null) {
           const el = shellRef.current
           const w = el !== null ? el.getBoundingClientRect().width : 160
+          const h = pillHeight(scaleRef.current)
           const anchor: PillAnchor = {
             xc: clamp01((current.x + w / 2) / Math.max(1, window.innerWidth)),
-            yc: clamp01((current.y + 15) / Math.max(1, window.innerHeight)),
+            yc: clamp01((current.y + h / 2) / Math.max(1, window.innerHeight)),
           }
           anchorRef.current = anchor
           saveAnchor(anchor)
@@ -1408,7 +1555,16 @@ export function DonePill(props: DonePillProps): JSX.Element | null {
       })
       return
     }
-    // 未超过阈值 = 点击：进入最新完成的会话。
+    // 未超过阈值 = 点击。按下时所在区域决定动作：
+    //  - 'run'（运行中计数块）：进入正在执行的那个会话（多个时进最新开始的）；
+    //    旧实现无论点哪里都跳「最新完成的会话」——点运行中计数会跳到一个
+    //    毫不相关的已完成会话，属于明显的误跳。
+    //  - 其他（主体/提醒徽章）：进入最新完成的会话。
+    if (drag.zone === 'run') {
+      const first = runningSessionsRef.current[0]
+      if (first !== undefined) openSession(first.id)
+      return
+    }
     if (latest !== undefined) openSession(latest.sessionId, unreadCount > 0 ? latest.id : undefined)
   }, [latest, openSession, unreadCount])
 
@@ -1420,13 +1576,18 @@ export function DonePill(props: DonePillProps): JSX.Element | null {
     ? (latest.question !== '' ? latest.question : latestTitle)
     : ''
 
-  // 健康提醒文案：凌晨提示优先于休息时段；时段内持续替换胶囊主文案。
+  // 健康提醒文案：凌晨提示优先于休息时段；时段内作为徽章常驻最左侧。
   const nowDate = new Date()
   let reminderLabel: string | null = null
   let reminderIcon: ReminderIconKind = 'moon'
   if (lateActive) {
     reminderIcon = 'moon'
-    reminderLabel = `凌晨 ${nowDate.getHours()} 点了 · 注意休息`
+    const hour = nowDate.getHours()
+    // 「凌晨 N 点」只在真的凌晨（0-4 点）才说得通。该提醒的时段可自定义，
+    // 旧文案对任何时刻都硬说「凌晨」——设成 18:00-23:00 会得到「凌晨 18 点了」。
+    reminderLabel = hour <= 4
+      ? `凌晨 ${hour} 点了 · 注意休息`
+      : `${hour >= 22 ? '夜深了' : `已 ${hour} 点`} · 注意休息`
   } else if (restActive) {
     reminderIcon = 'coffee'
     reminderLabel = `休息时间（${restConfig.start}-${restConfig.end}）· 该休息一下了`
@@ -1451,9 +1612,12 @@ export function DonePill(props: DonePillProps): JSX.Element | null {
     return Math.min(Math.max(left, minLeft), maxLeft)
   }
   // 记录面板：与胶囊**中心对齐**。
-  const doneShift = clampPanelLeft(DONE_PANEL_W, Math.round(((shellWidth ?? 0) + 2 - DONE_PANEL_W) / 2))
+  const doneShift = clampPanelLeft(DONE_PANEL_W, Math.round(((shellWidth ?? 0) - DONE_PANEL_W) / 2))
   // 「正在执行」面板：不居中展开，左缘与「运行中」区块左缘对齐。
   const runShift = clampPanelLeft(RUN_PANEL_W, runBlockLeft)
+  // 面板朝向：胶囊落在视口下半时改为向**上**滑出。原实现恒向下，胶囊拖到
+  // 底部后面板整段落在视口外，既看不见也滚不到（列表还挺长）。
+  const panelUp = pos !== null && pos.y + pillHeight(scale) > viewportH * 0.55
 
   // 主文案：完整展示，不再截断（知识/话术全文）；超出由外壳 maxWidth + 省略号兜底。
   const displayText = pillLabel
@@ -1470,6 +1634,14 @@ export function DonePill(props: DonePillProps): JSX.Element | null {
       shellWidthRef.current = Math.round(total)
       setShellWidth(Math.round(total))
     }
+    // 装饰宽 = 子块总宽 − 主文案实际宽度。文案被 maxWidth 截断时用
+    // scrollWidth（自然宽）会算大，这里取渲染宽即可：装饰部分的宽度与
+    // 文案是否截断无关，差值恒等于装饰宽。
+    const labelEl = labelRef.current
+    if (labelEl !== null) {
+      const deco = Math.round(total - labelEl.getBoundingClientRect().width)
+      if (deco > 0 && Math.abs(deco - decoWidth) >= 1) setDecoWidth(deco)
+    }
     // 「正在执行」面板锚点：运行中区块的 offsetLeft（相对 wrap 的 padding box，
     // 即面板 absolute left 所需值）。胶囊宽度动画/内容变化后每渲染实测跟随；
     // 值不变时返回原 state，React bail out，不会死循环。
@@ -1478,10 +1650,10 @@ export function DonePill(props: DonePillProps): JSX.Element | null {
       const runLeft = runEl.offsetLeft
       setRunBlockLeft(prev => (Math.abs(runLeft - prev) >= 1 ? runLeft : prev))
     }
-    // 锁定模式下宽度变化后按中心锚点重放位置（向两侧对称伸缩）。
-    // 拖拽进行中绝不重放——否则锚点会和拖拽对抗，把胶囊拽回去。
+    // 宽度变化后重放位置（居中模式重新居中 / 锁定模式按中心锚点对称伸缩）。
+    // 拖拽进行中绝不重放——否则位置同步会和拖拽对抗，把胶囊拽回去。
     if (dragRef.current !== null) return
-    if (!autoCenterRef.current && anchorRef.current !== null) applyAnchor()
+    syncPosition()
   })
 
   if (!enabled) return null
@@ -1491,18 +1663,27 @@ export function DonePill(props: DonePillProps): JSX.Element | null {
   return createPortal(
     <div
       ref={wrapRef}
+      className="dsh-done-pill"
       style={wrapStyle(dragging, pos, appearance.scale, fontStackOf(appearance.font))}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
+      onPointerCancel={onPointerCancel}
+      onLostPointerCapture={onPointerCancel}
       onMouseEnter={() => { if (dragRef.current === null) setHovered(true) }}
       onMouseLeave={() => { setHovered(false); setHoveredRunning(false); setFileHovered(false) }}
     >
-      <div ref={shellRef} className="dsh-done-pill-shell" style={pillShellStyle(unreadCount, shellWidth)}>
+      <div
+        ref={shellRef}
+        className="dsh-done-pill-shell"
+        data-unread={unreadCount > 0 ? '1' : '0'}
+        data-dragging={dragging ? '1' : '0'}
+        style={pillShellStyle(shellWidth)}
+      >
         {/* 健康提醒徽章：设定时段内常驻显示（黄色），与完成通知共存不挤占 */}
         {reminderLabel !== null && (
           <>
-            <span style={reminderBadgeStyle} title={reminderLabel}>
+            <span style={reminderBadgeStyle} title={reminderLabel} data-dp-zone="badge">
               <LineIcon kind={reminderIcon} size={Math.max(10, Math.round(13 * appearance.scale))} />
               <span>{reminderLabel}</span>
             </span>
@@ -1515,10 +1696,19 @@ export function DonePill(props: DonePillProps): JSX.Element | null {
             <button
               ref={runBlockRef}
               type="button"
-              style={{ ...runningBlockStyle(true), cursor: 'inherit' }}
-              aria-label={`正在执行中的任务 ${runningSessions.length} 个；悬停查看列表`}
+              data-dp-zone="run"
+              style={{ ...runningBlockStyle(true), ...shellChildStyle, cursor: 'inherit' }}
+              aria-label={`正在执行中的任务 ${runningSessions.length} 个；悬停或聚焦查看列表`}
               title="正在执行中的任务"
               onMouseEnter={() => { setHoveredRunning(true); setHovered(false) }}
+              onFocus={() => { setHoveredRunning(true); setHovered(false) }}
+              onBlur={() => { setHoveredRunning(false) }}
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter' && event.key !== ' ') return
+                event.preventDefault()
+                const first = runningSessions[0]
+                if (first !== undefined) openSession(first.id)
+              }}
             >
               <span style={runDotStyle} aria-hidden />
               <span>{runningSessions.length}</span>
@@ -1529,6 +1719,16 @@ export function DonePill(props: DonePillProps): JSX.Element | null {
         {/* 主体：点击 = 直接进入最新完成的会话；按住拖动 = 移动胶囊 */}
         <button
           type="button"
+          data-dp-zone="main"
+          onKeyDown={(event) => {
+            // 键盘可达：点击语义原先只由 wrap 的 pointerup 合成，Enter/Space
+            // 落在 button 上不会触发任何动作（拖拽手柄吞掉了默认点击流）。
+            if (event.key !== 'Enter' && event.key !== ' ') return
+            event.preventDefault()
+            if (latest !== undefined) openSession(latest.sessionId, unreadCount > 0 ? latest.id : undefined)
+          }}
+          onFocus={() => { setHovered(true); setHoveredRunning(false) }}
+          onBlur={() => { setHovered(false) }}
           style={{ ...pillMainStyle, ...shellChildStyle, cursor: 'inherit' }}
           aria-label={latest !== undefined
             ? `打开会话「${latestTitle}」（${unreadCount} 条对话完成未读）；拖动可移动位置`
@@ -1537,14 +1737,24 @@ export function DonePill(props: DonePillProps): JSX.Element | null {
               : '对话完成胶囊（暂无记录）；拖动可移动位置'}
           onMouseEnter={() => { setHovered(true); setHoveredRunning(false) }}
         >
-          {reminderLabel === null && unreadCount > 0 && latest !== undefined ? (
+          {unreadCount > 0 && latest !== undefined ? (
             <span style={checkIconStyle(unreadCount)} aria-hidden>✓</span>
           ) : (
-            <span style={reminderIconStyle} aria-hidden><LineIcon kind={reminderLabel !== null ? reminderIcon : funLine.icon} size={Math.max(10, Math.round(13 * appearance.scale))} /></span>
+            // 图标跟随**当前主文案**：提醒态的月亮/咖啡图标已在左侧徽章上展示，
+            // 主文案此时是知识轮播，再放一个月亮会出现「月亮 + Encoder 名词解释」
+            // 这种图文不符的组合（旧实现的判断依据是提醒是否激活）。
+            <span style={reminderIconStyle} aria-hidden>
+              <LineIcon kind={funLine.icon} size={Math.max(10, Math.round(13 * appearance.scale))} />
+            </span>
           )}
           <span
+            ref={labelRef}
             key={displayText}
             style={{
+              // maxWidth 让超长文案以省略号收尾：外壳只有 overflow:hidden 时
+              // 文字是被**硬切**的（末字截一半，没有「…」）。装饰宽实测得来，
+              // 带提醒徽章/运行中计数时也算得准。
+              maxWidth: `calc(min(${SHELL_MAX_W}px, 100vw - 48px) - ${decoWidth}px)`,
               overflow: 'hidden',
               textOverflow: 'ellipsis',
               opacity: 0,
@@ -1570,7 +1780,15 @@ export function DonePill(props: DonePillProps): JSX.Element | null {
         </button>
       </div>
       {/* 运行中任务面板：悬停左块时从下方滑出 */}
-      <div style={runPanelStyle(hoveredRunning, runShift)} role="dialog" aria-label="正在执行中的任务" aria-hidden={!hoveredRunning}>
+      {/* 面板整体吞掉 pointerdown：不然从面板空白处按下会拖动胶囊（面板随即
+          因 setHovered(false) 消失，观感像「点一下面板就跑了」）。 */}
+      <div
+        style={runPanelStyle(hoveredRunning, runShift, panelUp)}
+        role="dialog"
+        aria-label="正在执行中的任务"
+        aria-hidden={!hoveredRunning}
+        onPointerDown={(event) => { event.stopPropagation() }}
+      >
         <div style={headStyle}>
           <span style={headTitleStyle}>正在执行中</span>
           <span style={headMetaStyle}>{`${runningSessions.length} 个任务 · 点击进入会话`}</span>
@@ -1583,6 +1801,7 @@ export function DonePill(props: DonePillProps): JSX.Element | null {
             <button
               key={session.id}
               type="button"
+              className="dsh-done-pill-row"
               style={runRowStyle}
               title={info !== undefined && info.question !== ''
                 ? `「${session.displayTitle}」正在执行：${info.question}`
@@ -1590,7 +1809,7 @@ export function DonePill(props: DonePillProps): JSX.Element | null {
               onPointerDown={(event) => { event.stopPropagation() }}
               onClick={() => { openSession(session.id) }}
             >
-              <span style={runDotStyle} aria-hidden />
+              <span style={panelDotStyle} aria-hidden />
               <span style={runRowTitleStyle}>{label}</span>
               {info !== undefined && (
                 <span style={runRowTimeStyle}>{formatElapsed(nowTick - info.since)}</span>
@@ -1603,7 +1822,13 @@ export function DonePill(props: DonePillProps): JSX.Element | null {
         )}
       </div>
       {/* 记录面板：悬停主体时从下方滑出 */}
-      <div style={panelStyle(hovered, doneShift)} role="dialog" aria-label="对话完成记录" aria-hidden={!hovered}>
+      <div
+        style={panelStyle(hovered, doneShift, panelUp)}
+        role="dialog"
+        aria-label="对话完成记录"
+        aria-hidden={!hovered}
+        onPointerDown={(event) => { event.stopPropagation() }}
+      >
         <div style={headStyle}>
           <span style={headTitleStyle}>对话完成记录</span>
           <span style={headMetaStyle}>{`${entries.length} 条 · 点击卡片进入会话`}</span>
@@ -1616,9 +1841,10 @@ export function DonePill(props: DonePillProps): JSX.Element | null {
           return (
             <div
               key={item.id}
+              className="dsh-done-pill-row"
               style={cardStyle}
               role="button"
-              tabIndex={unread ? 0 : -1}
+              tabIndex={0}
               title={`「${title}」${item.question !== '' ? `问：${item.question}` : ''} — 点击打开会话`}
               onPointerDown={(event) => { event.stopPropagation() }}
               onClick={() => { openSession(item.sessionId, item.id) }}
@@ -1638,8 +1864,10 @@ export function DonePill(props: DonePillProps): JSX.Element | null {
                 </span>
                 <button
                   type="button"
+                  className="dsh-done-pill-close"
                   style={closeStyle}
                   aria-label="移除这条记录（不跳转会话）"
+                  onPointerDown={(event) => { event.stopPropagation() }}
                   onClick={(event) => { event.stopPropagation(); dismiss(item.id) }}
                 >
                   ✕
@@ -1658,6 +1886,8 @@ export function DonePill(props: DonePillProps): JSX.Element | null {
 
 /** 注册 shell.overlay 顶部胶囊 + 基础设置显隐开关行。 */
 export function applyDonePill(ctx: ClientContext): void {
+  // 样式先行：早于组件首次渲染注入，避免「无样式首帧 + 颜色过渡」。
+  ensurePillKeyframes()
   try { sessionsRuntime = (ctx as any).get('sessions') } catch { sessionsRuntime = undefined }
   ctx.slots.inject('shell.overlay', () => ctx.slots.register({
     name: 'shell.overlay',

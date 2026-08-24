@@ -297,9 +297,14 @@ function hiddenPinnedEntries(
  * 顶部（header 之后），置顶始终可见；不干预官方折叠行为，用户可自由
  * 折叠/展开。行内容：图钉 + 标题，点击打开会话，右键弹出置顶菜单。
  *
- * 幂等：id 序列与位置正确时不重建 DOM（避免与 MutationObserver 互相
- * 触发死循环），仅标题 / 当前会话高亮变化时原地更新。React 重渲染可能
- * 打乱注入位置，检测到位置偏移时重新插到 header 后。
+ * 幂等：id 序列一致时不重建 DOM（避免与 MutationObserver 互相触发死
+ * 循环），仅标题 / 当前会话高亮变化时原地更新；React 重渲染打乱注入
+ * 位置时用 header.after(container) 原地「搬」回去——移动已有节点不会
+ * 重建 DOM，避免出现「消失一帧再出现」的闪烁。
+ *
+ * 每个分组独立处理：任一分组命中幂等分支也必须继续处理后面的分组
+ * （早期版本此处 return 会漏掉后续分组，表现为另一个工作区的置顶补行
+ * 迟到到下一轮兜底轮询才出现＝折叠时闪一下）。
  */
 function syncPinnedSurrogates(
   groups: Element[],
@@ -319,12 +324,14 @@ function syncPinnedSurrogates(
       continue
     }
 
-    // 幂等分支：id 序列一致且位置正确 → 仅更新标题 / 高亮。
+    // 幂等分支：id 序列一致 → 只原地更新标题 / 高亮，必要时把容器搬回
+    // header 之后（移动已有节点，不销毁重建，避免闪烁）。
     if (container !== null) {
       const ids = Array.from(container.querySelectorAll<HTMLElement>(`.${SURROGATE_CLASS}`))
         .map(el => el.dataset.sessionId)
       const idsMatch = ids.length === hidden.length && hidden.every((h, i) => ids[i] === h.id)
-      if (idsMatch && container.previousElementSibling === header) {
+      if (idsMatch) {
+        if (container.previousElementSibling !== header) header.after(container)
         hidden.forEach((h, i) => {
           const row = container.children[i] as HTMLElement | undefined
           const titleEl = row?.querySelector<HTMLElement>('[data-role="title"]')
@@ -333,7 +340,8 @@ function syncPinnedSurrogates(
           }
           row?.classList.toggle(`${SURROGATE_CLASS}-selected`, h.id === current)
         })
-        return
+        // 本组已对齐，继续处理后面的分组（早期版本这里 return 会漏组）。
+        continue
       }
       container.remove()
     }
@@ -407,7 +415,7 @@ function onContextMenu(event: MouseEvent, sessions: ISessions | undefined): void
 
 // ── 装配 ───────────────────────────────────────────────────────────────────
 
-/** 会话行增删/重排后重对齐的去抖间隔。 */
+/** 会话列表数据变化后重对齐的去抖间隔（非视觉紧急路径）。 */
 const APPLY_DEBOUNCE_MS = 50
 /** 低频兜底轮询间隔（侧边栏重挂 / 观察失联兜底）。 */
 const POLL_MS = 1500
@@ -435,14 +443,37 @@ export function startSessionPin(ctx: ClientContext): () => void {
     }, APPLY_DEBOUNCE_MS)
   }
 
-  // 会话行增删 / 重排（React 重渲染恢复官方顺序）→ 重新对齐。
+  // 会话行增删 / 重排（折叠展开、React 重渲染恢复官方顺序）→ 立即对齐。
+  //
+  // 这里必须同步（不去抖）：折叠工作区时官方把组内会话行整批移出 DOM，若
+  // 等 50ms 去抖再补「置顶补行」，中间会有若干帧「置顶行已消失、补行还没
+  // 出现」——即折叠瞬间闪一下。MutationObserver 回调在 DOM 变更后的微任务
+  // 里执行，早于本次绘制，同步补齐即可做到零闪。
+  //
+  // 死循环防护：applyAll 幂等（顺序/补行已正确时不写 DOM），第二轮不再产生
+  // 变更，观察者自然停摆；万一遇到与官方渲染互相打脸的病态情况，短窗口内
+  // 连续同步对齐超过阈值就退回去抖，避免同步递归占满主线程。
+  const SYNC_BURST_LIMIT = 8
+  const SYNC_BURST_WINDOW_MS = 200
+  let syncBurst = 0
+  let lastSyncAt = 0
+
+  const applyNow = (): void => {
+    const now = Date.now()
+    syncBurst = now - lastSyncAt > SYNC_BURST_WINDOW_MS ? 1 : syncBurst + 1
+    lastSyncAt = now
+    if (syncBurst > SYNC_BURST_LIMIT) { schedule(); return }
+    applyAll(sessions, workspaces)
+  }
+
   const observer = new MutationObserver((mutations) => {
+    if (disposed) return
     const relevant = mutations.some(mutation => {
       for (const node of mutation.addedNodes) if (touchesSessionRow(node)) return true
       for (const node of mutation.removedNodes) if (touchesSessionRow(node)) return true
       return false
     })
-    if (relevant) schedule()
+    if (relevant) applyNow()
   })
   observer.observe(document.body, { childList: true, subtree: true })
 

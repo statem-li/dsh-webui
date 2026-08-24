@@ -7,8 +7,10 @@
  * settings 命名空间 `network-proxy` 持久化；HTTP API：
  *   GET  /api/dsh-proxy/state | providers
  *   POST /api/dsh-proxy/set   （立即应用或解除）
- * 机制：包装 globalThis.fetch 按目标 host 注入 dispatcher；selected 清掉全局
- * dispatcher，all 才挂 Symbol.for('undici.globalDispatcher.1') 兜底。
+ * 机制：包装 globalThis.fetch 按目标 host 注入 dispatcher；all 模式额外把
+ * Symbol.for('undici.globalDispatcher.1') 换成 ProxyAgent 兜底非 fetch 通道。
+ * 注意：该 symbol 是 Node 内建的 configurable:false 数据属性，delete 不生效
+ * （静默返回 false），解除代理必须「赋值回启动时捕获的原始 dispatcher」。
  */
 import z from '@deepseek-ai/schemastery'
 import { createRequire } from 'node:module'
@@ -20,6 +22,9 @@ export const inject = ['settings', 'webServer']
 const DISPATCHER_SYMBOL = Symbol.for('undici.globalDispatcher.1')
 const ORIGINAL_FETCH = Symbol.for('dsh-proxy.originalFetch')
 const DEFAULT_PROXY = 'http://127.0.0.1:10808'
+/** 连通性自检目标与超时：走代理请求一个轻量海外端点。 */
+const PROBE_URL = 'https://www.gstatic.com/generate_204'
+const PROBE_TIMEOUT_MS = 8000
 
 interface ProxyState {
   agent: any
@@ -27,8 +32,64 @@ interface ProxyState {
   hosts: Set<string>
 }
 
+/** 持久化的代理配置形状（settings 命名空间 network-proxy）。 */
+interface ProxyConfig {
+  enabled: boolean
+  url: string
+  mode: 'all' | 'selected'
+  providers: string[]
+  /** 额外走代理的域名（厂商目录之外的服务），支持 *.example.com 通配。 */
+  extraHosts: string[]
+}
+
+/**
+ * 规范化用户输入的域名：允许直接粘 URL（取 hostname）、去空白、转小写、
+ * 去端口/路径/尾点、去重，并丢掉空项；保留 *. 前缀（matchHost 支持子域）。
+ */
+function normalizeHosts(input: readonly unknown[]): string[] {
+  const out: string[] = []
+  for (const raw of input) {
+    if (typeof raw !== 'string') continue
+    let value = raw.trim().toLowerCase()
+    if (value === '') continue
+    if (value.includes('://')) {
+      try { value = new URL(value).hostname } catch { /* 不是合法 URL，按字面处理 */ }
+    }
+    value = value.replace(/\/.*$/, '').replace(/:\d+$/, '').replace(/\.$/, '')
+    if (value === '' || out.includes(value)) continue
+    out.push(value)
+  }
+  return out
+}
+
 // 当前代理状态；globalThis.fetch 包装函数在每次调用时读它来决定是否走代理。
 let proxyState: ProxyState | null = null
+
+/**
+ * 启动时的原始全局 dispatcher（Node 内建 undici Agent）。
+ * all 模式会把 symbol 换成 ProxyAgent，解除时必须赋值回这个基线——
+ * 该属性 configurable:false，delete 静默失败，写 undefined 会让 fetch 断言崩溃。
+ */
+let baselineDispatcher: unknown
+let baselineCaptured = false
+
+function captureBaseline(): void {
+  if (baselineCaptured) return
+  baselineCaptured = true
+  baselineDispatcher = (globalThis as any)[DISPATCHER_SYMBOL]
+}
+
+/** 把全局 dispatcher 恢复成基线；基线缺失（symbol 尚未初始化）时用新 Agent 兜底。 */
+function restoreGlobalDispatcher(): void {
+  const g = globalThis as any
+  if (baselineDispatcher !== undefined && baselineDispatcher !== null) {
+    g[DISPATCHER_SYMBOL] = baselineDispatcher
+    return
+  }
+  if (g[DISPATCHER_SYMBOL] === undefined || g[DISPATCHER_SYMBOL] === null) return
+  const undici = loadUndici()
+  if (undici && typeof undici.Agent === 'function') g[DISPATCHER_SYMBOL] = new undici.Agent()
+}
 
 // 从宿主可解析的位置加载 undici（优先级：profile node_modules -> DSH checkout -> DSH pnpm store）。
 function loadUndici(): any {
@@ -116,24 +177,30 @@ export function applyProxy(ctx: any): void {
       url: z.string().default(DEFAULT_PROXY),
       mode: z.union([z.const('all'), z.const('selected')]).default('all'),
       providers: z.array(z.string()).default([]),
+      // selected 模式下额外走代理的域名（厂商目录里没有的服务，如
+      // generativelanguage.googleapis.com；支持 *.example.com 通配）。
+      extraHosts: z.array(z.string()).default([]),
     }))
   } catch (error: any) {
     console.log('[dsh-proxy] settings namespace already registered:', error?.message ?? error)
   }
 
-  const readConfig = (): { enabled: boolean; url: string; mode: 'all' | 'selected'; providers: string[] } => {
+  const readConfig = (): ProxyConfig => {
     if (scope !== undefined) {
       try {
         const v = scope.get()
         return {
-          enabled: v.enabled !== false,
+          // 缺字段视为关闭：v.enabled !== false 会把「命名空间存在但没写 enabled」
+          // 当成开启，重启后凭空启用代理。
+          enabled: v.enabled === true,
           url: (v.url && v.url.trim()) || DEFAULT_PROXY,
           mode: v.mode === 'selected' ? 'selected' : 'all',
           providers: Array.isArray(v.providers) ? v.providers.filter((p: unknown) => typeof p === 'string') : [],
+          extraHosts: Array.isArray(v.extraHosts) ? normalizeHosts(v.extraHosts) : [],
         }
       } catch { /* fallthrough */ }
     }
-    return { enabled: false, url: DEFAULT_PROXY, mode: 'all', providers: [] }
+    return { enabled: false, url: DEFAULT_PROXY, mode: 'all', providers: [], extraHosts: [] }
   }
 
   // ---- 读 llm-pi-ai 的厂商配置，导出 route key -> baseURL host ----
@@ -164,8 +231,8 @@ export function applyProxy(ctx: any): void {
     return out
   }
 
-  /** 选中的厂商 route key -> 去重后的 hostname 集合。 */
-  const selectedHosts = (cfg: { providers?: string[] }): Set<string> => {
+  /** 选中的厂商 route key（+ 手填域名）-> 去重后的 hostname 集合。 */
+  const selectedHosts = (cfg: { providers?: string[]; extraHosts?: string[] }): Set<string> => {
     const hosts = new Set<string>()
     if (Array.isArray(cfg.providers)) {
       const byKey = new Map(readProviders().map((p) => [p.key, p]))
@@ -174,7 +241,20 @@ export function applyProxy(ctx: any): void {
         if (p && p.host) hosts.add(p.host)
       }
     }
+    if (Array.isArray(cfg.extraHosts)) {
+      for (const host of normalizeHosts(cfg.extraHosts)) hosts.add(host)
+    }
     return hosts
+  }
+
+  /**
+   * 已勾选但当前厂商目录里不存在的 key（供应商被删/改名后留下的死选项）。
+   * 这些 key 解析不出 host，静默不代理，界面需要提示用户清理。
+   */
+  const staleProviders = (cfg: { providers?: string[] }): string[] => {
+    if (!Array.isArray(cfg.providers)) return []
+    const known = new Set(readProviders().map(p => p.key))
+    return cfg.providers.filter(key => !known.has(key))
   }
 
   // ---- 状态：当前代理是否已生效 ----
@@ -186,23 +266,32 @@ export function applyProxy(ctx: any): void {
   }
 
   // ---- 应用代理 / 解除代理 ----
-  function applyProxy(cfg: { enabled: boolean; url: string; mode: 'all' | 'selected'; providers: string[] }): { ok: boolean; message?: string } {
+  function applyProxy(cfg: ProxyConfig): { ok: boolean; message?: string } {
     const undici = loadUndici()
     if (!undici) return { ok: false, message: '无法加载 undici' }
-    const agent = new undici.ProxyAgent(cfg.url)
+    let agent: any
+    try {
+      agent = new undici.ProxyAgent(cfg.url)
+    } catch (error: any) {
+      return { ok: false, message: '代理地址无法建立连接池：' + String(error?.message ?? error) }
+    }
     proxyState = { agent, mode: cfg.mode, hosts: selectedHosts(cfg) }
+    captureBaseline()
     const g = globalThis as any
     if (cfg.mode === 'all') {
       g[DISPATCHER_SYMBOL] = agent
     } else {
-      try { delete g[DISPATCHER_SYMBOL] } catch { /* ignore */ }
+      // selected 模式必须让未命中的请求走直连：全局 dispatcher 恢复成基线
+      // （delete 对 configurable:false 的内建属性无效，之前会把上一次的
+      //  ProxyAgent 永久留在全局，导致关代理/切窄范围后全站仍走代理）。
+      restoreGlobalDispatcher()
     }
     return { ok: true }
   }
 
   function clearProxy(): void {
-    const g = globalThis as any
-    try { delete g[DISPATCHER_SYMBOL] } catch { /* ignore */ }
+    captureBaseline()
+    restoreGlobalDispatcher()
     proxyState = null
   }
 
@@ -245,12 +334,77 @@ export function applyProxy(ctx: any): void {
     handler: async (_req: any, res: any) => {
       try {
         const cfg = readConfig()
-        writeJson(res, { ok: true, ...cfg, hosts: [...selectedHosts(cfg)], active: isActive() })
+        writeJson(res, {
+          ok: true,
+          ...cfg,
+          hosts: [...selectedHosts(cfg)],
+          stale: staleProviders(cfg),
+          active: isActive(),
+        })
       } catch (error: any) {
         writeJson(res, { ok: false, error: String(error?.message ?? error) })
       }
     },
   }), 'webui: dsh-proxy state')
+
+  // 连通性自检：真正经代理发一次请求。isActive() 只说明 ProxyAgent 已挂载，
+  // 代理进程没开时它仍是 true——界面「已生效」是假的，这个接口给出真实结果。
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: '/api/dsh-proxy/test',
+    handler: async (_req: any, res: any) => {
+      const started = Date.now()
+      try {
+        const cfg = readConfig()
+        const undici = loadUndici()
+        if (!undici) {
+          writeJson(res, { ok: false, message: '无法加载 undici' })
+          return
+        }
+        let agent: any
+        try {
+          agent = new undici.ProxyAgent(cfg.url)
+        } catch (error: any) {
+          writeJson(res, { ok: false, message: '代理地址无效：' + String(error?.message ?? error) })
+          return
+        }
+        const original = (globalThis as any)[ORIGINAL_FETCH] ?? globalThis.fetch
+        const controller = new AbortController()
+        const timer = setTimeout(() => { controller.abort() }, PROBE_TIMEOUT_MS)
+        try {
+          const response = await original(PROBE_URL, {
+            method: 'GET',
+            dispatcher: agent,
+            signal: controller.signal,
+            cache: 'no-store',
+          })
+          writeJson(res, {
+            ok: true,
+            reachable: true,
+            status: response.status,
+            elapsedMs: Date.now() - started,
+            target: PROBE_URL,
+            url: cfg.url,
+          })
+        } catch (error: any) {
+          const cause = error?.cause?.message ? '（' + String(error.cause.message) + '）' : ''
+          writeJson(res, {
+            ok: true,
+            reachable: false,
+            elapsedMs: Date.now() - started,
+            target: PROBE_URL,
+            url: cfg.url,
+            message: String(error?.message ?? error) + cause,
+          })
+        } finally {
+          clearTimeout(timer)
+          try { await agent.close() } catch { /* ignore */ }
+        }
+      } catch (error: any) {
+        writeJson(res, { ok: false, error: String(error?.message ?? error) })
+      }
+    },
+  }), 'webui: dsh-proxy test')
 
   ctx.effect(() => ctx.webServer.register({
     kind: 'exact',
@@ -286,27 +440,37 @@ export function applyProxy(ctx: any): void {
         const providers = Array.isArray(body.providers)
           ? body.providers.filter((p: unknown) => typeof p === 'string')
           : current.providers
+        const extraHosts = Array.isArray(body.extraHosts)
+          ? normalizeHosts(body.extraHosts)
+          : current.extraHosts
         if (enabled && !/^https?:\/\/.+/.test(url)) {
           writeJson(res, { ok: false, message: '代理地址需为 http:// 或 https:// 开头' })
           return
         }
+        const next: ProxyConfig = { enabled, url, mode, providers, extraHosts }
         if (enabled) {
-          const r = applyProxy({ enabled, url, mode, providers })
+          const r = applyProxy(next)
           if (!r.ok) {
             writeJson(res, { ok: false, message: r.message })
             return
           }
-          console.log(`[dsh-proxy] proxy ENABLED url=${url} mode=${mode} providers=[${providers.join(',')}] hosts=[${[...selectedHosts({ providers })].join(',')}]`)
+          console.log(`[dsh-proxy] proxy ENABLED url=${url} mode=${mode} providers=[${providers.join(',')}] hosts=[${[...selectedHosts(next)].join(',')}]`)
         } else {
           clearProxy()
           console.log('[dsh-proxy] proxy DISABLED')
         }
         if (scope !== undefined) {
-          try { await scope.update({ enabled, url, mode, providers }) } catch (err: any) {
+          try { await scope.update(next) } catch (err: any) {
             console.log('[dsh-proxy] persist failed:', err?.message ?? err)
           }
         }
-        writeJson(res, { ok: true, enabled, url, mode, providers, hosts: [...selectedHosts({ providers })], active: isActive() })
+        writeJson(res, {
+          ok: true,
+          ...next,
+          hosts: [...selectedHosts(next)],
+          stale: staleProviders(next),
+          active: isActive(),
+        })
       } catch (error: any) {
         writeJson(res, { ok: false, error: String(error?.message ?? error) })
       }

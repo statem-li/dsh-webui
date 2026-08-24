@@ -1,20 +1,32 @@
 /**
- * PromptOptimizeButton — 对话框「自动优化提示词」图标按钮。
+ * PromptOptimizeButton — 对话框「优化提示词」入口（v2 重做）。
  *
- * 注册在 `conversation.input.right`（order 5，位于供应商标签 order 10 的左侧）。
- * 点击后用当前会话选中的模型（ModelDirectory store 的 `current`）优化输入框
- * 草稿：草稿与选中模型 → POST /api/webui-prompt-optimize（SSE 流式）→ 边收
- * text 增量边写回草稿，图标上方 popover 展示优化链路与实时进度。
+ * 注册在 `conversation.input.right`（order 5，位于供应商标签 order 10 左侧）。
+ *
+ * 交互（旧版三宗罪的针对性修复）：
+ *  1. **点击开面板，不再 hover 抖动**：hover 面板会在鼠标经过输入区时乱弹，
+ *     且开关点不中；现在点击图标开/关面板，Esc 与点击外部关闭。
+ *  2. **结果先预览、点「应用」才写回草稿**：旧版流式直接改草稿，用户既看不清
+ *     改了什么，中途失败还得靠代码回滚原文；现在原文始终留在输入框，面板里
+ *     并列展示原文与优化结果。
+ *  3. **风格三档取代「多轮候选」**：均衡 / 精简 / 详尽，换档即重试（自动中止
+ *     上一次），不再一次并行烧 3~5 倍 token。
+ *
+ * 结果正文由 host 用共享的 `cleanOptimized` 清洗（去围栏 / 去「优化后的提示词」
+ * 小标题 / 去结尾「主要改动」段落），client 收到的 done 帧即可直接写回。
  *
  * 草稿读取走 owner 共享（InputZone.input，随 skeleton 重渲染实时更新），
  * 写回走标准 kit 的 `inputActions.setDraft`（唯一公开写入路径），不碰 DOM。
  */
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import clsx from 'clsx'
 import type { SessionId, SnapshotStore } from '@deepseek-ai/dsh-client-runtime/client'
 import type { ModelDirectoryState } from '@deepseek-ai/dsh-client-ui-model-selection/client'
-import { IconLoadingOutline16, IconSparkle16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import {
+  IconCloseOutline16, IconLoadingOutline16, IconRefreshOutline14, IconSparkle16,
+} from '@deepseek-ai/dsh-client-ui-primitives'
+import { cleanOptimized, collapseToLine, previewOptimized } from '../../prompt-optimize-clean.js'
 import { css, ensureStyles } from './styles'
 
 /** 优化入口的注入面（inject 返回）。 */
@@ -35,531 +47,417 @@ export interface PromptOptimizeProps extends PromptOptimizeInjected {
   inputActions: { setDraft: (text: string) => void }
 }
 
-/** popover 生命周期阶段。 */
-type Phase = 'idle' | 'optimizing' | 'done' | 'error' | 'multi'
+/** 优化风格（与 host 的 STYLE_RULES 对应）。 */
+type Style = 'balanced' | 'concise' | 'detailed'
+
+/** 风格 chips 文案。 */
+const STYLES: ReadonlyArray<{ id: Style; label: string; hint: string }> = [
+  { id: 'balanced', label: '均衡', hint: '补齐目标、约束与输出格式，长度大致不变' },
+  { id: 'concise', label: '精简', hint: '压到最短，只保留必要要求' },
+  { id: 'detailed', label: '详尽', hint: '补充上下文、输入输出格式与验收标准' },
+]
 
 /** SSE 帧负载（host 端发送）。 */
 interface StreamFrame {
-  type?: 'delta' | 'done' | 'error' | 'candidate'
+  type?: 'delta' | 'done' | 'error'
   text?: string
-  index?: number
   elapsedMs?: number
+  partial?: boolean
   message?: string
+}
+
+/** localStorage 键：上次选择的风格 / 「设为目标」开关。 */
+const STYLE_KEY = 'dsh-webui:prompt-optimize:style'
+const TARGET_KEY = 'dsh-webui:prompt-optimize:set-target'
+
+/** 面板与图标之间的间距（px）。 */
+const PANEL_GAP = 10
+
+/** 读上次选择的风格（默认均衡）。 */
+function readStyle(): Style {
+  try {
+    const raw = window.localStorage.getItem(STYLE_KEY)
+    return raw === 'concise' || raw === 'detailed' ? raw : 'balanced'
+  } catch {
+    return 'balanced'
+  }
+}
+
+/** 读「设为目标」开关（默认关：/goal 会创建长任务目标，不该是默认行为）。 */
+function readTarget(): boolean {
+  try { return window.localStorage.getItem(TARGET_KEY) === '1' } catch { return false }
+}
+
+/** 写 localStorage（失败静默：隐私模式下仍按内存值工作）。 */
+function store(key: string, value: string): void {
+  try { window.localStorage.setItem(key, value) } catch { /* ignore */ }
 }
 
 /** 把毫秒格式化为可读耗时。 */
 function formatMs(ms: number | undefined): string {
-  if (typeof ms !== 'number' || !Number.isFinite(ms) || ms < 0) return '已完成'
-  if (ms < 1000) return `已完成 · ${String(Math.round(ms))}ms`
-  return `已完成 · ${(ms / 1000).toFixed(1)}s`
+  if (typeof ms !== 'number' || !Number.isFinite(ms) || ms < 0) return ''
+  return ms < 1000 ? `${String(Math.round(ms))}ms` : `${(ms / 1000).toFixed(1)}s`
 }
 
-/** 「设定目标提示词」开关的 localStorage 键。 */
-const TARGET_KEY = 'dsh-webui:prompt-optimize:set-target'
-/** 「使用 AI 浏览器验证」开关的 localStorage 键。 */
-const VERIFY_KEY = 'dsh-webui:prompt-optimize:verify-browser'
-/** 「多轮优化」开关的 localStorage 键。 */
-const MULTI_KEY = 'dsh-webui:prompt-optimize:multi-round'
-
-/** 多轮优化候选数量（固定 3，与 host 端 MULTI_VARIANTS 顺序一致）。 */
-const CANDIDATE_COUNT = 3
-/** 多轮候选展示标签（候选 0 额外加「推荐」徽标）。 */
-const CANDIDATE_LABELS: ReadonlyArray<string> = ['均衡优化', '精简高效', '详尽具体']
-
-/** 从 localStorage 读开关状态；缺省值在首次（从未点过）时生效。 */
-function readFlag(key: string, fallback: boolean): boolean {
-  try {
-    const raw = window.localStorage.getItem(key)
-    return raw === null ? fallback : raw !== '0'
-  } catch {
-    return fallback
-  }
-}
-
-/** 把开关状态写入 localStorage（选择过即持久化）。 */
-function writeFlag(key: string, value: boolean): void {
-  try { window.localStorage.setItem(key, value ? '1' : '0') } catch { /* ignore */ }
+/** 面板定位样式（贴图标上方、右对齐，夹在视口内）。 */
+function panelStyle(anchor: DOMRect | null): { left: number; bottom: number } | undefined {
+  if (anchor === null) return undefined
+  const width = Math.min(560, window.innerWidth - 24)
+  const left = Math.max(12, Math.min(anchor.right - width, window.innerWidth - width - 12))
+  return { left, bottom: Math.max(12, window.innerHeight - anchor.top + PANEL_GAP) }
 }
 
 /**
- * 渲染「自动优化提示词」图标按钮。
+ * 渲染「优化提示词」入口（图标 + 面板）。
  * @param props - injected face + owner + standard kit。
  * @returns 图标按钮，或 null（subagent 会话不渲染）。
  */
 export function PromptOptimizeButton({ available, directory, input, inputActions, sessionId }: PromptOptimizeProps) {
   ensureStyles()
-  const state = useSyncExternalStore(
-    fn => directory.subscribe(fn),
-    () => directory.getSnapshot(),
-  )
-  const [phase, setPhase] = useState<Phase>('idle')
-  const [detail, setDetail] = useState('')
-  const [hovered, setHovered] = useState(false)
-  // 「设定目标提示词」开关：默认 ON，localStorage 持久化（缺省视为开启）。
-  const [setTarget, setSetTarget] = useState<boolean>(() => readFlag(TARGET_KEY, true))
-  // 「使用 AI 浏览器验证」开关：默认 OFF，localStorage 持久化（缺省视为关闭）。
-  const [verifyWithBrowser, setVerifyWithBrowser] = useState<boolean>(() => readFlag(VERIFY_KEY, false))
-  // 「多轮优化」开关：默认 OFF，localStorage 持久化。
-  const [multiRound, setMultiRound] = useState<boolean>(() => readFlag(MULTI_KEY, false))
-  // 多轮候选结果（按 host 返回的 index 放置，空串表示该候选失败/未返回）。
-  const [candidates, setCandidates] = useState<string[]>([])
-  // 多轮优化的「原话」基准：展示在卡片顶部，连续优化时保持不变。
-  const [sourceText, setSourceText] = useState('')
-  // 多轮迭代轮次（用户手动改草稿时重置为 1）。
-  const [round, setRound] = useState(1)
-  // 多轮候选卡片是否正在滑出（播完动画再卸载）。
+  const [open, setOpen] = useState(false)
   const [closing, setClosing] = useState(false)
-  const closeTimer = useRef<number | null>(null)
-  const hoverLeaveTimer = useRef<number | null>(null)
-  const abortRef = useRef<AbortController | null>(null)
-  // 多轮「原话」基准（供 optimize 读取最新值，避免闭包陈旧）。
-  const sourceRef = useRef<string>('')
-  // 本组件最近一次写回草稿的值：用于识别「用户手动改了草稿」→ 重置原话基准。
-  const lastWrittenRef = useRef<string>('')
-  // 多轮迭代轮次 ref（供 optimize 读取最新值，避免闭包陈旧）。
-  const roundRef = useRef(1)
-  const busy = phase === 'optimizing'
+  const [style, setStyle] = useState<Style>(readStyle)
+  const [setTarget, setSetTarget] = useState<boolean>(readTarget)
+  /** 本次优化的原文（打开面板时快照，重试期间保持不变）。 */
+  const [source, setSource] = useState('')
+  /** 流式累积的原始输出（仅用于预览；最终以 done 帧的清洗文本为准）。 */
+  const [streamed, setStreamed] = useState('')
+  /** 清洗后的最终结果（可应用）。 */
+  const [result, setResult] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [elapsed, setElapsed] = useState('')
+  const [anchor, setAnchor] = useState<DOMRect | null>(null)
 
-  // 卸载时清理「完成后短暂停留」与「hover 延迟关闭」的定时器。
-  useEffect(() => () => {
+  const rootRef = useRef<HTMLDivElement | null>(null)
+  const panelRef = useRef<HTMLDivElement | null>(null)
+  const abortRef = useRef<AbortController | null>(null)
+  const closeTimer = useRef<number | null>(null)
+  /** 本次流式的原始累积输出（停止 / done 缺 text 时用于就地清洗）。 */
+  const accRef = useRef('')
+  /** 最新草稿（供异步回调读取，避免闭包陈旧）。 */
+  const draftRef = useRef(input.draft)
+  draftRef.current = input.draft
+
+  /** 中止进行中的优化，并显式通知 host 停止模型调用。 */
+  const stop = useCallback((): void => {
+    abortRef.current?.abort()
+    abortRef.current = null
+    void fetch('/api/webui-prompt-optimize/stop', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId }),
+    }).catch(() => { /* 停止通知失败不影响本地中止 */ })
+  }, [sessionId])
+
+  /** 发起一次优化（换风格重试走同一入口）。 */
+  const run = useCallback(async (text: string, nextStyle: Style): Promise<void> => {
+    const provider = directory.getSnapshot().current?.provider
+    const model = directory.getSnapshot().current?.model
+    if (provider === undefined || model === undefined) {
+      setError('请先在右侧选择模型')
+      return
+    }
+    abortRef.current?.abort()
+    const controller = new AbortController()
+    abortRef.current = controller
+    setBusy(true)
+    setError('')
+    setElapsed('')
+    setStreamed('')
+    setResult('')
+
+    let reader: ReadableStreamDefaultReader<Uint8Array> | null = null
+    try {
+      const response = await fetch('/api/webui-prompt-optimize', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ provider, model, text, style: nextStyle, sessionId }),
+        signal: controller.signal,
+      })
+      if (!response.ok) throw new Error(`优化请求失败（HTTP ${String(response.status)}）`)
+      if (response.body === null) throw new Error('无响应流')
+      reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      let terminal = false
+      accRef.current = ''
+
+      const onFrame = (frame: StreamFrame): void => {
+        if (frame.type === 'delta' && typeof frame.text === 'string') {
+          accRef.current += frame.text
+          setStreamed(prev => prev + frame.text)
+          return
+        }
+        if (frame.type === 'done') {
+          terminal = true
+          // host 已用共享清洗器处理过；缺 text（旧 host / 空帧）时本地兜底清洗，
+          // 保证「装了新 client 但 host 还没重启」也能正常出结果。
+          const done = typeof frame.text === 'string' && frame.text !== ''
+            ? frame.text
+            : cleanOptimized(accRef.current)
+          setResult(done)
+          setElapsed(formatMs(frame.elapsedMs))
+          if (frame.partial === true) setError('生成被中断，下面是已完成的部分')
+          return
+        }
+        if (frame.type === 'error') {
+          terminal = true
+          throw new Error(frame.message ?? '优化失败')
+        }
+      }
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        let index: number
+        while ((index = buffer.indexOf('\n\n')) !== -1) {
+          const block = buffer.slice(0, index)
+          buffer = buffer.slice(index + 2)
+          for (const line of block.split('\n')) {
+            if (!line.startsWith('data: ')) continue
+            const data = line.slice(6)
+            if (data === '') continue
+            let payload: unknown
+            try { payload = JSON.parse(data) } catch { continue }
+            onFrame(payload as StreamFrame)
+          }
+        }
+      }
+      if (!terminal) throw new Error(controller.signal.aborted ? 'stopped' : '响应流意外结束')
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : String(caught)
+      if (controller.signal.aborted || message === 'stopped') {
+        // 用户停止（本地已 abort，收不到 host 的 partial done 帧）：把已生成的
+        // 部分就地清洗后交付，仍然可「应用」，不白烧 token。
+        const partial = cleanOptimized(accRef.current)
+        if (partial === '') setError('已停止优化')
+        else {
+          setResult(partial)
+          setError('已停止 · 下面是已完成的部分')
+        }
+      } else setError(message)
+    } finally {
+      if (abortRef.current === controller) abortRef.current = null
+      if (reader !== null) void reader.cancel().catch(() => {})
+      setBusy(false)
+    }
+  }, [directory, sessionId])
+
+  /** 打开面板：快照草稿并立即开始优化。 */
+  const openPanel = useCallback((): void => {
+    const draft = draftRef.current.trim()
+    const rect = rootRef.current?.getBoundingClientRect() ?? null
+    setAnchor(rect)
+    setSource(draft)
+    setStreamed('')
+    setResult('')
+    setElapsed('')
+    setError(draft === '' ? '输入框是空的，先写点什么再优化' : '')
+    setOpen(true)
+    if (draft !== '') void run(draft, style)
+  }, [run, style])
+
+  /** 关闭面板（播完收起动画再卸载）。 */
+  const closePanel = useCallback((): void => {
+    if (busy) stop()
+    setClosing(true)
     if (closeTimer.current !== null) window.clearTimeout(closeTimer.current)
-    if (hoverLeaveTimer.current !== null) window.clearTimeout(hoverLeaveTimer.current)
+    closeTimer.current = window.setTimeout(() => {
+      closeTimer.current = null
+      setClosing(false)
+      setOpen(false)
+    }, 140)
+  }, [busy, stop])
+
+  // Esc 关闭 + 点击面板外关闭 + 视口变化时重算锚点。
+  useEffect(() => {
+    if (!open) return undefined
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') closePanel()
+    }
+    const onPointerDown = (event: PointerEvent): void => {
+      const target = event.target as Node | null
+      if (target === null) return
+      if (panelRef.current?.contains(target) === true) return
+      if (rootRef.current?.contains(target) === true) return
+      closePanel()
+    }
+    const onViewport = (): void => { setAnchor(rootRef.current?.getBoundingClientRect() ?? null) }
+    document.addEventListener('keydown', onKey)
+    document.addEventListener('pointerdown', onPointerDown, true)
+    window.addEventListener('resize', onViewport)
+    window.addEventListener('scroll', onViewport, true)
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      document.removeEventListener('pointerdown', onPointerDown, true)
+      window.removeEventListener('resize', onViewport)
+      window.removeEventListener('scroll', onViewport, true)
+    }
+  }, [open, closePanel])
+
+  // 卸载：中止请求与定时器（会话切换时组件会被卸载）。
+  useEffect(() => () => {
+    abortRef.current?.abort()
+    if (closeTimer.current !== null) window.clearTimeout(closeTimer.current)
   }, [])
+
+  // 面板挂载后按锚点定位（内容高度变化不影响 bottom 定位）。
+  useLayoutEffect(() => {
+    if (!open) return
+    if (anchor === null) setAnchor(rootRef.current?.getBoundingClientRect() ?? null)
+  }, [open, anchor])
 
   if (!available) return null
 
-  const cancelHoverHide = (): void => {
-    if (hoverLeaveTimer.current !== null) {
-      window.clearTimeout(hoverLeaveTimer.current)
-      hoverLeaveTimer.current = null
-    }
+  /** 切换风格：立即用新风格重跑（原文不变）。 */
+  const pickStyle = (next: Style): void => {
+    setStyle(next)
+    store(STYLE_KEY, next)
+    if (source !== '') void run(source, next)
   }
 
-  // 鼠标进入图标或卡片：立即显示并取消延迟关闭。
-  const showPanel = (): void => {
-    cancelHoverHide()
-    setHovered(true)
-  }
-
-  // 鼠标移出：延迟 0.08 秒再隐藏，给用户时间把鼠标移到卡片上点开关。
-  // 多轮候选卡片展示期间不随 hover 关闭（需点选候选或「关闭」才收起）。
-  const scheduleHide = (): void => {
-    if (phase === 'multi') return
-    cancelHoverHide()
-    hoverLeaveTimer.current = window.setTimeout(() => {
-      hoverLeaveTimer.current = null
-      setHovered(false)
-    }, 80)
-  }
-
-  const finish = (next: Phase, text: string): void => {
-    setPhase(next)
-    setDetail(text)
-    if (closeTimer.current !== null) window.clearTimeout(closeTimer.current)
-    closeTimer.current = window.setTimeout(() => {
-      setPhase('idle')
-      setDetail('')
-    }, next === 'done' ? 2400 : 3800)
+  /** 应用结果：写回草稿（可选包成 /goal 命令）并关闭面板。 */
+  const apply = (): void => {
+    if (result === '') return
+    inputActions.setDraft(setTarget ? `/goal ${collapseToLine(result)}` : result)
+    closePanel()
   }
 
   const toggleTarget = (): void => {
     setSetTarget(prev => {
       const next = !prev
-      writeFlag(TARGET_KEY, next)
+      store(TARGET_KEY, next ? '1' : '0')
       return next
     })
   }
 
-  const toggleVerify = (): void => {
-    setVerifyWithBrowser(prev => {
-      const next = !prev
-      writeFlag(VERIFY_KEY, next)
-      return next
-    })
-  }
-
-  const toggleMulti = (): void => {
-    setMultiRound(prev => {
-      const next = !prev
-      writeFlag(MULTI_KEY, next)
-      return next
-    })
-  }
-
-  /** 紧急停止：中止 fetch，并显式通知 host 中止模型调用（不依赖 TCP 断开检测）。 */
-  const stop = (): void => {
-    abortRef.current?.abort()
-    // 显式停止：host 端按会话定位本次优化并 abort 模型，确保真正停止生成。
-    void fetch('/api/webui-prompt-optimize/stop', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ sessionId }),
-    }).catch(() => { /* 停止通知失败不影响 fetch 中止 */ })
-  }
-
-  // 当前选中模型的显示名（用于链路展示；供应商已在图标旁单独展示，此处只显示模型）。
-  const current = state.current
-  const modelName = state.groups.flatMap(group => group.models).find(model => model.id === current?.model)?.name
+  const snapshot = directory.getSnapshot()
+  const current = snapshot.current
+  const modelName = snapshot.groups.flatMap(group => group.models).find(model => model.id === current?.model)?.name
     ?? current?.model
     ?? '未选模型'
-
-  const optimize = async (): Promise<void> => {
-    if (busy) return
-    const draft = input.draft.trim()
-    if (draft === '') {
-      finish('error', '请先输入要优化的提示词')
-      return
-    }
-    if (current === null || current.provider === undefined || current.model === undefined) {
-      finish('error', '请先选择模型')
-      return
-    }
-    const provider = current.provider
-    const model = current.model
-    if (multiRound) {
-      await optimizeMulti(provider, model)
-    } else {
-      await optimizeSingle(provider, model)
-    }
-  }
-
-  /** 单轮优化：流式边收边写回草稿（现有行为，保留实时体验）。 */
-  const optimizeSingle = async (provider: string, model: string): Promise<void> => {
-    const draft = input.draft.trim()
-    const original = input.draft
-    setPhase('optimizing')
-    setDetail('正在调用模型…')
-
-    const controller = new AbortController()
-    abortRef.current = controller
-    let reader: ReadableStreamDefaultReader<Uint8Array> | null = null
-    let wroteDraft = false
-    try {
-      const response = await fetch('/api/webui-prompt-optimize', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ provider, model, text: draft, setTarget, verifyWithBrowser, sessionId }),
-        signal: controller.signal,
-      })
-      if (!response.ok) throw new Error(`优化请求失败（HTTP ${String(response.status)}）`)
-      if (response.body === null) throw new Error('无响应流')
-      reader = response.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-      let accumulated = ''
-      let sawTerminal = false
-
-      const onFrame = (payload: StreamFrame): void => {
-        if (payload.type === 'delta' && typeof payload.text === 'string') {
-          accumulated += payload.text
-          inputActions.setDraft(accumulated)
-          wroteDraft = true
-          setDetail(`正在优化 · 已生成 ${String(accumulated.length)} 字`)
-          return
-        }
-        if (payload.type === 'done') {
-          sawTerminal = true
-          // 两个开关都不自动触发任何任务：只决定写回草稿的形式，
-          // 全部由用户点发送后才生效（/goal 命令 / 附加验证要求）。
-          const objective = accumulated.trim()
-          if (objective === '') {
-            finish('done', formatMs(payload.elapsedMs))
-            return
-          }
-          if (setTarget) {
-            inputActions.setDraft(`/goal ${objective}`)
-            finish('done', '已完成 · 已生成 /goal')
-          } else if (verifyWithBrowser) {
-            inputActions.setDraft(`${objective}\n\n请用 AI 浏览器实际验证上面这条提示词能否正常工作，并简要报告验证结论。`)
-            finish('done', '已完成 · 已附加浏览器验证')
-          } else {
-            finish('done', formatMs(payload.elapsedMs))
-          }
-          return
-        }
-        if (payload.type === 'error') {
-          sawTerminal = true
-          throw new Error(payload.message ?? '优化失败')
-        }
-      }
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-        let idx: number
-        while ((idx = buffer.indexOf('\n\n')) !== -1) {
-          const frame = buffer.slice(0, idx)
-          buffer = buffer.slice(idx + 2)
-          for (const line of frame.split('\n')) {
-            if (!line.startsWith('data: ')) continue
-            const data = line.slice(6)
-            if (data === '') continue
-            let payload: unknown
-            try { payload = JSON.parse(data) } catch { continue }
-            onFrame(payload as StreamFrame)
-          }
-        }
-      }
-      buffer += decoder.decode()
-
-      // 流结束但未收到 done/error（罕见异常）：按已生成内容兜底。
-      // 若此时是用户主动停止（signal 已 abort），交给 catch 显示「已停止优化」，
-      // 不要误判为「已完成」。
-      if (!sawTerminal) {
-        if (controller.signal.aborted) throw new Error('stopped')
-        if (wroteDraft) finish('done', '已完成')
-        else throw new Error('响应流意外结束')
-      }
-    } catch (error) {
-      // 已开始写入草稿时失败/停止：恢复原文，避免留下残缺的优化中间态。
-      if (wroteDraft) inputActions.setDraft(original)
-      if (controller.signal.aborted) {
-        finish('error', '已停止优化')
-      } else {
-        finish('error', `失败：${error instanceof Error ? error.message : String(error)}`)
-      }
-    } finally {
-      if (abortRef.current === controller) abortRef.current = null
-      if (reader !== null) reader.cancel().catch(() => {})
-    }
-  }
-
-  /** 多轮优化：每轮基于当前草稿（上一轮选中的候选）继续优化，卡片顶部固定展示最初「原话」。 */
-  const optimizeMulti = async (provider: string, model: string): Promise<void> => {
-    // 草稿自上次写回后又被手动改过 → 重置「原话」与轮次；否则迭代轮次 +1。
-    if (input.draft !== lastWrittenRef.current) {
-      sourceRef.current = input.draft
-      setSourceText(input.draft)
-      roundRef.current = 1
-      setRound(1)
-    } else {
-      roundRef.current += 1
-      setRound(roundRef.current)
-    }
-    // 优化输入 = 当前草稿（迭代基准）；原话只作卡片顶部固定参照，不参与本次优化。
-    const text = input.draft.trim()
-
-    setPhase('optimizing')
-    setDetail(`第 ${String(roundRef.current)} 轮 · 正在生成 ${String(CANDIDATE_COUNT)} 个候选…`)
-    setCandidates([])
-
-    const controller = new AbortController()
-    abortRef.current = controller
-    let reader: ReadableStreamDefaultReader<Uint8Array> | null = null
-    try {
-      const response = await fetch('/api/webui-prompt-optimize', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ provider, model, text, multi: true, count: CANDIDATE_COUNT, sessionId }),
-        signal: controller.signal,
-      })
-      if (!response.ok) throw new Error(`优化请求失败（HTTP ${String(response.status)}）`)
-      if (response.body === null) throw new Error('无响应流')
-      reader = response.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-      let sawTerminal = false
-      let received = 0
-
-      const onFrame = (payload: StreamFrame): void => {
-        if (payload.type === 'candidate' && typeof payload.index === 'number' && typeof payload.text === 'string') {
-          const index = payload.index
-          const text = payload.text
-          setCandidates(prev => {
-            const next = prev.slice()
-            next[index] = text
-            return next
-          })
-          received += 1
-          setDetail(`正在生成候选 ${String(received)}/${String(CANDIDATE_COUNT)}…`)
-          return
-        }
-        if (payload.type === 'done') {
-          sawTerminal = true
-          setPhase('multi')
-          setDetail('')
-          return
-        }
-        if (payload.type === 'error') {
-          sawTerminal = true
-          throw new Error(payload.message ?? '优化失败')
-        }
-      }
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-        let idx: number
-        while ((idx = buffer.indexOf('\n\n')) !== -1) {
-          const frame = buffer.slice(0, idx)
-          buffer = buffer.slice(idx + 2)
-          for (const line of frame.split('\n')) {
-            if (!line.startsWith('data: ')) continue
-            const data = line.slice(6)
-            if (data === '') continue
-            let payload: unknown
-            try { payload = JSON.parse(data) } catch { continue }
-            onFrame(payload as StreamFrame)
-          }
-        }
-      }
-      buffer += decoder.decode()
-
-      if (!sawTerminal) {
-        if (controller.signal.aborted) throw new Error('stopped')
-        throw new Error('响应流意外结束')
-      }
-    } catch (error) {
-      if (controller.signal.aborted) {
-        finish('error', '已停止优化')
-      } else {
-        finish('error', `失败：${error instanceof Error ? error.message : String(error)}`)
-      }
-    } finally {
-      if (abortRef.current === controller) abortRef.current = null
-      if (reader !== null) reader.cancel().catch(() => {})
-    }
-  }
-
-  /** 点选某个候选：写回草稿并滑出关闭卡片。 */
-  const pickCandidate = (text: string): void => {
-    inputActions.setDraft(text)
-    lastWrittenRef.current = text
-    closeMultiCard()
-  }
-
-  /** 滑出并关闭多轮候选卡片（播完动画再卸载）。 */
-  const closeMultiCard = (): void => {
-    if (closing) return
-    setClosing(true)
-    window.setTimeout(() => {
-      setClosing(false)
-      // 仅在仍处于候选展示态时收起；若滑出期间用户又触发了优化，不打断新流程。
-      setPhase(prev => prev === 'multi' ? 'idle' : prev)
-      setCandidates([])
-      setDetail('')
-    }, 150)
-  }
-
-  const panelVisible = hovered || phase !== 'idle'
-  const statusClass = phase === 'optimizing' ? css.statusOptimizing
-    : phase === 'done' ? css.statusDone
-      : phase === 'error' ? css.statusError
-        : undefined
+  // 生成中按「流式预览」规则清洗（半截围栏也能剥掉开场白），最终以 result 为准。
+  const preview = result !== '' ? result : (streamed === '' ? '' : (previewOptimized(streamed) || streamed))
+  const position = panelStyle(anchor)
 
   return (
-    <div
-      className={css.root}
-      onMouseEnter={showPanel}
-      onMouseLeave={scheduleHide}
-    >
+    <div className={css.root} ref={rootRef}>
       <button
         type="button"
-        className={css.trigger}
-        aria-label="自动优化提示词"
-        title="自动优化提示词"
-        disabled={busy}
-        onClick={() => { void optimize() }}
+        className={clsx(css.trigger, open && css.triggerActive)}
+        aria-label="优化提示词"
+        aria-expanded={open}
+        title="优化提示词"
+        onClick={() => { if (open) closePanel(); else openPanel() }}
       >
-        {busy ? <IconLoadingOutline16 className={css.busy} /> : <IconSparkle16 />}
+        {busy ? <IconLoadingOutline16 className={css.spin} /> : <IconSparkle16 />}
       </button>
 
-      {panelVisible && phase !== 'multi' && (
+      {open && createPortal(
         <div
-          className={`${css.panel} dsh-glass-anim-in`}
-          role="group"
-          aria-label="提示词优化面板"
-          onMouseEnter={showPanel}
-          onMouseLeave={scheduleHide}
+          className={css.panel}
+          data-closing={closing ? '1' : undefined}
+          style={position}
+          ref={panelRef}
+          role="dialog"
+          aria-label="优化提示词"
         >
-          <div className={css.panelTitle}>优化提示词</div>
-          <div className={css.caption}>用 {modelName} 优化当前草稿</div>
-          <div className={css.options}>
-            <div className={css.option}>
-              <span className={css.optionLabel}>多轮优化</span>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={multiRound}
-                aria-label="多轮优化"
-                className={clsx(css.switch, multiRound && css.switchOn)}
-                onClick={toggleMulti}
-              >
-                <span className={clsx(css.knob, multiRound && css.knobOn)} />
-              </button>
+          <div className={css.head}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div className={css.title}>优化提示词</div>
+              <div className={css.sub}>{`用 ${modelName} 改写当前草稿`}</div>
             </div>
-            <div className={css.option}>
-              <span className={css.optionLabel}>设定目标</span>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={setTarget}
-                aria-label="设定目标提示词"
-                className={clsx(css.switch, setTarget && css.switchOn)}
-                onClick={toggleTarget}
-              >
-                <span className={clsx(css.knob, setTarget && css.knobOn)} />
-              </button>
-            </div>
-            <div className={css.option}>
-              <span className={css.optionLabel}>浏览器验证</span>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={verifyWithBrowser}
-                aria-label="使用 AI 浏览器验证"
-                className={clsx(css.switch, verifyWithBrowser && css.switchOn)}
-                onClick={toggleVerify}
-              >
-                <span className={clsx(css.knob, verifyWithBrowser && css.knobOn)} />
-              </button>
-            </div>
-          </div>
-          <div className={clsx(css.status, statusClass)}>
-            {phase === 'optimizing' && <IconLoadingOutline16 className={css.busy} />}
-            <span>{phase === 'idle' ? (multiRound ? '点击生成多个候选' : '点击用当前模型优化') : detail}</span>
-          </div>
-          {busy && (
-            <button type="button" className={css.stop} onClick={stop}>
-              停止优化
+            <button type="button" className={css.close} aria-label="关闭" onClick={closePanel}>
+              <IconCloseOutline16 />
             </button>
-          )}
-        </div>
-      )}
+          </div>
 
-      {phase === 'multi' && createPortal(
-        <div
-          className={clsx(css.panel, css.panelMulti, closing ? css.panelClosing : 'dsh-glass-anim-in')}
-          role="group"
-          aria-label="多轮优化候选"
-        >
-          <div className={css.multiBody}>
-            <div className={css.panelTitle}>多轮优化候选 · 第 {round} 轮</div>
-            <div className={css.caption}>点选任意候选即可写入对话框，再点优化进入下一轮；顶部「原话」始终保留你最初写的内容。</div>
-            <div className={css.sourceBlock}>
-              <div className={css.sourceLabel}>原话</div>
-              <div className={css.sourceText}>{sourceText}</div>
-            </div>
-            <div className={css.candidates}>
-              {candidates.map((text, index) => text.trim() === '' ? null : (
+          <div className={css.section}>
+            <div className={css.chips} role="group" aria-label="优化风格">
+              {STYLES.map(item => (
                 <button
-                  key={index}
+                  key={item.id}
                   type="button"
-                  className={css.candidate}
-                  onClick={() => { pickCandidate(text) }}
+                  className={clsx(css.chip, style === item.id && css.chipOn)}
+                  aria-pressed={style === item.id}
+                  title={item.hint}
+                  disabled={source === ''}
+                  onClick={() => { pickStyle(item.id) }}
                 >
-                  <span className={css.candidateHead}>
-                    <span className={css.candidateLabel}>{CANDIDATE_LABELS[index] ?? `候选 ${String(index + 1)}`}</span>
-                    {index === 0 && <span className={css.recommendBadge}>推荐</span>}
-                  </span>
-                  <span className={css.candidateText}>{text}</span>
+                  {item.label}
                 </button>
               ))}
             </div>
-            <button type="button" className={css.closeCard} onClick={closeMultiCard}>
-              关闭
+          </div>
+
+          {source !== '' && (
+            <div className={css.section}>
+              <div className={css.sectionLabel}>原文</div>
+              <div className={css.source}>{source}</div>
+            </div>
+          )}
+
+          <div className={css.section}>
+            <div className={css.sectionLabel}>优化结果</div>
+            <div className={clsx(css.result, preview === '' && css.empty)}>
+              {preview === ''
+                ? (busy ? '正在生成…' : '暂无结果')
+                : <>{preview}{busy && <span className={css.caret} />}</>}
+            </div>
+          </div>
+
+          <div className={clsx(css.status, busy && css.statusBusy, error !== '' && css.statusError)}>
+            {busy && <IconLoadingOutline16 className={css.spin} />}
+            <span>
+              {error !== ''
+                ? error
+                : busy
+                  ? '正在优化…'
+                  : result !== ''
+                    ? `已生成 ${String(result.length)} 字${elapsed === '' ? '' : ` · ${elapsed}`}`
+                    : '选择风格后点「重新优化」'}
+            </span>
+          </div>
+
+          <div className={css.optionRow}>
+            <span className={css.optionLabel}>应用时设为长任务目标（/goal）</span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={setTarget}
+              aria-label="应用时设为长任务目标"
+              className={clsx(css.switch, setTarget && css.switchOn)}
+              onClick={toggleTarget}
+            >
+              <span className={clsx(css.knob, setTarget && css.knobOn)} />
+            </button>
+          </div>
+
+          <div className={css.actions}>
+            {busy ? (
+              <button type="button" className={clsx(css.btn, css.btnDanger)} onClick={stop}>
+                停止
+              </button>
+            ) : (
+              <button
+                type="button"
+                className={clsx(css.btn, css.btnGhost)}
+                disabled={source === ''}
+                onClick={() => { void run(source, style) }}
+              >
+                <IconRefreshOutline14 />
+                重新优化
+              </button>
+            )}
+            <button
+              type="button"
+              className={clsx(css.btn, css.btnPrimary)}
+              disabled={result === '' || busy}
+              onClick={apply}
+            >
+              应用到输入框
             </button>
           </div>
         </div>,

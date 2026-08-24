@@ -46,17 +46,32 @@ export declare function listPageTargets(conn: CdpConnection): Promise<CdpTarget[
 export declare function createPageSession(conn: CdpConnection, url?: string): Promise<CdpSession>;
 /** attach 已有 target */
 export declare function attachTarget(conn: CdpConnection, targetId: string): Promise<CdpSession>;
-/** 等网络空闲：连续 idleMs 无新请求，最多额外等 extraMs */
+/**
+ * 等网络空闲：连续 idleMs 无请求变动且无短请求在途，最多额外等 extraMs。
+ * 按 requestId 记账（旧实现用计数器，事件丢一次就永远不归零）。
+ */
 export declare function waitForNetworkIdle(session: CdpSession, idleMs?: number, extraMs?: number): Promise<void>;
 /**
  * 等页面就绪：先轮询 document.readyState 直到 complete（兼容初次导航与
  * 操作触发的二次导航），再等网络空闲。返回时页面已可稳定 snapshot。
  */
-export declare function waitForPageReady(session: CdpSession, timeoutMs?: number): Promise<void>;
+export declare function waitForPageReady(session: CdpSession, timeoutMs?: number, skipNetworkIdle?: boolean): Promise<void>;
 /**
  * 导航到 URL 并等待页面就绪（load + 网络空闲）。
  */
 export declare function navigateAndWait(session: CdpSession, url: string, timeoutMs?: number): Promise<{
+    url: string;
+    title: string;
+}>;
+/** 重新加载当前页（ignoreCache=true 相当于 Ctrl+Shift+R）。 */
+export declare function reloadPage(session: CdpSession, ignoreCache?: boolean): Promise<{
+    url: string;
+    title: string;
+}>;
+/** 当前页的历史可用性（供 UI 置灰前进/后退按钮）。 */
+export declare function navigationState(session: CdpSession): Promise<{
+    canBack: boolean;
+    canForward: boolean;
     url: string;
     title: string;
 }>;

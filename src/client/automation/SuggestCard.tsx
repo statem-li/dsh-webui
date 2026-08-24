@@ -1,16 +1,18 @@
 /**
- * automation — AI 建议确认卡（openhanako CronConfirmBlock 同款流程）。
+ * automation — AI 建议确认卡。
  *
  * Agent 通过 automation 工具 create/update 时生成待确认建议；本卡展示建议
- * 概要，展开后用户可修改名称 / 计划 / 执行内容再应用；拒绝则丢弃。
+ * 概要，展开后用户可修改名称 / 计划 / 执行内容再应用；忽略则丢弃。
+ * 计划非法（如模型给了错的 cron）时禁用「确认」并就地说明原因。
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { SuggestionView } from './types.ts'
 import {
   scheduleDraftFromStored,
   schedulePreviewFromDraft,
   storedScheduleFromDraft,
+  validateDraft,
   type ScheduleDraft,
 } from './schedule-draft.ts'
 import { applySuggestion, dismissSuggestion } from './api.ts'
@@ -39,8 +41,16 @@ export function SuggestCard({ suggestion, onDone, onError }: {
     setPrompt(typeof data.prompt === 'string' ? data.prompt : '')
   }, [suggestion])
 
-  const preview = schedulePreviewFromDraft(scheduleDraftFromStored(suggestion.jobData.type, suggestion.jobData.schedule))
-  const expiringSoon = suggestion.expiresAt - Date.now() < 3 * 60_000
+  const preview = useMemo(
+    () => schedulePreviewFromDraft(scheduleDraftFromStored(suggestion.jobData.type, suggestion.jobData.schedule)),
+    [suggestion.jobData.type, suggestion.jobData.schedule],
+  )
+  const scheduleError = useMemo(() => validateDraft(draft), [draft])
+  const minutesLeft = Math.max(0, Math.round((suggestion.expiresAt - Date.now()) / 60_000))
+  const expiringSoon = minutesLeft <= 3
+  const title = (typeof suggestion.jobData.label === 'string' && suggestion.jobData.label !== '')
+    ? suggestion.jobData.label
+    : preview
 
   const apply = async (): Promise<void> => {
     if (busy) return
@@ -48,16 +58,21 @@ export function SuggestCard({ suggestion, onDone, onError }: {
       onError(t('promptRequired'))
       return
     }
+    if (scheduleError !== null) {
+      onError(scheduleError)
+      return
+    }
     setBusy(true)
     try {
       const stored = storedScheduleFromDraft(draft)
+      const finalLabel = label.trim() !== '' ? label.trim() : prompt.trim().slice(0, 40)
       await applySuggestion(suggestion.suggestionId, {
         type: stored.type,
         schedule: stored.schedule,
         prompt,
-        label: label.trim() !== '' ? label.trim() : (prompt.slice(0, 40)),
+        label: finalLabel,
       })
-      onDone(label.trim() !== '' ? label.trim() : prompt.slice(0, 30))
+      onDone(finalLabel)
     } catch (error) {
       onError(`${t('suggestApplyFailed')}：${error instanceof Error ? error.message : String(error)}`)
     } finally {
@@ -81,11 +96,13 @@ export function SuggestCard({ suggestion, onDone, onError }: {
   return (
     <div className="auto-suggest">
       <div className="auto-suggest-head">
-        <span className="auto-suggest-kind">{suggestion.operation === 'update' ? t('suggestUpdate') : t('suggestCreate')}</span>
-        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-          {(typeof suggestion.jobData.label === 'string' && suggestion.jobData.label !== '') ? suggestion.jobData.label : preview}
+        <span className="auto-suggest-kind">
+          {suggestion.operation === 'update' ? t('suggestUpdate') : t('suggestCreate')}
         </span>
-        {expiringSoon ? <span className="auto-suggest-kind" style={{ color: 'var(--dsw-alias-state-error-primary,#e0434b)', borderColor: 'var(--dsw-alias-state-error-primary,#e0434b)' }}>{t('suggestExpireSoon')}</span> : null}
+        <span className="auto-suggest-title" title={title}>{title}</span>
+        <span className="auto-badge" data-tone={expiringSoon ? 'error' : 'warn'}>
+          {expiringSoon ? t('suggestExpireSoon') : t('suggestExpiresIn', { n: minutesLeft })}
+        </span>
       </div>
 
       {!open ? (
@@ -104,22 +121,42 @@ export function SuggestCard({ suggestion, onDone, onError }: {
           </div>
         </>
       ) : (
-        <div className="auto-editor" style={{ margin: 0, padding: '10px 12px' }}>
+        <div className="auto-editor" style={{ margin: 0 }}>
           <label className="auto-field">
             <span>{t('fieldLabel')}</span>
-            <input className="auto-input" value={label} spellCheck={false} onChange={event => setLabel(event.target.value)} />
+            <input
+              className="auto-input"
+              value={label}
+              spellCheck={false}
+              placeholder={t('labelPlaceholder')}
+              onChange={event => setLabel(event.target.value)}
+            />
           </label>
           <ScheduleEditor draft={draft} onChange={setDraft} />
           <label className="auto-field">
             <span>{t('fieldPrompt')}</span>
-            <textarea className="auto-textarea" value={prompt} spellCheck={false} onChange={event => setPrompt(event.target.value)} />
+            <textarea
+              className="auto-textarea"
+              value={prompt}
+              placeholder={t('promptPlaceholder')}
+              spellCheck={false}
+              onChange={event => setPrompt(event.target.value)}
+            />
           </label>
           <div className="auto-suggest-actions">
-            <button type="button" className="auto-btn auto-btn-primary" disabled={busy} onClick={() => void apply()}>
+            <button
+              type="button"
+              className="auto-btn auto-btn-primary"
+              disabled={busy || scheduleError !== null || prompt.trim() === ''}
+              onClick={() => void apply()}
+            >
               {suggestion.operation === 'update' ? t('suggestConfirmUpdate') : t('suggestConfirmCreate')}
             </button>
             <button type="button" className="auto-btn" disabled={busy} onClick={() => setOpen(false)}>
               {t('cancel')}
+            </button>
+            <button type="button" className="auto-btn auto-btn-danger auto-spacer" disabled={busy} onClick={() => void reject()}>
+              {t('suggestReject')}
             </button>
           </div>
         </div>

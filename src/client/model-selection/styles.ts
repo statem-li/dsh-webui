@@ -43,9 +43,14 @@ export const css = {
   effPanelTitle: 'webui-eff-panel-title',
   effPanelValue: 'webui-eff-panel-value',
   effSlider: 'webui-eff-slider',
-  effTrack: 'webui-eff-track',
-  effFill: 'webui-eff-fill',
+  effSliderDrag: 'webui-eff-slider-drag',
+  effTicks: 'webui-eff-ticks',
+  effTick: 'webui-eff-tick',
+  effTickOn: 'webui-eff-tick-on',
+  effTickAt: 'webui-eff-tick-at',
   effThumb: 'webui-eff-thumb',
+  effThumbCore: 'webui-eff-thumb-core',
+  effThumbRing: 'webui-eff-thumb-ring',
   effThumbGlow: 'webui-eff-thumb-glow',
   effCanvas: 'webui-eff-canvas',
   effLabels: 'webui-eff-labels',
@@ -88,30 +93,58 @@ const SHEET = `
 .webui-ms-description{overflow:hidden;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px;text-overflow:ellipsis;white-space:nowrap}
 .webui-ms-check{display:grid;place-items:center;flex:0 0 18px;color:var(--dsw-alias-label-primary)}
 
-/* ---- 推理等级滑动式弹出 ---- */
+/* ---- 推理等级滑动式弹出 ----
+ * 视觉：无轨道长条。整块「星空极光」画布本身就是滑杆——极光带铺到当前
+ * 档位处，星尘细小闪烁；档位靠刻度点 + 档位名标识，滑块是一颗亮星。
+ * 色相随档位跨度大（青绿 → 品红紫），一眼能看出等级差异。
+ * 动效在 prefers-reduced-motion 下降级为无动画。 */
 .webui-eff-root{position:relative;min-width:0}
-.webui-eff-trigger{display:inline-flex;align-items:center;height:28px;padding:0 6px;border:none;background:transparent;color:var(--dsw-alias-label-caption,#9aa0a8);font-size:13px;line-height:20px;white-space:nowrap;cursor:pointer}
+.webui-eff-trigger{display:inline-flex;align-items:center;height:28px;padding:0 8px;border:none;border-radius:14px;background:transparent;color:var(--dsw-alias-label-caption,#9aa0a8);font-size:12px;line-height:20px;white-space:nowrap;cursor:pointer;transition:color 140ms ease,background-color 140ms ease}
 .webui-eff-trigger:hover:not(:disabled){color:var(--dsw-alias-label-primary,#ddd);background:var(--dsw-alias-interactive-bg-hover)}
+.webui-eff-trigger[aria-expanded="true"]{color:var(--dsw-alias-label-primary,#ddd)}
 .webui-eff-trigger:disabled{opacity:.5;cursor:default}
 .webui-eff-label{max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.webui-eff-panel{position:absolute;right:0;bottom:calc(100% + 10px);z-index:20;width:min(320px,calc(100vw - 32px));padding:14px 16px 12px;border:1px solid var(--dsw-alias-border-inverted);border-radius:16px;background:var(--dsw-specific-menu,var(--dsw-alias-bg-layer-2,#16181d));box-shadow:var(--dsw-shadow-lv3);color:var(--dsw-alias-label-primary);animation:webui-eff-slide-in 180ms cubic-bezier(.2,.8,.2,1)}
+.webui-eff-panel{position:absolute;right:0;bottom:calc(100% + 10px);z-index:20;width:min(340px,calc(100vw - 32px));padding:12px 14px 10px;border:1px solid var(--dsw-alias-border-inverted);border-radius:14px;background:var(--dsw-specific-menu,var(--dsw-alias-bg-layer-2,#16181d));box-shadow:var(--dsw-shadow-lv3);color:var(--dsw-alias-label-primary);animation:webui-eff-rise 160ms cubic-bezier(.2,.9,.25,1);transform-origin:100% 100%}
 /* 透明桥接：覆盖面板与按钮之间的间隙，鼠标从按钮移入面板时不中断 hover。 */
 .webui-eff-panel::before{content:'';position:absolute;left:0;right:0;bottom:-10px;height:10px}
-@keyframes webui-eff-slide-in{from{opacity:0;transform:translateY(8px) scale(.98)}to{opacity:1;transform:none}}
-.webui-eff-panel-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:12px}
-.webui-eff-panel-title{font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary,#ddd)}
-.webui-eff-panel-value{font-size:12px;color:var(--dsw-alias-label-caption,#888)}
-.webui-eff-slider{position:relative;height:40px;display:flex;align-items:center;cursor:pointer;touch-action:none;user-select:none}
-.webui-eff-track{position:absolute;left:10px;right:10px;top:50%;transform:translateY(-50%);height:8px;border-radius:4px;background:var(--dsw-alias-border-l1,#3a414b)}
-.webui-eff-fill{position:absolute;left:10px;top:50%;transform:translateY(-50%);height:8px;border-radius:4px 0 0 4px;background:linear-gradient(90deg,#3b82f6 0%,#8b5cf6 42%,#ec4899 74%,#f97316 100%);pointer-events:none;box-shadow:0 0 10px color-mix(in srgb,var(--eff-dot-color,#f97316) 35%,transparent);transition:width 80ms ease-out}
-.webui-eff-thumb{position:absolute;top:50%;transform:translate(-50%,-50%);width:22px;height:22px;border-radius:50%;background:radial-gradient(circle at 32% 28%,#fff 0%,color-mix(in srgb,var(--eff-dot-color,#4a9eff) 92%,#fff) 26%,var(--eff-dot-color,#4a9eff) 62%);box-shadow:0 0 0 3px var(--dsw-specific-menu,#16181d),0 0 16px color-mix(in srgb,var(--eff-dot-color,#4a9eff) 75%,transparent),0 2px 6px rgba(0,0,0,.45);pointer-events:none;transition:left 80ms ease-out}
-.webui-eff-thumb-glow{position:absolute;inset:-8px;border-radius:50%;background:radial-gradient(circle,color-mix(in srgb,var(--eff-dot-color,#4a9eff) 45%,transparent),transparent 70%);filter:blur(3px)}
-.webui-eff-canvas{position:absolute;inset:-6px -4px;width:calc(100% + 8px);height:calc(100% + 12px);pointer-events:none}
-.webui-eff-labels{display:flex;justify-content:space-between;gap:4px;margin-top:8px}
-.webui-eff-labels-item{flex:1;min-width:0;text-align:center;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary,#888);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.webui-eff-labels-item-on{color:var(--dsw-alias-label-primary,#eee);font-weight:600}
-.webui-eff-empty{padding:10px;color:var(--dsw-alias-label-tertiary);font-size:12px;text-align:center}
+@keyframes webui-eff-rise{from{opacity:0;transform:translateY(6px) scale(.97)}to{opacity:1;transform:none}}
+.webui-eff-panel-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:2px}
+.webui-eff-panel-title{font-size:12px;font-weight:600;letter-spacing:.02em;color:var(--dsw-alias-label-secondary,#bbb)}
+.webui-eff-panel-value{font-size:12px;font-weight:600;color:var(--eff-accent,var(--dsw-alias-state-business-primary));animation:webui-eff-value-in 200ms cubic-bezier(.2,.9,.25,1)}
+@keyframes webui-eff-value-in{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:none}}
+
+/* 滑杆本体完全透明：无底色面、无描边、无进度纱 —— 只有画布里的光尘。 */
+.webui-eff-slider{position:relative;height:48px;display:flex;align-items:center;cursor:pointer;touch-action:none;user-select:none;border-radius:12px;background:transparent;transition:transform 180ms cubic-bezier(.2,.9,.25,1)}
+.webui-eff-slider:focus-visible{outline:none;box-shadow:0 0 0 2px color-mix(in srgb,var(--eff-accent,#679efe) 35%,transparent)}
+.webui-eff-slider-drag{transform:scale(1.012)}
+.webui-eff-canvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+
+/* 刻度点：极细小的星点标记档位，已越过的点跟随主色亮起。 */
+.webui-eff-ticks{position:absolute;left:10px;right:10px;top:50%;height:0;pointer-events:none}
+.webui-eff-tick{position:absolute;top:0;width:3px;height:3px;margin:-1.5px 0 0 -1.5px;border-radius:50%;background:var(--dsw-alias-label-dimmed,#5a616b);transition:background-color 220ms ease,transform 220ms cubic-bezier(.22,1.2,.36,1),opacity 220ms ease;opacity:.75}
+.webui-eff-tick-on{background:var(--eff-accent,#679efe);opacity:1;box-shadow:0 0 6px color-mix(in srgb,var(--eff-accent,#679efe) 50%,transparent)}
+.webui-eff-tick-at{opacity:0}
+
+/* 滑块 = 一颗亮星：白核 + 主色光晕 + 呼吸光环（--eff-pulse 由 JS 给周期）。 */
+.webui-eff-thumb{position:absolute;top:50%;width:12px;height:12px;margin:-6px 0 0 -6px;pointer-events:none;transition:left 300ms cubic-bezier(.22,1.2,.36,1),transform 180ms cubic-bezier(.22,1.2,.36,1)}
+.webui-eff-slider-drag .webui-eff-thumb{transform:scale(1.15)}
+.webui-eff-thumb-core{position:absolute;inset:2.5px;border-radius:50%;background:var(--eff-accent,#679efe);box-shadow:0 0 0 2px var(--dsw-alias-bg-layer-1,#fff),0 0 10px 1px color-mix(in srgb,var(--eff-accent,#679efe) 65%,transparent)}
+.webui-eff-thumb-ring{position:absolute;inset:0;border-radius:50%;border:1px solid color-mix(in srgb,var(--eff-accent,#679efe) 65%,transparent);animation:webui-eff-pulse var(--eff-pulse,1.6s) ease-out infinite}
+@keyframes webui-eff-pulse{0%{transform:scale(.9);opacity:.6}70%{transform:scale(2.4);opacity:0}100%{transform:scale(2.4);opacity:0}}
+.webui-eff-thumb-glow{position:absolute;inset:-10px;border-radius:50%;background:radial-gradient(circle,color-mix(in srgb,var(--eff-accent,#679efe) 34%,transparent),transparent 70%)}
+
+.webui-eff-labels{display:flex;justify-content:space-between;gap:4px;margin-top:0}
+.webui-eff-labels-item{flex:1;min-width:0;text-align:center;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary,#888);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;transition:color 200ms ease,transform 200ms cubic-bezier(.22,1.2,.36,1);cursor:pointer}
+.webui-eff-labels-item:hover{color:var(--dsw-alias-label-secondary,#bbb)}
+.webui-eff-labels-item-on{color:var(--dsw-alias-label-primary,#eee);font-weight:600;transform:scale(1.04)}
+.webui-eff-empty{margin-top:4px;padding:6px 2px 2px;color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:16px;text-align:center;animation:webui-eff-value-in 220ms cubic-bezier(.2,.9,.25,1)}
 .webui-eff-busy{opacity:.55;pointer-events:none}
+
+@media (prefers-reduced-motion: reduce){
+  .webui-eff-panel,.webui-eff-panel-value,.webui-eff-empty{animation:none}
+  .webui-eff-thumb-ring{animation:none}
+  .webui-eff-thumb,.webui-eff-tick,.webui-eff-labels-item,.webui-eff-slider{transition:none}
+}
 `
 
 let injected = false
@@ -129,14 +162,19 @@ export function ensureStyles(): void {
   injected = true
 }
 
-/** 计算第 i 档（共 n 档）的色相：低等级冷色 → 高等级暖色。 */
+/**
+ * 档位色相：品牌蓝 → 靛紫（deepseek 品牌色家族内的窄带，等级差异可辨，
+ * 又不会跳出 DSH 主题；柔光雾沿轨道从 212° 渐变到当前档位色）。
+ * @param i - 档位序号。
+ * @param n - 档位总数。
+ */
 export function effortHue(i: number, n: number): number {
-  if (n <= 1) return 210
-  const t = i / (n - 1)
-  return Math.round(215 - t * 200) // 215(蓝) → 15(橙红)
+  if (n <= 1) return 212
+  const t = Math.min(1, Math.max(0, i / (n - 1)))
+  return Math.round(212 + t * 54) // 212(品牌蓝) → 266(靛紫)
 }
 
-/** 色相 → 明亮主色（供 thumb / dot / 粒子共用）。 */
+/** 色相 → 强调色（滑块 / 填充带 / 光点共用）。 */
 export function hueColor(hue: number): string {
-  return `hsl(${hue} 92% 58%)`
+  return `hsl(${hue} 88% 60%)`
 }

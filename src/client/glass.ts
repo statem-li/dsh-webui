@@ -105,8 +105,13 @@ export function getGlassOpacity(): number {
  * 以及 composer 弹层的内部元素 webui-eff-panel-head / webui-po-panel-title
  * 等）都含 "panel" 子串，被子串匹配命中会出现「标题行带包裹底色」「贴右缘
  * 隐形毛玻璃卡」等事故；它们的模糊由专属规则提供。
+ * ⚠ 同理排除活动弹窗的内部元素（dts__modal-head / -scroll / -panel /
+ * -title / -reasoning-* 以及 dts__drawer-call）——它们含 modal/panel/drawer
+ * 子串，被命中会各自套上一圈白色内高光描边与多余模糊层（标题行、计数胶囊、
+ * 每条思考小卡都描一道白边）。弹窗本体 .dts__modal 仍被命中，模糊照旧。
  */
-const PANELS_SELECTOR = ':is([class*="panel"], [class*="modal"], [class*="drawer"]):not([class*="mask"]):not([class*="webui-"])'
+const DTS_INNER = ':not([class*="dts__modal-"]):not([class*="dts__drawer-"])'
+const PANELS_SELECTOR = ':is([class*="panel"], [class*="modal"], [class*="drawer"]):not([class*="mask"]):not([class*="webui-"])' + DTS_INNER
 
 function buildGlassCss(): string {
   return `
@@ -194,7 +199,7 @@ html[${GLASS_ATTRIBUTE}] :is(
     [class*="skm-bundle"],
     [class*="auto-panel"],
     [class*="auto-modal"]:not([class*="mask"]),
-    [class*="dsh-browser-sites__panel"],
+    [class*="dsh-browser-sites__editor"],
     [class*="dsh-modal-slide-in"],
     [class*="dsh-modal-side-in"]) {
   background-color: transparent;
@@ -234,18 +239,29 @@ html[${GLASS_ATTRIBUTE}] :is(
     background-image: linear-gradient(rgba(28,29,31,.85), rgba(28,29,31,.85));
   }
 }
-/* done-pill 悬停滑出的任务/完成记录面板：标准毛玻璃——半透明纱 + 高斯模糊
- * （仅悬停时 visibility 可见，不存在常驻磨砂问题；inline .94 实色需 !important
- * 覆盖。注意：不做「全透明 + blur」——那会变成无实体的隐形磨砂区，实测怪异） */
-html[${GLASS_ATTRIBUTE}] [role="dialog"][aria-label*="任务"],
-html[${GLASS_ATTRIBUTE}] [role="dialog"][aria-label*="完成记录"] {
-  background-color: rgba(22,23,28,.55) !important;
+/* done-pill（胶囊本体 + 悬停滑出的任务/完成记录面板）：标准毛玻璃——
+ * 半透明纱 + 高斯模糊。
+ * 底色改走胶囊自己的 --dpl-* 变量（done-pill.tsx 注入的样式表定义，深浅两套），
+ * 不再用 background-color !important 硬覆盖——原先面板底色写在内联样式里才
+ * 需要 !important，现已收敛成变量，直接改变量更干净、且未读/hover 等状态
+ * 规则仍能正常叠加。
+ * 注意：不做「全透明 + blur」——那会变成无实体的隐形磨砂区，实测怪异。
+ * backdrop-filter 直加在浮层本体上是安全的（面板/胶囊内部无 position:fixed
+ * 后代，滑出面板是 absolute），不违反「布局列容器禁止 backdrop-filter」铁律。 */
+html[${GLASS_ATTRIBUTE}] .dsh-done-pill {
+  --dpl-surface: rgba(255,255,255,.42);
+  --dpl-surface-hover: rgba(255,255,255,.58);
+  --dpl-panel-bg: rgba(255,255,255,.62);
+}
+html[${GLASS_ATTRIBUTE}] body[data-ds-dark-theme] .dsh-done-pill {
+  --dpl-surface: rgba(22,23,28,.42);
+  --dpl-surface-hover: rgba(22,23,28,.56);
+  --dpl-panel-bg: rgba(22,23,28,.55);
+}
+html[${GLASS_ATTRIBUTE}] .dsh-done-pill-shell,
+html[${GLASS_ATTRIBUTE}] .dsh-done-pill [role="dialog"] {
   backdrop-filter: var(--dsh-glass-blur);
   -webkit-backdrop-filter: var(--dsh-glass-blur);
-}
-html[${GLASS_ATTRIBUTE}] body:not([data-ds-dark-theme]) [role="dialog"][aria-label*="任务"],
-html[${GLASS_ATTRIBUTE}] body:not([data-ds-dark-theme]) [role="dialog"][aria-label*="完成记录"] {
-  background-color: rgba(255,255,255,.62) !important;
 }
 html[${GLASS_ATTRIBUTE}] [class*="dsh-peak-card"] {
   backdrop-filter: var(--dsh-glass-blur);
@@ -347,6 +363,50 @@ html[${GLASS_ATTRIBUTE}] body:not([data-ds-dark-theme]) [class*="webui-popup"] {
   from { opacity: 0; transform: translateY(-10px); }
   to { opacity: 1; transform: translateY(0); }
 }
+/* ===== 对话流内的思考 / 工具 UI（chip・卡片・活动弹窗）================
+ * 三条原则：
+ *  1. 表面纱统一由 --dsh-flow-veil 提供（tool-summary/styles.ts 与
+ *     markdown/styles.css 里的所有内部填充面都读这个变量，缺省是「跟随文字
+ *     色的 4~5% 中性纱」）。玻璃开启时换成磨砂白纱，让壁纸透出来的同时
+ *     文字对比度不掉。
+ *  2. chip 与对话流内的卡片一律不加 backdrop-filter：长会话里每轮都有思考
+ *     chip + 工具 chip + 可能的下载卡，成百个模糊面会拖垮滚动性能；它们靠
+ *     半透明纱 + 描边已经足够「浮」在壁纸上。
+ *  3. 活动弹窗本体 .dts__modal 由浮层总选择器统一加模糊（内部元素被
+ *     DTS_INNER 排除，不会各自描一圈白边）；遮罩 .dts__modal-mask 自带官方
+ *     配方的模糊，也在总选择器之外。 */
+html[${GLASS_ATTRIBUTE}] {
+  --dsh-flow-veil: rgba(255,255,255,.40);
+}
+html[${GLASS_ATTRIBUTE}]:has(body[data-ds-dark-theme]) {
+  --dsh-flow-veil: rgba(255,255,255,.07);
+}
+/* chip 表面/描边：只改这两个变量（chip 规则内部引用它们），运行态的强调色
+ * 底叠在变量表面之上，不会被覆盖掉。 */
+html[${GLASS_ATTRIBUTE}] .dts__entry-wrap {
+  --dts-chip-surface: rgba(255,255,255,.34);
+  --dts-chip-border: rgba(255,255,255,.55);
+}
+html[${GLASS_ATTRIBUTE}] .dsh-better-markdown__reasoning-entry {
+  --dsh-rea-surface: rgba(255,255,255,.34);
+  --dsh-rea-border: rgba(255,255,255,.55);
+}
+html[${GLASS_ATTRIBUTE}] body[data-ds-dark-theme] .dts__entry-wrap {
+  --dts-chip-surface: rgba(255,255,255,.07);
+  --dts-chip-border: rgba(255,255,255,.18);
+}
+html[${GLASS_ATTRIBUTE}] body[data-ds-dark-theme] .dsh-better-markdown__reasoning-entry {
+  --dsh-rea-surface: rgba(255,255,255,.07);
+  --dsh-rea-border: rgba(255,255,255,.18);
+}
+/* 活动弹窗：底色交还给毛玻璃（避免「模糊之上再蒙一层实色纱」），
+ * 模糊与高光投影由浮层总选择器提供。 */
+html[${GLASS_ATTRIBUTE}] .dts__modal {
+  background-color: rgba(255,255,255,.30);
+}
+html[${GLASS_ATTRIBUTE}] body[data-ds-dark-theme] .dts__modal {
+  background-color: rgba(22,23,28,.42);
+}
 /* ===== 指针辉光（仅玻璃质感开启期间存在）=====
  * Linear/Vercel 风格的「玻璃辉光」：指针落在某个浮层面板上时，该面板自身
  * 泛起一圈跟随指针移动的柔光（radial-gradient 直接叠在宿主 background 上，
@@ -392,7 +452,7 @@ function applyGlassDom(on: boolean): void {
 // 浮层面板内，就把辉光坐标（面板局部系）写到该元素的内联 CSS 变量上，并
 // 打 data-dsh-glow 标记点亮；离开即熄灭。不新增 DOM 层。
 
-const GLOW_TARGET_SELECTOR = ':is([class*="panel"], [class*="modal"], [class*="drawer"]):not([class*="mask"]):not([class*="webui-"])'
+const GLOW_TARGET_SELECTOR = PANELS_SELECTOR
 /** 辉光半径（与 CSS radial-gradient 的 260px circle 保持一致）。 */
 const GLOW_RADIUS = 260
 

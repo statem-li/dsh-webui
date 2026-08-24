@@ -13,6 +13,9 @@ import type {
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import { SHIKI_LANGUAGES } from './shiki.ts'
 import { activityBus } from './activity-bus.ts'
+import { DiagramBlock, isDiagramLang } from './diagram.tsx'
+import { MoodBlock, isMoodLang } from '../mood/MoodBlock.tsx'
+import { FlowCard, type ReplyCardMeta } from './flow-card.tsx'
 
 const CUSTOM_COMPONENT_SCOPE = 'dsh-better-markdown'
 
@@ -79,8 +82,18 @@ export function DshInlineCodeNode({ node, ctx }: NodeComponentProps<InlineCodeNo
   return <code>{node.code}</code>
 }
 
-/** Use Markstream's worker-free Shiki renderer for fenced code blocks. */
+/**
+ * Fenced code blocks. mermaid 围栏（及各图种关键字）走 DiagramBlock 渲染成图，
+ * 引擎按需加载（见 diagram.tsx）；`mood` 围栏走 MoodBlock 渲染成自述卡片
+ * （见 mood/MoodBlock.tsx）；其余语言仍走 Markstream 的 worker-free Shiki。
+ */
 export function DshCodeBlockNode({ node, ctx }: NodeComponentProps<CodeBlockNode>) {
+  if (isDiagramLang(node.language)) {
+    return <DiagramBlock node={node} isDark={ctx?.isDark ?? false} />
+  }
+  if (isMoodLang(node.language)) {
+    return <MoodBlock node={node} />
+  }
   return (
     <MarkdownCodeBlockNode
       node={node}
@@ -335,7 +348,7 @@ function ReasoningEntry({ items, running, t, turn, thinkingStart }: {
 
 type AssistantBlock = AssistantChatData['blocks'][number]
 
-function BetterAssistantMarkdown({ blocks, streaming, interrupted, loadImage, mentions, t, group, card }: {
+function BetterAssistantMarkdown({ blocks, streaming, interrupted, loadImage, mentions, t, group, card, cardMeta }: {
   blocks: readonly AssistantBlock[]
   streaming: boolean
   interrupted?: boolean | undefined
@@ -344,8 +357,13 @@ function BetterAssistantMarkdown({ blocks, streaming, interrupted, loadImage, me
   t: ChatViewSlotProps['t']
   /** Optional content rendered above the message body (the reasoning group). */
   group?: ReactNode | undefined
-  /** Whether to wrap the rendered content in a card (finalized replies only). */
-  card?: boolean | undefined
+  /**
+   * 卡片形态：'reply' = 回合最终回复（带总结头部与统计 chip），
+   * 'step' = 回合中间步骤（轻量竖线卡），undefined = 不包卡（流式中）。
+   */
+  card?: 'reply' | 'step' | undefined
+  /** 总结卡头部的本轮统计（仅 card === 'reply' 时使用）。 */
+  cardMeta?: ReplyCardMeta | undefined
 }) {
   const imageLoader = loadImage ?? (() => Promise.reject(new Error(t('image.serviceUnavailable'))))
   const hasVisible = streaming || interrupted === true || blocks.some(block => block.kind !== 'tool-call')
@@ -416,8 +434,8 @@ function BetterAssistantMarkdown({ blocks, streaming, interrupted, loadImage, me
     <div className="dsh-better-markdown__root" data-streaming={streaming || undefined}>
       <div className="dsh-better-markdown__body">
         {group}
-        {rendered.length > 0 && (card
-          ? <div className="dsh-better-markdown__card">{rendered}</div>
+        {rendered.length > 0 && (card !== undefined
+          ? <FlowCard variant={card} meta={cardMeta} interrupted={interrupted}>{rendered}</FlowCard>
           : <>{rendered}</>)}
         {interrupted && <span className="dsh-better-markdown__stopped">{t('message.stopped')}</span>}
       </div>
@@ -482,19 +500,54 @@ export const BetterAssistantNodeView = memo(function BetterAssistantNodeView({
   const entry = isFirstStep && reasoningItems.length > 0
     ? <ReasoningEntry items={reasoningItems} running={turnRunning} turn={turnNumber as number} thinkingStart={thinkingStart} t={t} />
     : undefined
-  // Only the closing step of a closed turn is a real "reply" — the rest are
-  // intermediate fragments. Card-wrapping every finalized step looks noisy.
+
+  // 本轮工具调用次数与耗时：复用已有的会话投影（无新增订阅）。
+  const toolCount = useSession((snapshot) => {
+    if (turnNumber === undefined) return 0
+    let count = 0
+    for (const key of snapshot.chat.locations.getTurn(turnNumber)) {
+      if (snapshot.chat.nodes.get(key)?.kind === 'tool-call') count += 1
+    }
+    return count
+  })
+  const timing = useSession((snapshot) => {
+    if (turnNumber === undefined) return undefined
+    return snapshot.turnTimings.get(turnNumber)
+  })
+  const streaming = data.status === 'running'
+  const interrupted = data.status === 'interrupted'
+  // 回合最终回复 = 总结卡（带头部统计）；同一回合内其余已完成片段 = 轻量步骤卡；
+  // 仍在流式输出的片段不包卡（避免边框随文字增长不停重排）。
   const isClosingReply = owner !== undefined
+  // 中断的片段也当「收尾」用总结卡呈现（头部换成琥珀色「已中断」徽章），
+  // 否则中断回合最后只剩一张轻量步骤卡，看不出这一轮结束了。
+  const isSummary = isClosingReply || interrupted
+  const variant: 'reply' | 'step' | undefined = isSummary
+    ? 'reply'
+    : streaming ? undefined : 'step'
+  const cardMeta = useMemo<ReplyCardMeta | undefined>(() => {
+    if (!isSummary) return undefined
+    const start = timing?.startTime
+    const end = timing?.endTime
+    return {
+      durationMs: start !== undefined && end !== undefined ? Math.max(0, end - start) : undefined,
+      steps: steps.length,
+      tools: toolCount,
+      thinking: reasoningItems.length,
+    }
+  }, [isSummary, reasoningItems.length, steps.length, timing, toolCount])
+
   return (
     <BetterAssistantMarkdown
       blocks={visibleBlocks}
-      streaming={data.status === 'running'}
-      interrupted={data.status === 'interrupted'}
+      streaming={streaming}
+      interrupted={interrupted}
       loadImage={loadImage}
       mentions={mentions}
       t={t}
       group={entry}
-      card={isClosingReply}
+      card={variant}
+      cardMeta={cardMeta}
     />
   )
 })

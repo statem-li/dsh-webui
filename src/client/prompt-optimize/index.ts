@@ -2,11 +2,13 @@
  * webui — 提示词优化入口（client 半身）。
  *
  * 通过 `conversation.input.right` 槽位在供应商标签（ProviderBadge，order 10）
- * 左侧注册「自动优化提示词」图标（order 5）。数据走 host 半身已挂载的
+ * 左侧注册「优化提示词」图标（order 5）。数据走 host 半身已挂载的
  * /api/webui-prompt-optimize，模型选择读取与模型座位同源的 per-session
- * ModelDirectory。开关「设定目标」开启时，优化完成后直接把草稿写回为
- * `/goal <优化文本>` 命令，交由 DSH 既有 /goal 命令在用户发送后创建目标，
- * 零 DSH 源码改动。
+ * ModelDirectory。
+ *
+ * 结果不会自动改草稿：面板内预览 → 用户点「应用到输入框」才写回；开关
+ * 「设为长任务目标」开启时写成 `/goal <单行化优化文本>`，交由 DSH 既有
+ * /goal 命令在用户发送后创建目标，零 DSH 源码改动。
  */
 import type { ClientContext, SessionId } from '@deepseek-ai/dsh-client-runtime/client'
 // Type-only: 拉入 ui-conversation 的 SlotMap 合并声明（input.right 槽位契约）。

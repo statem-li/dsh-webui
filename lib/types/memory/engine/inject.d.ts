@@ -6,7 +6,7 @@
  * 命中刷新：被注入的条目距上次命中 ≥1 天时刷新 lastHitAt 并加分。
  */
 import type { MemoryConfig } from '../types.js';
-import { type MemoryStore } from './store.js';
+import type { MemoryStore } from './store.js';
 /** pre-step 载荷的最小 agent 面。 */
 export interface PreStepAgent {
     readonly id: string;

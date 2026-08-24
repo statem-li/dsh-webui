@@ -10,15 +10,19 @@ export interface Config {
     port: number;
     /** 截图输出目录（空 = Chrome profile 目录下 screenshots/） */
     screenshotDir: string;
+    /** 登录组：所有会话共用该组的持久分区——登录一次处处可用；空串 = 每会话隔离（旧行为） */
+    loginGroup: string;
 }
 export declare const Config: z<Schemastery.ObjectS<{
     chromePath: z<string, string>;
     port: z<number, number>;
     screenshotDir: z<string, string>;
+    loginGroup: z<string, string>;
 }>, Schemastery.ObjectT<{
     chromePath: z<string, string>;
     port: z<number, number>;
     screenshotDir: z<string, string>;
+    loginGroup: z<string, string>;
 }>>;
 export declare function applyBrowser(ctx: PluginContext, config: Config): void;
 export {};

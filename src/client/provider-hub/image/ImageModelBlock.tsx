@@ -56,13 +56,19 @@ export function ImageModelBlock(): ReactNode {
   const pick = (key: string): void => {
     if (saving) return
     setSaving(true)
+    setError(null)
     fetch('/api/image-gen/config', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ imageActive: key }),
     })
       .then((r) => r.json())
-      .then((d: any) => { if (d && d.ok) setActive(key) })
+      .then((d: any) => {
+        // 失败必须说话：静默忽略会让下拉停在旧值，用户以为已切换。
+        if (d && d.ok) setActive(key)
+        else setError((d && d.error) || '保存失败')
+      })
+      .catch(() => setError('保存请求失败'))
       .finally(() => setSaving(false))
   }
 

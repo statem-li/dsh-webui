@@ -1,8 +1,14 @@
 /**
- * automation — 任务卡（openhanako AutomationCard 同款交互，DSH 控件规格）。
+ * automation — 任务卡（折叠行 + 行内展开编辑面，DSH 官方控件规格）。
  *
- * 折叠行 = 开关 + 名称 + 「计划预览 · 下次运行 · 徽章」副行 + 状态字 + chevron；
- * 展开区 = 名称 / 计划编辑 / 执行内容 / 模型 / 运行记录 + 操作行。
+ * 折叠行 = 开关 + 名称/徽章 + 「计划 · 下次运行 · 上次结果」副行 + 状态字 + chevron；
+ * 展开面 = 名称 / 计划（含预览与校验）/ 执行内容 / 模型 / 最近运行 + 操作行。
+ *
+ * 交互要点：
+ *  - 运行中：副行显示转圈「执行中」，操作行的「立即运行」换成「中止」；
+ *  - 校验前置：计划非法或执行内容为空时禁用保存/启用，并就地给出原因；
+ *  - 删除二次确认（同一按钮两次点击），避免误删无法撤销的任务；
+ *  - 有未保存改动时展示「放弃改动」，切走不会静默丢失编辑。
  */
 
 import { useEffect, useMemo, useState } from 'react'
@@ -11,25 +17,42 @@ import {
   scheduleDraftFromStored,
   schedulePreviewFromDraft,
   storedScheduleFromDraft,
+  validateDraft,
   type ScheduleDraft,
 } from './schedule-draft.ts'
 import { modelSelectValue, modelValueFromSelect } from './models.ts'
-import { getRuns } from './api.ts'
-import { t } from './locales.ts'
+import { clearRuns, getRuns } from './api.ts'
+import { formatAbsolute, formatRelative, t } from './locales.ts'
 import { ScheduleEditor } from './ScheduleEditor.tsx'
+import { ChevronIcon, CopyIcon, PlayIcon, SpinnerIcon, StopIcon, TrashIcon } from './icons.tsx'
+import { RunRow } from './RunRow.tsx'
 
-function Chevron({ open }: { open: boolean }): JSX.Element {
-  return (
-    <span className="auto-chevron" data-open={open} aria-hidden="true">
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-        <polyline points="6 9 12 15 18 9" />
-      </svg>
-    </span>
-  )
+/** 显示名：label 优先，否则取 prompt 前 40 字，最后退到 id。 */
+function jobTitle(job: CronJob): string {
+  if (job.label.trim() !== '') return job.label
+  const fromPrompt = job.prompt.trim().slice(0, 40)
+  return fromPrompt !== '' ? fromPrompt : job.id
 }
 
-function jobTitle(job: CronJob): string {
-  return job.label !== '' ? job.label : (job.prompt.slice(0, 40)) || job.id
+export interface AutomationCardProps {
+  job: CronJob
+  models: ModelOption[]
+  modelsLoading: boolean
+  open: boolean
+  /** 服务端报告该任务正在执行。 */
+  running: boolean
+  onToggleOpen: () => void
+  onToggleEnabled: (job: CronJob) => Promise<void> | void
+  onRemove: (id: string) => Promise<void> | void
+  onDuplicate: (id: string) => Promise<void> | void
+  onRunNow: (id: string) => Promise<void> | void
+  onCancelRun: (id: string) => Promise<void> | void
+  /** 保存字段差异；抛错时由容器 toast。 */
+  onUpdate: (id: string, fields: Record<string, unknown>) => Promise<void>
+  /** 查看某次运行的完整产出。 */
+  onViewOutput: (job: CronJob, run: RunRecord) => void
+  /** 局部提示（校验失败等）。 */
+  onNotice: (message: string) => void
 }
 
 export function AutomationCard({
@@ -37,130 +60,209 @@ export function AutomationCard({
   models,
   modelsLoading,
   open,
+  running,
   onToggleOpen,
   onToggleEnabled,
   onRemove,
+  onDuplicate,
   onRunNow,
+  onCancelRun,
   onUpdate,
-}: {
-  job: CronJob
-  models: ModelOption[]
-  modelsLoading: boolean
-  open: boolean
-  onToggleOpen: () => void
-  onToggleEnabled: (job: CronJob) => Promise<void> | void
-  onRemove: (id: string) => Promise<void> | void
-  onRunNow: (id: string) => Promise<void> | void
-  /** 保存字段差异；抛错时由容器 toast。 */
-  onUpdate: (id: string, fields: Record<string, unknown>) => Promise<void>
-}): JSX.Element {
-  const [label, setLabel] = useState(jobTitle(job))
+  onViewOutput,
+  onNotice,
+}: AutomationCardProps): JSX.Element {
+  const [label, setLabel] = useState(job.label)
   const [draft, setDraft] = useState<ScheduleDraft>(() => scheduleDraftFromStored(job.type, job.schedule))
   const [draftDirty, setDraftDirty] = useState(false)
   const [prompt, setPrompt] = useState(job.prompt)
   const [model, setModel] = useState(modelSelectValue(job.model))
   const [runs, setRuns] = useState<RunRecord[] | null>(null)
   const [saving, setSaving] = useState(false)
+  const [armDelete, setArmDelete] = useState(false)
 
+  /** 服务端值变化时同步本地编辑态（configRevision 是唯一权威的「变了」信号）。 */
   useEffect(() => {
-    setLabel(jobTitle(job))
+    setLabel(job.label)
     setDraft(scheduleDraftFromStored(job.type, job.schedule))
     setDraftDirty(false)
     setPrompt(job.prompt)
     setModel(modelSelectValue(job.model))
-  }, [job])
+  }, [job.id, job.configRevision, job.label, job.prompt, job.type, job.schedule, job.model])
 
-  // 展开时拉一次运行记录。
+  // 收起卡片时复位删除待确认态，避免下次展开时按钮还停在「确认删除？」。
+  useEffect(() => {
+    if (!open) setArmDelete(false)
+  }, [open])
+
+  /** 展开 / 运行结束时拉最近运行记录。 */
   useEffect(() => {
     if (!open) return
     let alive = true
-    getRuns(job.id, 10).then(data => {
+    getRuns(job.id, 5).then(data => {
       if (alive) setRuns(data.runs)
     }).catch(() => {
       if (alive) setRuns([])
     })
     return () => { alive = false }
-  }, [open, job.id, job.lastRunAt])
+  }, [open, job.id, job.lastRunAt, running])
 
-  const preview = useMemo(() => schedulePreviewFromDraft(scheduleDraftFromStored(job.type, job.schedule)), [job.type, job.schedule])
+  const storedPreview = useMemo(
+    () => schedulePreviewFromDraft(scheduleDraftFromStored(job.type, job.schedule)),
+    [job.type, job.schedule],
+  )
+  const scheduleError = useMemo(() => validateDraft(draft), [draft])
+  const title = jobTitle(job)
+  const promptEmpty = prompt.trim() === ''
+  const isDraftJob = !job.enabled && job.prompt.trim() === ''
+  const lastRun = runs !== null && runs.length > 0 ? runs[0] : null
+
   const dirty =
-    label !== jobTitle(job)
+    label !== job.label
     || draftDirty
     || prompt !== job.prompt
     || model !== modelSelectValue(job.model)
 
   const collectFields = (): Record<string, unknown> | null => {
     const fields: Record<string, unknown> = {}
-    if (label !== jobTitle(job)) fields.label = label
+    if (label !== job.label) fields.label = label
     if (prompt !== job.prompt) fields.prompt = prompt
     if (model !== modelSelectValue(job.model)) fields.model = modelValueFromSelect(model)
     if (draftDirty) {
       const stored = storedScheduleFromDraft(draft)
       fields.scheduleType = stored.type
-      // every 走毫秒；其余直接传表达式/ISO。
       fields.schedule = stored.schedule
     }
     return Object.keys(fields).length > 0 ? fields : null
   }
 
+  const revert = (): void => {
+    setLabel(job.label)
+    setDraft(scheduleDraftFromStored(job.type, job.schedule))
+    setDraftDirty(false)
+    setPrompt(job.prompt)
+    setModel(modelSelectValue(job.model))
+  }
+
   const save = async (): Promise<void> => {
+    if (saving) return
+    if (scheduleError !== null) {
+      onNotice(scheduleError)
+      return
+    }
     const fields = collectFields()
-    if (fields === null || saving) return
+    if (fields === null) return
     setSaving(true)
     try {
       await onUpdate(job.id, fields)
+    } catch {
+      // 容器已 toast；保留编辑态让用户改。
     } finally {
       setSaving(false)
     }
   }
 
+  /** 开关：启用前先把未保存的编辑一起提交（否则「开了但内容还是旧的」）。 */
   const toggleEnabled = async (): Promise<void> => {
+    if (saving) return
     if (job.enabled) {
       await onToggleEnabled(job)
       return
     }
-    if (prompt.trim() === '') return // 启用前必须有执行内容（按钮态由 toast 提示）
-    await onUpdate(job.id, { ...(collectFields() ?? {}), enabled: true })
+    if (promptEmpty) {
+      onNotice(t('promptRequired'))
+      return
+    }
+    if (scheduleError !== null) {
+      onNotice(scheduleError)
+      return
+    }
+    setSaving(true)
+    try {
+      await onUpdate(job.id, { ...(collectFields() ?? {}), enabled: true })
+    } catch {
+      // 容器已 toast。
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const removeWithConfirm = async (): Promise<void> => {
+    if (!armDelete) {
+      setArmDelete(true)
+      window.setTimeout(() => setArmDelete(false), 4000)
+      return
+    }
+    setArmDelete(false)
+    await onRemove(job.id)
+  }
+
+  const clearHistory = async (): Promise<void> => {
+    try {
+      await clearRuns(job.id)
+      setRuns([])
+      onNotice(t('historyCleared'))
+    } catch (error) {
+      onNotice(error instanceof Error ? error.message : String(error))
+    }
   }
 
   return (
-    <div className="auto-card">
-      <button type="button" className="auto-row" onClick={onToggleOpen} aria-expanded={open}>
-        <span
+    <div className="auto-card" data-open={open} data-draft={isDraftJob || undefined}>
+      <div className="auto-row">
+        <button
+          type="button"
           className="auto-switch"
           role="switch"
           aria-checked={job.enabled}
           aria-label={job.enabled ? t('disable') : t('enable')}
           title={job.enabled ? t('disable') : t('enable')}
-          onClick={event => {
-            event.stopPropagation()
-            void toggleEnabled()
-          }}
+          disabled={saving}
+          onClick={() => void toggleEnabled()}
         />
-        <span className="auto-main">
-          <span className="auto-name" title={jobTitle(job)}>{jobTitle(job)}</span>
-          <span className="auto-sub">
-            <span className="auto-meta">{preview}</span>
-            {job.nextRunAt !== null && job.enabled ? (
-              <span className="auto-meta">{t('nextRun', { time: new Date(job.nextRunAt).toLocaleString(undefined, { hour12: false }) })}</span>
-            ) : null}
-            <span className="auto-badge">{t('executorLabel')}</span>
-            {job.consecutiveErrors > 0 ? (
-              <span className="auto-meta" style={{ color: 'var(--dsw-alias-state-error-primary,#e0434b)' }}>
-                {t('consecutiveErrors', { n: job.consecutiveErrors })}
-              </span>
-            ) : null}
+        <button type="button" className="auto-row-main" onClick={onToggleOpen} aria-expanded={open}>
+          <span className="auto-main">
+            <span className="auto-name-line">
+              <span className="auto-name" title={title}>{title}</span>
+              {isDraftJob ? <span className="auto-badge" data-tone="muted">{t('off')}</span> : null}
+            </span>
+            <span className="auto-sub">
+              <span className="auto-meta" title={storedPreview}>{storedPreview}</span>
+              {running ? (
+                <span className="auto-running"><SpinnerIcon />{t('running')}</span>
+              ) : job.enabled && job.nextRunAt !== null ? (
+                <span className="auto-meta" title={formatAbsolute(job.nextRunAt)}>
+                  {t('nextRun', { time: formatRelative(job.nextRunAt) })}
+                </span>
+              ) : job.lastRunAt !== null ? (
+                <span className="auto-meta" title={formatAbsolute(job.lastRunAt)}>
+                  {t('lastRun', { time: formatRelative(job.lastRunAt) })}
+                </span>
+              ) : (
+                <span className="auto-meta">{t('neverRun')}</span>
+              )}
+              {job.consecutiveErrors > 0 ? (
+                <span className="auto-meta" data-tone="error">
+                  {t('consecutiveErrors', { n: job.consecutiveErrors })}
+                </span>
+              ) : null}
+            </span>
           </span>
-        </span>
-        <span className="auto-state">{job.enabled ? t('on') : t('off')}</span>
-        <Chevron open={open} />
-      </button>
+          <span className="auto-state">{job.enabled ? t('on') : t('off')}</span>
+          <ChevronIcon />
+        </button>
+      </div>
 
       {open ? (
         <div className="auto-editor">
           <label className="auto-field">
             <span>{t('fieldLabel')}</span>
-            <input className="auto-input" value={label} spellCheck={false} onChange={event => setLabel(event.target.value)} />
+            <input
+              className="auto-input"
+              value={label}
+              spellCheck={false}
+              placeholder={t('labelPlaceholder')}
+              onChange={event => setLabel(event.target.value)}
+            />
           </label>
 
           <ScheduleEditor draft={draft} onChange={next => { setDraft(next); setDraftDirty(true) }} />
@@ -174,12 +276,19 @@ export function AutomationCard({
               spellCheck={false}
               onChange={event => setPrompt(event.target.value)}
             />
+            {promptEmpty
+              ? <span className="auto-hint">{t('draftHint')}</span>
+              : <span className="auto-count">{prompt.length}</span>}
           </label>
 
           <label className="auto-field">
             <span>{t('modelLabel')}</span>
             <select className="auto-select" value={model} onChange={event => setModel(event.target.value)}>
               <option value="">{modelsLoading && models.length === 0 ? t('modelsLoading') : t('defaultModel')}</option>
+              {/* 目录里已不存在的旧绑定也要能显示，否则 select 会静默回落到默认模型 */}
+              {model !== '' && !models.some(option => `${option.provider}/${option.id}` === model)
+                ? <option value={model}>{model}</option>
+                : null}
               {models.map(option => (
                 <option key={`${option.provider}/${option.id}`} value={`${option.provider}/${option.id}`}>
                   {`${option.providerName} / ${option.name}`}
@@ -188,41 +297,71 @@ export function AutomationCard({
             </select>
           </label>
 
-          {runs !== null && runs.length > 0 ? (
-            <div className="auto-runs">
-              <div className="auto-section-title">{t('historyTitle')}</div>
-              {runs.slice(0, 5).map((run, index) => (
-                <div className="auto-run" key={`${run.timestamp}-${index}`}>
-                  <div className="auto-run-head">
-                    <span className="auto-run-status" data-status={run.status}>
-                      {run.status === 'success' ? t('statusSuccess') : run.status === 'error' ? t('statusError') : t('statusSkipped')}
-                    </span>
-                    <span>{new Date(run.timestamp).toLocaleString(undefined, { hour12: false })}</span>
-                  </div>
-                  {(run.summary ?? run.error ?? run.reason) !== undefined ? (
-                    <div className="auto-run-detail">{run.summary ?? run.error ?? run.reason}</div>
-                  ) : null}
-                </div>
-              ))}
+          <div className="auto-runs">
+            <div className="auto-runs-head">
+              <span className="auto-section-title">{t('historyTitle')}</span>
+              {runs !== null && runs.length > 0 ? (
+                <button type="button" className="auto-btn auto-btn-danger auto-spacer" onClick={() => void clearHistory()}>
+                  {t('historyClear')}
+                </button>
+              ) : null}
             </div>
-          ) : null}
+            {runs === null ? null : runs.length === 0 ? (
+              <span className="auto-hint">{t('historyEmpty')}</span>
+            ) : (
+              runs.map((run, index) => (
+                <RunRow
+                  key={`${run.timestamp}-${index}`}
+                  run={run}
+                  onViewOutput={() => onViewOutput(job, run)}
+                />
+              ))
+            )}
+          </div>
 
           <div className="auto-actions">
-            <button type="button" className="auto-btn auto-btn-primary" disabled={!dirty || saving} onClick={() => void save()}>
+            <button
+              type="button"
+              className="auto-btn auto-btn-primary"
+              disabled={!dirty || saving || scheduleError !== null}
+              onClick={() => void save()}
+            >
               {t('confirm')}
             </button>
-            <button type="button" className="auto-btn" disabled={!job.enabled} title={t('runNow')} onClick={() => void onRunNow(job.id)}>
-              {t('runNow')}
+            {dirty ? (
+              <button type="button" className="auto-btn" disabled={saving} onClick={revert}>{t('revert')}</button>
+            ) : null}
+            {running ? (
+              <button type="button" className="auto-btn" onClick={() => void onCancelRun(job.id)}>
+                <StopIcon />{t('cancelRun')}
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="auto-btn"
+                disabled={promptEmpty || saving}
+                title={promptEmpty ? t('promptRequired') : t('runNow')}
+                onClick={() => void onRunNow(job.id)}
+              >
+                <PlayIcon />{t('runNow')}
+              </button>
+            )}
+            <button type="button" className="auto-btn auto-spacer" onClick={() => void onDuplicate(job.id)}>
+              <CopyIcon />{t('duplicate')}
             </button>
             <button
               type="button"
               className="auto-btn auto-btn-danger"
-              style={{ marginLeft: 'auto' }}
-              onClick={() => void onRemove(job.id)}
+              data-armed={armDelete || undefined}
+              onClick={() => void removeWithConfirm()}
             >
-              {t('delete')}
+              <TrashIcon />{armDelete ? t('deleteConfirm') : t('delete')}
             </button>
           </div>
+
+          {lastRun !== null && lastRun.status === 'error' ? (
+            <span className="auto-hint" data-tone="error">{lastRun.error}</span>
+          ) : null}
         </div>
       ) : null}
     </div>

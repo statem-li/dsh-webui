@@ -4,6 +4,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { t } from './locales.ts'
+import { ClockIcon } from './icons.tsx'
 
 function two(value: number): string {
   return String(value).padStart(2, '0')
@@ -72,10 +73,7 @@ export function TimePicker({ value, onChange }: {
         onClick={() => setOpen(v => !v)}
       >
         <span>{`${two(hour)}:${two(minute)}`}</span>
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <circle cx="12" cy="12" r="8" />
-          <path d="M12 7v5l3 2" />
-        </svg>
+        <ClockIcon size={13} />
       </button>
       {open ? (
         <div className="auto-time-pop" ref={popRef}>

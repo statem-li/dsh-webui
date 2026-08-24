@@ -1,57 +1,39 @@
 /**
- * dsh-browser — 会话内浏览器常驻按钮 + 右侧滑出预览抽屉（client 半身）。
+ * dsh-browser — 会话内浏览器常驻按钮 + 右侧滑出抽屉（client 半身）。
  *
- * 常驻按钮挂在 `conversation.input.left`（输入框工具行，记忆开关旁）：
- * 与记忆开关一样始终可见；当前会话有浏览器活动（engaged）时图标高亮并脉冲，
- * 点击从右侧滑出预览抽屉：实时显示浏览器画面（CDP screencast 帧）+ 操作时间线。
- * 浏览器本体是有头渲染但窗口在屏幕外——抽屉内可直接鼠标/键盘/滚轮操作页面
- * （事件按帧坐标缩放后经 /api/dsh-browser/input 回传到 CDP Input 域）。
- * 抽屉不全宽——左侧留一条空隙，点击空隙区域抽屉从左往右滑出收回。
+ * 常驻按钮挂在 `conversation.input.left`（输入框工具行，记忆开关旁），当前会话有
+ * 浏览器活动时图标高亮并脉冲；点击滑出抽屉。
+ *
+ * 抽屉布局（2026-10 重做）是一套真正的浏览器 chrome：
+ *   ┌ tabstrip   品牌标记 · 标签页 · 新建 · 关闭
+ *   ├ toolbar    后退/前进/刷新 · 地址栏（可编辑、安全标识、加载进度）· 收藏 · 选取 · 更多
+ *   ├ bookmarks  书签胶囊 · 管理面板（可在「更多」里整条隐藏）
+ *   ├ 画面区     原生 WebContentsView 贴合于此；未贴合时回退实时帧 img
+ *   └ 时间线     底部悬浮细轨（最新一条操作），点开展开完整列表
+ * 左缘 4px 把手可拖拽调宽（localStorage 持久化）。
+ *
+ * 浏览器本体是壳内嵌视图；抽屉里的鼠标/键盘/滚轮事件按帧坐标缩放后经
+ * `/api/dsh-browser/input` 回传 CDP Input 域。
  */
 import { memo, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SessionId } from '@deepseek-ai/dsh-client-runtime/client'
 import { browserActivityStore } from './activity'
-
-/** 浏览器图标（线条风格：球形网状地球，语义清晰，小尺寸下干净）。 */
-function BrowserIcon({ size = 14 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden>
-      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.6" />
-      <ellipse cx="12" cy="12" rx="4.2" ry="9" stroke="currentColor" strokeWidth="1.6" />
-      <path d="M3.2 9h17.6M3.2 15h17.6" stroke="currentColor" strokeWidth="1.5" />
-    </svg>
-  )
-}
-
-/** 星环加载动画：星球 + 倾斜环绕行（画面加载中的视觉反馈）。 */
-function LoadingOrbit() {
-  return (
-    <svg className="dsh-browser-loading__orbit" width="60" height="60" viewBox="0 0 80 80" aria-hidden>
-      <defs>
-        <radialGradient id="dsh-orbit-planet" cx="0.35" cy="0.3" r="0.9">
-          <stop offset="0" stopColor="#8ec5ff" />
-          <stop offset="0.55" stopColor="#4a9eff" />
-          <stop offset="1" stopColor="#2456b8" />
-        </radialGradient>
-        <linearGradient id="dsh-orbit-ring" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stopColor="#7cb8ff" stopOpacity="0.95" />
-          <stop offset="0.5" stopColor="#4a9eff" stopOpacity="0.4" />
-          <stop offset="1" stopColor="#4a9eff" stopOpacity="0.05" />
-        </linearGradient>
-      </defs>
-      <circle cx="40" cy="40" r="14" fill="url(#dsh-orbit-planet)" />
-      <g className="dsh-browser-loading__ring">
-        <ellipse cx="40" cy="40" rx="31" ry="10" fill="none" stroke="url(#dsh-orbit-ring)" strokeWidth="2.6" />
-        <circle className="dsh-browser-loading__sat" cx="71" cy="40" r="2.6" fill="#cfe6ff" />
-      </g>
-    </svg>
-  )
-}
+import {
+  BackIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, CloseIcon, CopyIcon, ForwardIcon,
+  GlobeIcon, InsecureIcon, LockIcon, MoreIcon, PickIcon, PlusIcon, ReloadIcon, StarIcon, TrashIcon,
+} from './icons'
 
 /** 抽屉收起动画时长（与 styles 里 transition 保持一致）。 */
 const CLOSE_ANIM_MS = 300
+/** 抽屉宽度持久化键与边界。 */
+const WIDTH_KEY = 'dsh-webui.browser.drawerWidth'
+const MIN_WIDTH = 520
+/** 右侧留白（与 styles 的 max-width 计算保持一致）。 */
+const EDGE_GAP = 44
+/** 书签栏显示偏好持久化键。 */
+const BOOKMARKS_KEY = 'dsh-webui.browser.bookmarksBar'
 
 interface SessionStep {
   seq: number
@@ -79,6 +61,8 @@ interface SessionDetail {
   running?: boolean
   url?: string
   title?: string
+  canBack?: boolean
+  canForward?: boolean
   steps?: SessionStep[]
   shell?: boolean
   tabs?: BrowserTabInfo[]
@@ -116,6 +100,75 @@ const STATUS_TEXT: Record<SessionStep['status'], string> = {
   error: '失败',
 }
 
+/** 星环加载动画：星球 + 倾斜环绕行（画面加载中的视觉反馈）。 */
+function LoadingOrbit() {
+  return (
+    <svg className="dsh-browser-loading__orbit" width="60" height="60" viewBox="0 0 80 80" aria-hidden>
+      <defs>
+        <radialGradient id="dsh-orbit-planet" cx="0.35" cy="0.3" r="0.9">
+          <stop offset="0" stopColor="#8ec5ff" />
+          <stop offset="0.55" stopColor="#4a9eff" />
+          <stop offset="1" stopColor="#2456b8" />
+        </radialGradient>
+        <linearGradient id="dsh-orbit-ring" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stopColor="#7cb8ff" stopOpacity="0.95" />
+          <stop offset="0.5" stopColor="#4a9eff" stopOpacity="0.4" />
+          <stop offset="1" stopColor="#4a9eff" stopOpacity="0.05" />
+        </linearGradient>
+      </defs>
+      <circle cx="40" cy="40" r="14" fill="url(#dsh-orbit-planet)" />
+      <g className="dsh-browser-loading__ring">
+        <ellipse cx="40" cy="40" rx="31" ry="10" fill="none" stroke="url(#dsh-orbit-ring)" strokeWidth="2.6" />
+        <circle className="dsh-browser-loading__sat" cx="71" cy="40" r="2.6" fill="#cfe6ff" />
+      </g>
+    </svg>
+  )
+}
+
+/** URL → 去 www 的主机名（失败返回空串）。 */
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '')
+  } catch {
+    return ''
+  }
+}
+
+/** 站点首字母标记（代替 favicon：内嵌视图取不到 favicon，也不想额外发请求）。 */
+function initialOf(text: string, url: string): string {
+  const host = hostOf(url)
+  const src = host !== '' ? host : text.trim()
+  const ch = src.replace(/^[^\p{L}\p{N}]+/u, '').charAt(0)
+  return ch === '' ? '·' : ch
+}
+
+/** 图标按钮：统一 28×28 命中区 + Tooltip；工具栏/标签栏共用。 */
+function IconButton({
+  label, onClick, children, active = false, disabled = false, danger = false, tooltipSide = 'bottom',
+}: {
+  label: string
+  onClick: () => void
+  children: React.ReactNode
+  active?: boolean
+  disabled?: boolean
+  danger?: boolean
+  tooltipSide?: 'top' | 'bottom'
+}) {
+  const cls = [
+    'dsh-browser-ico',
+    active ? 'dsh-browser-ico--on' : '',
+    danger ? 'dsh-browser-ico--danger' : '',
+  ].filter(Boolean).join(' ')
+  const btn = (
+    <button type="button" className={cls} onClick={onClick} disabled={disabled} aria-label={label} aria-pressed={active}>
+      {children}
+    </button>
+  )
+  // 禁用态不挂 Tooltip：DSH Tooltip 依赖子元素事件，disabled 按钮不派发。
+  if (disabled) return btn
+  return <Tooltip label={label} side={tooltipSide} delayMs={420}>{btn}</Tooltip>
+}
+
 function StepRow({ step }: { step: SessionStep }) {
   return (
     <div className={`dsh-browser-step dsh-browser-step--${step.status}`}>
@@ -138,53 +191,22 @@ interface BookmarkSite {
   url: string
 }
 
-function siteHostOf(url: string): string {
-  try {
-    return new URL(url).hostname.replace(/^www\./, '')
-  } catch {
-    return ''
-  }
-}
-
 /**
- * 抽屉内的快捷标签栏：点标签 = 在内嵌浏览器里新开一个标签页打开站点
- * （不打断 AI 正在操作的页面；浏览器未启动则自动拉起）；
- * 「＋」展开管理面板：添加/删除快捷站点。
+ * 书签栏：点胶囊 = 在内嵌浏览器新开标签打开（不打断 AI 正在操作的页面）；
+ * 右端「管理」展开面板做增删。收藏当前页由工具栏的星形按钮负责。
  */
-function SitesBar({ sessionId, currentUrl, onChanged }: { sessionId: string; currentUrl: string; onChanged: () => void }) {
-  const [sites, setSites] = useState<BookmarkSite[]>([])
+function BookmarksBar({ sites, sessionId, currentUrl, onChanged, onMutate }: {
+  sites: BookmarkSite[]
+  sessionId: string
+  currentUrl: string
+  onChanged: () => void
+  onMutate: (payload: Record<string, unknown>) => void
+}) {
   const [panelOpen, setPanelOpen] = useState(false)
   const [title, setTitle] = useState('')
   const [url, setUrl] = useState('')
-  const curHost = siteHostOf(currentUrl)
+  const curHost = hostOf(currentUrl)
 
-  const refresh = useCallback((): void => {
-    fetch('/api/dsh-browser/sites', { cache: 'no-store' })
-      .then((r) => r.json())
-      .then((d: any) => {
-        if (d?.ok && Array.isArray(d.sites)) setSites(d.sites)
-      })
-      .catch(() => {})
-  }, [])
-
-  useEffect(() => {
-    refresh()
-  }, [refresh])
-
-  const postSites = useCallback((payload: Record<string, unknown>): void => {
-    fetch('/api/dsh-browser/sites', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(payload),
-    })
-      .then((r) => r.json())
-      .then((d: any) => {
-        if (d?.ok && Array.isArray(d.sites)) setSites(d.sites)
-      })
-      .catch(() => {})
-  }, [])
-
-  // 新开标签页打开快捷站点（newTab=true，服务端自动拉起浏览器）
   const openSite = useCallback((siteUrl: string): void => {
     fetch('/api/dsh-browser/navigate', {
       method: 'POST',
@@ -197,41 +219,45 @@ function SitesBar({ sessionId, currentUrl, onChanged }: { sessionId: string; cur
 
   const addSite = useCallback((): void => {
     if (title.trim() === '' || url.trim() === '') return
-    postSites({ action: 'add', title: title.trim(), url: url.trim() })
+    onMutate({ action: 'add', title: title.trim(), url: url.trim() })
     setTitle('')
     setUrl('')
-  }, [title, url, postSites])
+  }, [title, url, onMutate])
 
   return (
     <div className="dsh-browser-sites">
       <div className="dsh-browser-sites__row">
+        {sites.length === 0 && !panelOpen && (
+          <span className="dsh-browser-sites__empty">还没有书签 — 用工具栏的星形按钮收藏当前页</span>
+        )}
         {sites.map((s) => {
-          const active = curHost !== '' && siteHostOf(s.url) === curHost
+          const active = curHost !== '' && hostOf(s.url) === curHost
           return (
-            <button
-              key={s.id}
-              type="button"
-              className={active ? 'dsh-browser-site dsh-browser-site--active' : 'dsh-browser-site'}
-              title={`新开标签页打开 ${s.title} · ${s.url}`}
-              onClick={() => { openSite(s.url) }}
-            >
-              {s.title}
-            </button>
+            <Tooltip key={s.id} label={`新标签页打开 · ${s.url}`} side="bottom" delayMs={480}>
+              <button
+                type="button"
+                className={active ? 'dsh-browser-site dsh-browser-site--active' : 'dsh-browser-site'}
+                onClick={() => { openSite(s.url) }}
+              >
+                <span className="dsh-browser-site__mark" aria-hidden>{initialOf(s.title, s.url)}</span>
+                {s.title}
+              </button>
+            </Tooltip>
           )
         })}
         <button
           type="button"
-          className={panelOpen ? 'dsh-browser-sites__add dsh-browser-sites__add--on' : 'dsh-browser-sites__add'}
+          className={panelOpen ? 'dsh-browser-sites__manage dsh-browser-sites__manage--on' : 'dsh-browser-sites__manage'}
           onClick={() => { setPanelOpen((v) => !v) }}
           aria-expanded={panelOpen}
-          aria-label="管理标签网站"
-          title="添加/管理标签网站"
+          aria-label="管理书签"
+          title="添加 / 删除书签"
         >
-          ＋
+          {panelOpen ? <ChevronUpIcon size={14} /> : <PlusIcon size={14} />}
         </button>
       </div>
       {panelOpen && (
-        <div className="dsh-browser-sites__panel">
+        <div className="dsh-browser-sites__editor">
           <div className="dsh-browser-sites__form">
             <input
               className="dsh-browser-sites__input dsh-browser-sites__input--title"
@@ -248,7 +274,14 @@ function SitesBar({ sessionId, currentUrl, onChanged }: { sessionId: string; cur
               onChange={(e) => { setUrl(e.target.value) }}
               onKeyDown={(e) => { if (e.key === 'Enter') addSite() }}
             />
-            <button type="button" className="dsh-browser-sites__save" onClick={addSite}>添加</button>
+            <button
+              type="button"
+              className="dsh-browser-sites__save"
+              onClick={addSite}
+              disabled={title.trim() === '' || url.trim() === ''}
+            >
+              添加
+            </button>
           </div>
           {sites.length > 0 && (
             <div className="dsh-browser-sites__list">
@@ -259,10 +292,10 @@ function SitesBar({ sessionId, currentUrl, onChanged }: { sessionId: string; cur
                   <button
                     type="button"
                     className="dsh-browser-sites__del"
-                    onClick={() => { postSites({ action: 'remove', id: s.id }) }}
+                    onClick={() => { onMutate({ action: 'remove', id: s.id }) }}
                     aria-label={`删除 ${s.title}`}
                   >
-                    ✕
+                    <TrashIcon size={14} />
                   </button>
                 </div>
               ))}
@@ -274,94 +307,190 @@ function SitesBar({ sessionId, currentUrl, onChanged }: { sessionId: string; cur
   )
 }
 
-/** 标签页栏：展示在「AI 浏览器」标题右侧，支持切换 / 关闭 / 新建。 */
-function TabsBar({ tabs, sessionId, onChanged }: {
+/** 标签页栏：切换 / 关闭 / 新建；标签带站点首字母标记。 */
+function TabsBar({ tabs, onSwitch, onClose }: {
   tabs: BrowserTabInfo[]
-  sessionId: string
-  onChanged: () => void
+  onSwitch: (tabId: string) => void
+  onClose: (tabId: string) => void
 }) {
-  const postTab = useCallback((payload: Record<string, unknown>): void => {
-    fetch('/api/dsh-browser/tabs', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ sessionId, ...payload }),
-    })
-      .then(() => { onChanged() })
-      .catch(() => {})
-  }, [sessionId, onChanged])
-
   return (
-    <div className="dsh-browser-tabs">
+    <div className="dsh-browser-tabs" role="tablist" aria-label="浏览器标签页">
       {tabs.map((t) => (
         <div
           key={t.tabId}
+          role="tab"
+          aria-selected={t.active}
+          tabIndex={t.active ? 0 : -1}
           className={t.active ? 'dsh-browser-tab dsh-browser-tab--active' : 'dsh-browser-tab'}
           title={`${t.title}\n${t.url}`}
-          onClick={() => { if (!t.active) postTab({ action: 'switch', tabId: t.tabId }) }}
+          onClick={() => { if (!t.active) onSwitch(t.tabId) }}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSwitch(t.tabId) } }}
         >
-          <span className="dsh-browser-tab__title">{t.title || '(空白)'}</span>
+          <span className="dsh-browser-tab__mark" aria-hidden>{initialOf(t.title, t.url)}</span>
+          <span className="dsh-browser-tab__title">{t.title || '新标签页'}</span>
           <button
             type="button"
             className="dsh-browser-tab__close"
-            onClick={(e) => {
-              e.stopPropagation()
-              postTab({ action: 'close', tabId: t.tabId })
-            }}
+            onClick={(e) => { e.stopPropagation(); onClose(t.tabId) }}
             aria-label={`关闭标签 ${t.title}`}
           >
-            ✕
+            <CloseIcon size={12} />
           </button>
         </div>
       ))}
-      <button
-        type="button"
-        className="dsh-browser-tabs__new"
-        onClick={() => { postTab({ action: 'new' }) }}
-        aria-label="新建标签页"
-        title="新建标签页"
-      >
-        ＋
-      </button>
-    </div>
-  )
-}
-
-/** 网址行：当前激活标签的 URL + 一键复制。 */
-function UrlCopyBar({ url }: { url: string }) {
-  const [copied, setCopied] = useState(false)
-  const copy = useCallback((): void => {
-    const text = url !== '' ? url : ''
-    if (text === '') return
-    navigator.clipboard.writeText(text)
-      .then(() => {
-        setCopied(true)
-        window.setTimeout(() => { setCopied(false) }, 1500)
-      })
-      .catch(() => {})
-  }, [url])
-  return (
-    <div className="dsh-browser-urlbar">
-      <span className="dsh-browser-urlbar__url" title={url}>
-        {url !== '' ? url : 'about:blank'}
-      </span>
-      <button
-        type="button"
-        className={copied ? 'dsh-browser-urlbar__copy dsh-browser-urlbar__copy--done' : 'dsh-browser-urlbar__copy'}
-        onClick={copy}
-        disabled={url === ''}
-        aria-label="复制网址"
-      >
-        {copied ? '已复制 ✓' : '⧉ 复制'}
-      </button>
     </div>
   )
 }
 
 /**
- * 右侧滑出预览抽屉：左侧留一条空隙（hitzone），点击空隙抽屉向右滑出收回；
- * 打开时从右往左滑入。滑入动画结束后，把屏幕外的 Chrome app 窗口精确贴合到
- * 画面区屏幕坐标——原生渲染 + 原生输入（对齐 openhanako 内置浏览器体验）；
- * 收回时窗口先移回屏幕外。img 帧流保留作为动画过渡与兜底预览。
+ * 地址栏：非编辑态展示「安全标识 + 域名强调 + 路径淡化」，点击进入编辑并全选；
+ * Enter 导航（缺协议由服务端补 https），Esc 取消。加载中在底缘显示进度轨。
+ */
+function OmniBox({ url, loading, onNavigate }: {
+  url: string
+  loading: boolean
+  onNavigate: (next: string) => void
+}) {
+  const [editing, setEditing] = useState(false)
+  const [text, setText] = useState('')
+  const inputRef = useRef<HTMLInputElement | null>(null)
+
+  const begin = useCallback((): void => {
+    setText(url)
+    setEditing(true)
+  }, [url])
+
+  useEffect(() => {
+    if (!editing) return
+    const el = inputRef.current
+    if (el === null) return
+    el.focus()
+    el.select()
+  }, [editing])
+
+  const commit = useCallback((): void => {
+    const next = text.trim()
+    setEditing(false)
+    if (next === '' || next === url) return
+    onNavigate(next)
+  }, [text, url, onNavigate])
+
+  // 非编辑态的三段式展示：协议 + 域名（强调）+ 其余路径（淡化）。
+  const parts = useMemo(() => {
+    if (url === '') return null
+    try {
+      const u = new URL(url)
+      return { secure: u.protocol === 'https:', host: u.hostname.replace(/^www\./, ''), rest: `${u.pathname === '/' ? '' : u.pathname}${u.search}${u.hash}` }
+    } catch {
+      return { secure: false, host: '', rest: url }
+    }
+  }, [url])
+
+  return (
+    <div className="dsh-browser-omni" onClick={() => { if (!editing) begin() }}>
+      {parts !== null && !editing && (
+        <span
+          className={parts.secure ? 'dsh-browser-omni__lock' : 'dsh-browser-omni__lock dsh-browser-omni__lock--insecure'}
+          title={parts.secure ? '连接已加密（HTTPS）' : '连接未加密'}
+        >
+          {parts.secure ? <LockIcon size={13} /> : <InsecureIcon size={13} />}
+        </span>
+      )}
+      {editing
+        ? (
+          <input
+            ref={inputRef}
+            className="dsh-browser-omni__input"
+            value={text}
+            placeholder="输入网址后回车"
+            spellCheck={false}
+            onChange={(e) => { setText(e.target.value) }}
+            onBlur={() => { setEditing(false) }}
+            onKeyDown={(e) => {
+              e.stopPropagation()
+              if (e.key === 'Enter') commit()
+              else if (e.key === 'Escape') setEditing(false)
+            }}
+          />
+        )
+        : (
+          <button type="button" className="dsh-browser-omni__text" title={url} onClick={begin}>
+            {parts === null
+              ? <span className="dsh-browser-omni__placeholder">输入网址后回车</span>
+              : (
+                <>
+                  <span className="dsh-browser-omni__host">{parts.host}</span>
+                  {parts.rest}
+                </>
+              )}
+          </button>
+        )}
+      {loading && <span className="dsh-browser-omni__prog" aria-hidden />}
+    </div>
+  )
+}
+
+/** 更多菜单：书签栏显隐 / 复制网址 / 关闭其他标签 / 关闭浏览器。 */
+function MoreMenu({ open, onOpenChange, items }: {
+  open: boolean
+  onOpenChange: (v: boolean) => void
+  items: Array<{ key: string; label: string; hint?: string; disabled?: boolean; onSelect: () => void }>
+}) {
+  const wrapRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: MouseEvent): void => {
+      if (wrapRef.current !== null && !wrapRef.current.contains(e.target as Node)) onOpenChange(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => { document.removeEventListener('mousedown', onDown) }
+  }, [open, onOpenChange])
+
+  return (
+    <div className="dsh-browser-more-wrap" ref={wrapRef}>
+      <IconButton label="更多" active={open} onClick={() => { onOpenChange(!open) }}>
+        <MoreIcon size={16} />
+      </IconButton>
+      {open && (
+        <div className="dsh-browser-more" role="menu">
+          {items.map((it) => (
+            it.key.startsWith('sep')
+              ? <div key={it.key} className="dsh-browser-more__sep" role="separator" />
+              : (
+                <button
+                  key={it.key}
+                  type="button"
+                  role="menuitem"
+                  className="dsh-browser-more__item"
+                  disabled={it.disabled === true}
+                  onClick={() => { onOpenChange(false); it.onSelect() }}
+                >
+                  {it.label}
+                  {it.hint !== undefined && <span className="dsh-browser-more__hint">{it.hint}</span>}
+                </button>
+              )
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** 读取持久化的抽屉宽度（越界值回落到默认「留 44px 空隙」）。 */
+function readWidth(): number {
+  const max = Math.max(MIN_WIDTH, window.innerWidth - EDGE_GAP)
+  try {
+    const raw = window.localStorage.getItem(WIDTH_KEY)
+    const n = raw === null ? NaN : Number(raw)
+    if (Number.isFinite(n) && n >= MIN_WIDTH) return Math.min(n, max)
+  } catch { /* 隐私模式禁用 storage */ }
+  return max
+}
+
+/**
+ * 右侧滑出预览抽屉：左侧留一条空隙（hitzone），点击空隙收回。
+ * 滑入动画结束后把壳内嵌视图（或独立窗口）精确贴合到画面区屏幕坐标——原生
+ * 渲染 + 原生输入；未贴合期间用实时帧 img 兜底显示并接收交互。
  */
 function BrowserDrawer({ sessionId, onClose, onPickElement }: {
   sessionId: string
@@ -380,10 +509,9 @@ function BrowserDrawer({ sessionId, onClose, onPickElement }: {
 
   // 真实窗口是否已贴合盖住画面区：贴合后停掉帧轮询（画面由原生窗口接管）。
   const attachedRef = useRef(false)
-  // 操作时间线：默认收起为底部悬浮细条（一句话），点开才展开完整列表。
+  // 操作时间线：默认收起为底部悬浮细轨（一句话），点开才展开完整列表。
   const [timelineOpen, setTimelineOpen] = useState(false)
-  // 元素选取模式：开启后隐藏原生视图、画面回到 img 帧流（React 才能收到点击），
-  // 点击画面采集元素并回填对话框；pickingRef 供 Esc/贴合防抖等非 JSX 处同步读取。
+  // 元素选取模式：开启后隐藏原生视图、画面回到 img 帧流（React 才能收到点击）。
   const [picking, setPicking] = useState(false)
   const pickingRef = useRef(false)
   const setPickingBoth = useCallback((v: boolean): void => {
@@ -391,16 +519,31 @@ function BrowserDrawer({ sessionId, onClose, onPickElement }: {
     setPicking(v)
   }, [])
 
-  // hover 范围提示：选取模式下鼠标移动实时采集命中元素的范围（页面视口
-  // CSS 坐标），叠加半透明高亮框，像浏览器 DevTools 一样「先看到范围再点」。
+  // hover 范围提示：选取模式下鼠标移动实时采集命中元素范围，叠加高亮框。
   const [hover, setHover] = useState<{ tag: string; left: number; top: number; width: number; height: number } | null>(null)
   const hoverPendingRef = useRef<{ x: number; y: number } | null>(null)
   const hoverInFlightRef = useRef(false)
   const hoverSeqRef = useRef(0)
 
-  /** 时间线占用的画面高度：收起=细条 32px；展开=min(300, 45%)。原生视图需让位。 */
+  // ── 新增 UI 状态：宽度拖拽 / 书签栏显隐 / 更多菜单 / 导航忙态 / 复制反馈 ──
+  const [width, setWidth] = useState<number>(() => readWidth())
+  const [resizing, setResizing] = useState(false)
+  const [bookmarksOn, setBookmarksOn] = useState<boolean>(() => {
+    try { return window.localStorage.getItem(BOOKMARKS_KEY) !== '0' } catch { return true }
+  })
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [navBusy, setNavBusy] = useState(false)
+  const [copied, setCopied] = useState(false)
+  const [sites, setSites] = useState<BookmarkSite[]>([])
+
+  const activeTab = detail?.tabs?.find((t) => t.active) ?? null
+  const currentUrl = activeTab?.url ?? detail?.url ?? ''
+  const steps = (detail?.steps ?? []).slice().reverse()
+  const running = detail?.active === true || steps.some(s => s.status === 'running')
+
+  /** 时间线占用的画面高度：收起=细轨 34px；展开=min(300, 45%)。原生视图需让位。 */
   const timelineReserveH = useCallback((frameH: number): number => {
-    return timelineOpen ? Math.min(300, Math.round(frameH * 0.45)) : 32
+    return timelineOpen ? Math.min(300, Math.round(frameH * 0.45)) : 34
   }, [timelineOpen])
 
   // 把浏览器视图贴合到画面区（壳内模式=挂载 WebContentsView，DIP 坐标；
@@ -475,6 +618,8 @@ function BrowserDrawer({ sessionId, onClose, onPickElement }: {
     const onResize = (): void => {
       window.clearTimeout(rt)
       rt = window.setTimeout(syncViewBounds, 200)
+      // 视口变窄时把抽屉宽度收进合法区间。
+      setWidth((w) => Math.min(w, Math.max(MIN_WIDTH, window.innerWidth - EDGE_GAP)))
     }
     window.addEventListener('resize', onResize)
     return () => {
@@ -484,11 +629,12 @@ function BrowserDrawer({ sessionId, onClose, onPickElement }: {
     }
   }, [open, syncViewBounds])
 
-  // 展开/收起操作时间线：原生视图高度随之让位，立即重新贴合。
+  // 布局变化（时间线展开/收起、书签栏显隐、宽度拖完）都要重新贴合原生视图，
+  // 否则画面区与视图错位（旧版只在时间线切换时重贴）。
   useEffect(() => {
     if (!open) return
     syncViewBounds()
-  }, [timelineOpen, open, syncViewBounds])
+  }, [timelineOpen, bookmarksOn, open, syncViewBounds])
 
   const requestClose = useCallback(() => {
     if (closingRef.current) return
@@ -497,6 +643,217 @@ function BrowserDrawer({ sessionId, onClose, onPickElement }: {
     setOpen(false)
     window.setTimeout(onClose, CLOSE_ANIM_MS)
   }, [onClose, hideView])
+
+  // ── 宽度拖拽：左缘把手，指针事件全程捕获，松手写入 localStorage ──
+  const startResize = useCallback((e: React.PointerEvent): void => {
+    e.preventDefault()
+    const startX = e.clientX
+    const startW = width
+    const max = Math.max(MIN_WIDTH, window.innerWidth - EDGE_GAP)
+    setResizing(true)
+    const onMove = (ev: PointerEvent): void => {
+      // 把手在左缘：向左拖动（clientX 变小）= 变宽
+      const next = Math.min(max, Math.max(MIN_WIDTH, startW + (startX - ev.clientX)))
+      setWidth(next)
+    }
+    const onUp = (): void => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      setResizing(false)
+      // 拖动期间原生视图不跟随（避免每帧一次 IPC）；松手后一次性重贴。
+      syncViewBounds()
+      setWidth((w) => {
+        try { window.localStorage.setItem(WIDTH_KEY, String(Math.round(w))) } catch { /* 忽略 */ }
+        return w
+      })
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }, [width, syncViewBounds])
+
+  // 书签数据：抽屉打开时拉一次，增删后由响应回填。
+  const refreshSites = useCallback((): void => {
+    fetch('/api/dsh-browser/sites', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((d: any) => { if (d?.ok && Array.isArray(d.sites)) setSites(d.sites) })
+      .catch(() => {})
+  }, [])
+
+  useEffect(() => { refreshSites() }, [refreshSites])
+
+  const mutateSites = useCallback((payload: Record<string, unknown>): void => {
+    fetch('/api/dsh-browser/sites', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+      .then((r) => r.json())
+      .then((d: any) => { if (d?.ok && Array.isArray(d.sites)) setSites(d.sites) })
+      .catch(() => {})
+  }, [])
+
+  // 轮询操作详情（时间线 + url/title + 标签列表 + 历史可用性）。
+  const refreshDetail = useCallback(async (): Promise<void> => {
+    try {
+      const res = await fetch(`/api/dsh-browser/session?sessionId=${encodeURIComponent(sessionId)}`, { cache: 'no-store' })
+      const data: SessionDetail = await res.json()
+      setDetail(data)
+    } catch { /* 保持上次 */ }
+  }, [sessionId])
+
+  useEffect(() => {
+    void refreshDetail()
+    // 后台标签页不轮询（抽屉画面不可见时没人看时间线）；回到前台立即补一次。
+    const tick = (): void => { if (!document.hidden) void refreshDetail() }
+    const timer = window.setInterval(tick, 800)
+    const onVisible = (): void => { if (!document.hidden) void refreshDetail() }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [refreshDetail])
+
+  // 标签动作后除刷新列表外还须重新贴合原生视图：壳子 create-tab 只建视图不挂载，
+  // switch/close 也只改服务端 activeTabId——不重挂的话画面区仍是旧标签。
+  const afterTabAction = useCallback((): void => {
+    void refreshDetail()
+    syncViewBounds()
+  }, [refreshDetail, syncViewBounds])
+
+  const postTab = useCallback((payload: Record<string, unknown>): void => {
+    fetch('/api/dsh-browser/tabs', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId, ...payload }),
+    })
+      .then(() => { afterTabAction() })
+      .catch(() => {})
+  }, [sessionId, afterTabAction])
+
+  // 导航控制（后退/前进/刷新）：忙态点亮地址栏进度轨，完成后刷新详情。
+  const control = useCallback((action: 'back' | 'forward' | 'reload'): void => {
+    setNavBusy(true)
+    fetch('/api/dsh-browser/control', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId, action }),
+    })
+      .catch(() => {})
+      .finally(() => {
+        setNavBusy(false)
+        void refreshDetail()
+      })
+  }, [sessionId, refreshDetail])
+
+  // 地址栏回车：在当前标签导航（不新开标签）。
+  const navigateTo = useCallback((next: string): void => {
+    setNavBusy(true)
+    fetch('/api/dsh-browser/navigate', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId, url: next }),
+    })
+      .catch(() => {})
+      .finally(() => {
+        setNavBusy(false)
+        void refreshDetail()
+      })
+  }, [sessionId, refreshDetail])
+
+  const copyUrl = useCallback((): void => {
+    if (currentUrl === '') return
+    navigator.clipboard.writeText(currentUrl)
+      .then(() => {
+        setCopied(true)
+        window.setTimeout(() => { setCopied(false) }, 1500)
+      })
+      .catch(() => {})
+  }, [currentUrl])
+
+  // 收藏/取消收藏当前页（按 host 判定是否已在书签里）。
+  const curHost = hostOf(currentUrl)
+  const bookmarked = useMemo(
+    () => curHost !== '' && sites.some((s) => hostOf(s.url) === curHost),
+    [sites, curHost],
+  )
+  const toggleBookmark = useCallback((): void => {
+    if (currentUrl === '') return
+    const hit = sites.find((s) => hostOf(s.url) === curHost)
+    if (hit !== undefined) {
+      mutateSites({ action: 'remove', id: hit.id })
+      return
+    }
+    const title = activeTab?.title !== undefined && activeTab.title !== '' ? activeTab.title : curHost
+    mutateSites({ action: 'add', title: title.slice(0, 40), url: currentUrl })
+    // 收藏后自动展开书签栏，让用户看到结果落在哪。
+    setBookmarksOn(true)
+    try { window.localStorage.setItem(BOOKMARKS_KEY, '1') } catch { /* 忽略 */ }
+  }, [currentUrl, sites, curHost, activeTab, mutateSites])
+
+  const toggleBookmarksBar = useCallback((): void => {
+    setBookmarksOn((v) => {
+      const next = !v
+      try { window.localStorage.setItem(BOOKMARKS_KEY, next ? '1' : '0') } catch { /* 忽略 */ }
+      return next
+    })
+  }, [])
+
+  // 轮询 screencast 最新帧：带 since 增量拉取，静止时服务端返回 304 空体，
+  // 不下载/不解码图片；连续无新帧自动降频，一旦有新帧立即恢复高频。
+  // 坐标映射基准（x-frame-width/height）同步维护。
+  useEffect(() => {
+    let alive = true
+    let objectUrl: string | null = null
+    let lastRev = 0
+    let intervalMs = 150
+    let idleStreak = 0
+    let timer = 0
+
+    const restartTimer = (ms: number): void => {
+      window.clearInterval(timer)
+      timer = window.setInterval(() => { void poll() }, ms)
+    }
+
+    const poll = async (): Promise<void> => {
+      try {
+        // 真实窗口已接管画面 / 后台标签页：不再拉帧（服务端 screencast 也已停）。
+        if (attachedRef.current || document.hidden) return
+        const res = await fetch(`/api/dsh-browser/frame?sessionId=${encodeURIComponent(sessionId)}&since=${lastRev}`, { cache: 'no-store' })
+        if (res.status === 304) {
+          idleStreak++
+          if (idleStreak >= 3 && intervalMs < 1200) {
+            intervalMs = Math.min(1200, intervalMs * 2)
+            restartTimer(intervalMs)
+          }
+          return
+        }
+        if (!res.ok) { if (alive) setFrameError(true); return }
+        idleStreak = 0
+        if (intervalMs !== 150) { intervalMs = 150; restartTimer(intervalMs) }
+        const rev = Number(res.headers.get('x-frame-rev')) || 0
+        const w = Number(res.headers.get('x-frame-width')) || 0
+        const h = Number(res.headers.get('x-frame-height')) || 0
+        const blob = await res.blob()
+        if (!alive) return
+        if (w > 0 && h > 0) frameSizeRef.current = { width: w, height: h }
+        if (rev > 0) lastRev = rev
+        const url = URL.createObjectURL(blob)
+        if (objectUrl) URL.revokeObjectURL(objectUrl)
+        objectUrl = url
+        setFrameUrl(url)
+        setFrameError(false)
+      } catch { /* 保持上次 */ }
+    }
+
+    void poll()
+    timer = window.setInterval(() => { void poll() }, intervalMs)
+    return () => {
+      alive = false
+      window.clearInterval(timer)
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+    }
+  }, [sessionId])
 
   // 抽屉内坐标 → 远程视口坐标（按 img 实际显示尺寸线性缩放）。
   const toPage = useCallback((clientX: number, clientY: number) => {
@@ -511,6 +868,35 @@ function BrowserDrawer({ sessionId, onClose, onPickElement }: {
       y: Math.max(0, Math.round((clientY - rect.top) * sy)),
     }
   }, [])
+
+  const sendInput = useCallback((payload: Record<string, unknown>) => {
+    fetch('/api/dsh-browser/input', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId, ...payload }),
+    }).catch(() => {})
+  }, [sessionId])
+
+  // 鼠标移动：合并发送（一次在途只保留最新坐标），快速移动时不堆积 POST 请求。
+  const movePending = useRef<{ x: number; y: number } | null>(null)
+  const moveInFlight = useRef(false)
+  const sendMove = useCallback((): void => {
+    const next = movePending.current
+    if (next === null || moveInFlight.current) return
+    moveInFlight.current = true
+    fetch('/api/dsh-browser/input', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId, type: 'mouse', event: 'move', x: next.x, y: next.y }),
+    })
+      .catch(() => {})
+      .finally(() => {
+        moveInFlight.current = false
+        // 在途期间又产生了新坐标：补发最新一次。
+        const cur = movePending.current
+        if (cur !== null && (cur.x !== next.x || cur.y !== next.y)) sendMove()
+      })
+  }, [sessionId])
 
   // 清除 hover 高亮，并使在途的 hover 请求失效（返回后不再落地）。
   const clearHover = useCallback((): void => {
@@ -554,6 +940,43 @@ function BrowserDrawer({ sessionId, onClose, onPickElement }: {
         if (cur !== null && (cur.x !== next.x || cur.y !== next.y)) queryHover()
       })
   }, [sessionId])
+
+  const onMouseMove = useCallback((e: React.MouseEvent) => {
+    if (pickingRef.current) {
+      // 选取模式：不转发到页面，改为采集 hover 元素范围画高亮框。
+      const { x, y } = toPage(e.clientX, e.clientY)
+      const last = hoverPendingRef.current
+      if (last !== null && last.x === x && last.y === y) return
+      hoverPendingRef.current = { x, y }
+      queryHover()
+      return
+    }
+    const { x, y } = toPage(e.clientX, e.clientY)
+    const last = movePending.current
+    if (last !== null && last.x === x && last.y === y) return
+    movePending.current = { x, y }
+    sendMove()
+  }, [toPage, sendMove, queryHover])
+
+  const buttonOf = (b: number): string => (b === 2 ? 'right' : b === 1 ? 'middle' : 'left')
+
+  const onMouseDown = useCallback((e: React.MouseEvent) => {
+    if (pickingRef.current) return
+    const { x, y } = toPage(e.clientX, e.clientY)
+    sendInput({ type: 'mouse', event: 'down', x, y, button: buttonOf(e.button) })
+  }, [toPage, sendInput])
+
+  const onMouseUp = useCallback((e: React.MouseEvent) => {
+    if (pickingRef.current) return
+    const { x, y } = toPage(e.clientX, e.clientY)
+    sendInput({ type: 'mouse', event: 'up', x, y, button: buttonOf(e.button) })
+  }, [toPage, sendInput])
+
+  const onClick = useCallback((e: React.MouseEvent) => {
+    if (pickingRef.current) return
+    const { x, y } = toPage(e.clientX, e.clientY)
+    sendInput({ type: 'mouse', event: 'click', x, y })
+  }, [toPage, sendInput])
 
   // 进入选取模式：隐藏原生视图（detach），让画面回到 img 帧流——这样点击才
   // 落在 React 的 img 上而不是被原生视图吃掉；detach 完成后恢复帧轮询刷新画面。
@@ -601,155 +1024,17 @@ function BrowserDrawer({ sessionId, onClose, onPickElement }: {
     }
   }, [toPage, sessionId, setPickingBoth, clearHover, onPickElement, requestClose, syncViewBounds])
 
-  // Esc 关闭；选取模式下 Esc 只退出选取模式、不关抽屉。
+  // Esc 关闭；选取模式/更多菜单打开时 Esc 只关它们、不关抽屉。
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') {
-        if (pickingRef.current) exitPickMode()
-        else requestClose()
-      }
+      if (e.key !== 'Escape') return
+      if (pickingRef.current) { exitPickMode(); return }
+      if (menuOpen) { setMenuOpen(false); return }
+      requestClose()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [exitPickMode, requestClose])
-
-  // 轮询操作详情（时间线 + url/title + 标签列表）；tab 操作后可手动触发。
-  const refreshDetail = useCallback(async (): Promise<void> => {
-    try {
-      const res = await fetch(`/api/dsh-browser/session?sessionId=${encodeURIComponent(sessionId)}`, { cache: 'no-store' })
-      const data: SessionDetail = await res.json()
-      setDetail(data)
-    } catch { /* 保持上次 */ }
-  }, [sessionId])
-
-  useEffect(() => {
-    void refreshDetail()
-    const timer = window.setInterval(() => { void refreshDetail() }, 800)
-    return () => { window.clearInterval(timer) }
-  }, [refreshDetail])
-
-  // 轮询 screencast 最新帧：带 since 增量拉取，静止时服务端返回 304 空体，
-  // 不下载/不解码图片；连续无新帧自动降频，一旦有新帧立即恢复高频。
-  // 坐标映射基准（x-frame-width/height）同步维护。
-  useEffect(() => {
-    let alive = true
-    let objectUrl: string | null = null
-    let lastRev = 0
-    let intervalMs = 150
-    let idleStreak = 0
-    let timer = 0
-
-    const restartTimer = (ms: number): void => {
-      window.clearInterval(timer)
-      timer = window.setInterval(() => { void poll() }, ms)
-    }
-
-    const poll = async (): Promise<void> => {
-      try {
-        // 真实窗口已接管画面：不再拉帧（服务端 screencast 也已停）。
-        if (attachedRef.current) return
-        const res = await fetch(`/api/dsh-browser/frame?sessionId=${encodeURIComponent(sessionId)}&since=${lastRev}`, { cache: 'no-store' })
-        if (res.status === 304) {
-          idleStreak++
-          if (idleStreak >= 3 && intervalMs < 1200) {
-            intervalMs = Math.min(1200, intervalMs * 2)
-            restartTimer(intervalMs)
-          }
-          return
-        }
-        if (!res.ok) { if (alive) setFrameError(true); return }
-        idleStreak = 0
-        if (intervalMs !== 150) { intervalMs = 150; restartTimer(intervalMs) }
-        const rev = Number(res.headers.get('x-frame-rev')) || 0
-        const w = Number(res.headers.get('x-frame-width')) || 0
-        const h = Number(res.headers.get('x-frame-height')) || 0
-        const blob = await res.blob()
-        if (!alive) return
-        if (w > 0 && h > 0) frameSizeRef.current = { width: w, height: h }
-        if (rev > 0) lastRev = rev
-        const url = URL.createObjectURL(blob)
-        if (objectUrl) URL.revokeObjectURL(objectUrl)
-        objectUrl = url
-        setFrameUrl(url)
-        setFrameError(false)
-      } catch { /* 保持上次 */ }
-    }
-
-    void poll()
-    timer = window.setInterval(() => { void poll() }, intervalMs)
-    return () => {
-      alive = false
-      window.clearInterval(timer)
-      if (objectUrl) URL.revokeObjectURL(objectUrl)
-    }
-  }, [sessionId])
-
-  // 抽屉内坐标 → 远程视口坐标（按 img 实际显示尺寸线性缩放）。
-  const sendInput = useCallback((payload: Record<string, unknown>) => {
-    fetch('/api/dsh-browser/input', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ sessionId, ...payload }),
-    }).catch(() => {})
-  }, [sessionId])
-
-  // 鼠标移动：合并发送（一次在途只保留最新坐标），快速移动时不堆积 POST 请求。
-  const movePending = useRef<{ x: number; y: number } | null>(null)
-  const moveInFlight = useRef(false)
-  const sendMove = useCallback((): void => {
-    const next = movePending.current
-    if (next === null || moveInFlight.current) return
-    moveInFlight.current = true
-    fetch('/api/dsh-browser/input', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ sessionId, type: 'mouse', event: 'move', x: next.x, y: next.y }),
-    })
-      .catch(() => {})
-      .finally(() => {
-        moveInFlight.current = false
-        // 在途期间又产生了新坐标：补发最新一次。
-        const cur = movePending.current
-        if (cur !== null && (cur.x !== next.x || cur.y !== next.y)) sendMove()
-      })
-  }, [sessionId])
-
-  const onMouseMove = useCallback((e: React.MouseEvent) => {
-    if (pickingRef.current) {
-      // 选取模式：不转发到页面，改为采集 hover 元素范围画高亮框。
-      const { x, y } = toPage(e.clientX, e.clientY)
-      const last = hoverPendingRef.current
-      if (last !== null && last.x === x && last.y === y) return
-      hoverPendingRef.current = { x, y }
-      queryHover()
-      return
-    }
-    const { x, y } = toPage(e.clientX, e.clientY)
-    const last = movePending.current
-    if (last !== null && last.x === x && last.y === y) return
-    movePending.current = { x, y }
-    sendMove()
-  }, [toPage, sendMove, queryHover])
-
-  const buttonOf = (b: number): string => (b === 2 ? 'right' : b === 1 ? 'middle' : 'left')
-
-  const onMouseDown = useCallback((e: React.MouseEvent) => {
-    if (pickingRef.current) return
-    const { x, y } = toPage(e.clientX, e.clientY)
-    sendInput({ type: 'mouse', event: 'down', x, y, button: buttonOf(e.button) })
-  }, [toPage, sendInput])
-
-  const onMouseUp = useCallback((e: React.MouseEvent) => {
-    if (pickingRef.current) return
-    const { x, y } = toPage(e.clientX, e.clientY)
-    sendInput({ type: 'mouse', event: 'up', x, y, button: buttonOf(e.button) })
-  }, [toPage, sendInput])
-
-  const onClick = useCallback((e: React.MouseEvent) => {
-    if (pickingRef.current) return
-    const { x, y } = toPage(e.clientX, e.clientY)
-    sendInput({ type: 'mouse', event: 'click', x, y })
-  }, [toPage, sendInput])
+  }, [exitPickMode, requestClose, menuOpen])
 
   // 滚轮：原生 passive:false 才能 preventDefault（阻止滚动 DSH 面板），并回传远程浏览器。
   useEffect(() => {
@@ -765,7 +1050,6 @@ function BrowserDrawer({ sessionId, onClose, onPickElement }: {
     return () => { box.removeEventListener('wheel', onWheel) }
   }, [toPage, sendInput])
 
-  // 键盘：可打印字符走 insertText；特殊键/组合键走 dispatchKey；跳过 IME 组合态。
   const onKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.nativeEvent.isComposing) return
     if (pickingRef.current) return
@@ -782,9 +1066,6 @@ function BrowserDrawer({ sessionId, onClose, onPickElement }: {
       sendInput({ type: 'text', text: e.key })
     }
   }, [sendInput])
-
-  const steps = (detail?.steps ?? []).slice().reverse()
-  const running = detail?.active === true || steps.some(s => s.status === 'running')
 
   // hover 高亮框：把页面视口坐标范围换算成 img 显示坐标（相对 frame 容器），
   // 在 hover/画面尺寸变化时重算。
@@ -806,47 +1087,148 @@ function BrowserDrawer({ sessionId, onClose, onPickElement }: {
     }
   }, [hover, frameUrl])
 
+  const tabs = detail?.tabs ?? []
+  const menuItems = [
+    {
+      key: 'bookmarks',
+      label: bookmarksOn ? '隐藏书签栏' : '显示书签栏',
+      onSelect: toggleBookmarksBar,
+    },
+    { key: 'copy', label: '复制当前网址', disabled: currentUrl === '', onSelect: copyUrl },
+    { key: 'sep1', label: '', onSelect: () => {} },
+    {
+      key: 'closeOthers',
+      label: '关闭其他标签页',
+      hint: tabs.length > 1 ? String(tabs.length - 1) : undefined,
+      disabled: tabs.length < 2,
+      onSelect: () => {
+        for (const t of tabs) if (!t.active) postTab({ action: 'close', tabId: t.tabId })
+      },
+    },
+    {
+      key: 'stop',
+      label: '关闭浏览器（释放内存）',
+      onSelect: () => {
+        fetch('/api/dsh-browser/tabs', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ sessionId, action: 'close', tabId: detail?.activeTabId ?? '' }),
+        }).catch(() => {})
+        requestClose()
+      },
+    },
+  ]
+
   return createPortal(
     <>
       {/* 左侧留白点击区：覆盖整屏但被抽屉盖住右侧，实际可点的就是左边那条空隙 */}
       <div
-        className={open ? 'dsh-browser-drawer__hitzone dsh-browser-drawer__hitzone--on' : 'dsh-browser-drawer__hitzone'}
+        className={open ? 'dsh-browser-scrim dsh-browser-scrim--on' : 'dsh-browser-scrim'}
         onClick={requestClose}
         aria-hidden
       />
       <div
-        className={open ? 'dsh-browser-drawer dsh-browser-drawer--open' : 'dsh-browser-drawer'}
+        className={[
+          'dsh-browser-drawer',
+          open ? 'dsh-browser-drawer--open' : '',
+          resizing ? 'dsh-browser-drawer--resizing' : '',
+        ].filter(Boolean).join(' ')}
+        style={{ ['--dshb-width' as any]: `${width}px` }}
         role="dialog"
         aria-label="AI 浏览器"
       >
-        <header className="dsh-browser-drawer__head">
-          <span className="dsh-browser-drawer__title">
-            <BrowserIcon size={16} /> AI 浏览器{running ? ' · 操作中' : ''}
+        {/* 左缘拖拽把手：调节抽屉宽度（持久化） */}
+        <div
+          className="dsh-browser-grip"
+          onPointerDown={startResize}
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="拖动调节浏览器宽度"
+        />
+
+        {/* ── ① 标签页栏 ── */}
+        <div className="dsh-browser-tabstrip">
+          <span className="dsh-browser-brand">
+            <GlobeIcon size={14} />
+            <span className={running ? 'dsh-browser-brand__dot dsh-browser-brand__dot--run' : 'dsh-browser-brand__dot'} aria-hidden />
           </span>
-          {/* 标签动作后除刷新列表外还须重新贴合原生视图：壳子 create-tab 只建视图
-    不挂载，switch/close 也只改服务端 activeTabId——不重挂的话画面区仍是旧标签 */}
-        <TabsBar tabs={detail?.tabs ?? []} sessionId={sessionId} onChanged={() => { void refreshDetail(); syncViewBounds() }} />
-          <button
-            type="button"
-            className={picking ? 'dsh-browser-drawer__pick dsh-browser-drawer__pick--on' : 'dsh-browser-drawer__pick'}
-            onClick={() => { picking ? exitPickMode() : enterPickMode() }}
-            aria-pressed={picking}
-            aria-label="选取元素"
-            title={picking ? '退出选取模式（或按 Esc）' : '选取元素：点击画面中的元素，把定位信息填入对话框'}
-          >
-            {picking ? '退出选取' : '选取元素'}
-          </button>
-          <button type="button" className="dsh-browser-drawer__close" onClick={requestClose} aria-label="关闭">✕</button>
-        </header>
-        <div className="dsh-browser-drawer__urlrow">
-          {/* 快捷站点 = 新开标签打开：同样需要重挂原生视图才能看到新标签画面 */}
-        <SitesBar sessionId={sessionId} currentUrl={detail?.url ?? ''} onChanged={() => { void refreshDetail(); syncViewBounds() }} />
-          <UrlCopyBar url={detail?.tabs?.find((t) => t.active)?.url ?? detail?.url ?? ''} />
+          <TabsBar
+            tabs={tabs}
+            onSwitch={(tabId) => { postTab({ action: 'switch', tabId }) }}
+            onClose={(tabId) => { postTab({ action: 'close', tabId }) }}
+          />
+          <IconButton label="新建标签页" onClick={() => { postTab({ action: 'new' }) }}>
+            <PlusIcon size={16} />
+          </IconButton>
+          <IconButton label="关闭浏览器面板（Esc）" onClick={requestClose}>
+            <CloseIcon size={16} />
+          </IconButton>
         </div>
-        <div className="dsh-browser-drawer__body">
-          <div ref={frameBoxRef} className={picking ? 'dsh-browser-drawer__frame dsh-browser-drawer__frame--picking' : 'dsh-browser-drawer__frame'}>
+
+        {/* ── ② 工具栏：导航 + 地址栏 + 动作 ── */}
+        <div className="dsh-browser-toolbar">
+          <div className="dsh-browser-toolbar__nav">
+            <IconButton label="后退" disabled={detail?.canBack !== true} onClick={() => { control('back') }}>
+              <BackIcon size={16} />
+            </IconButton>
+            <IconButton label="前进" disabled={detail?.canForward !== true} onClick={() => { control('forward') }}>
+              <ForwardIcon size={16} />
+            </IconButton>
+            <IconButton label="刷新" onClick={() => { control('reload') }}>
+              <ReloadIcon size={16} />
+            </IconButton>
+          </div>
+          <OmniBox url={currentUrl} loading={navBusy} onNavigate={navigateTo} />
+          <span className="dsh-browser-toolbar__sep" aria-hidden />
+          <div className="dsh-browser-toolbar__actions">
+            <IconButton
+              label={copied ? '已复制网址' : '复制网址'}
+              active={copied}
+              disabled={currentUrl === ''}
+              onClick={copyUrl}
+            >
+              {copied ? <CheckIcon size={16} /> : <CopyIcon size={16} />}
+            </IconButton>
+            <IconButton
+              label={bookmarked ? '取消收藏' : '收藏当前页'}
+              active={bookmarked}
+              disabled={currentUrl === ''}
+              onClick={toggleBookmark}
+            >
+              <StarIcon size={16} filled={bookmarked} />
+            </IconButton>
+            <IconButton
+              label={picking ? '退出选取模式（Esc）' : '选取元素：点击画面元素，把定位信息填入对话框'}
+              active={picking}
+              onClick={() => { picking ? exitPickMode() : enterPickMode() }}
+            >
+              <PickIcon size={16} />
+            </IconButton>
+            <MoreMenu open={menuOpen} onOpenChange={setMenuOpen} items={menuItems} />
+          </div>
+        </div>
+
+        {/* ── ③ 书签栏（可在「更多」里隐藏）── */}
+        {bookmarksOn && (
+          <BookmarksBar
+            sites={sites}
+            sessionId={sessionId}
+            currentUrl={currentUrl}
+            onChanged={afterTabAction}
+            onMutate={mutateSites}
+          />
+        )}
+
+        {/* ── 画面区 ── */}
+        <div className="dsh-browser-view">
+          <div ref={frameBoxRef} className={picking ? 'dsh-browser-stage dsh-browser-stage--picking' : 'dsh-browser-stage'}>
             {frameError
-              ? <span className="dsh-browser-drawer__empty">浏览器画面不可用</span>
+              ? (
+                <div className="dsh-browser-blank">
+                  <span>浏览器画面不可用</span>
+                  <span className="dsh-browser-blank__hint">壳子未启动或视图已关闭，可新建标签页重试</span>
+                </div>
+              )
               : frameUrl === ''
                 ? (
                   <div className="dsh-browser-loading">
@@ -874,7 +1256,7 @@ function BrowserDrawer({ sessionId, onClose, onPickElement }: {
                 )}
             {picking && pickBoxStyle && hover && (
               <div
-                className="dsh-browser-drawer__pickbox"
+                className="dsh-browser-pickbox"
                 style={{
                   left: pickBoxStyle.left,
                   top: pickBoxStyle.top,
@@ -883,28 +1265,40 @@ function BrowserDrawer({ sessionId, onClose, onPickElement }: {
                 }}
               >
                 {hover.tag !== '' && (
-                  <span className="dsh-browser-drawer__pickbox-tag">{`<${hover.tag}>`}</span>
+                  <span className="dsh-browser-pickbox__tag">{`<${hover.tag}>`}</span>
                 )}
               </div>
             )}
             {picking && (
-              <div className="dsh-browser-drawer__pickhint">点击要选取的元素 · Esc 退出</div>
+              <div className="dsh-browser-pickhint">
+                <PickIcon size={13} />
+                点击要选取的元素 · Esc 退出
+              </div>
             )}
           </div>
         </div>
-        {/* 操作时间线：底部悬浮条（一句话）+ 点击展开完整列表；原生视图高度让位 */}
-        <div className={timelineOpen ? 'dsh-browser-drawer__timeline dsh-browser-drawer__timeline--expanded' : 'dsh-browser-drawer__timeline'}>
-          <button type="button" className="dsh-browser-drawer__tl-bar" onClick={() => { setTimelineOpen((v) => !v) }}>
+
+        {/* ── 操作时间线：底部悬浮细轨 + 点击展开完整列表；原生视图高度让位 ── */}
+        <div className="dsh-browser-track">
+          <button
+            type="button"
+            className="dsh-browser-track__bar"
+            onClick={() => { setTimelineOpen((v) => !v) }}
+            aria-expanded={timelineOpen}
+          >
             <span className={`dsh-browser-step__dot${running ? ' dsh-browser-step__dot--run' : ''}`} aria-hidden />
-            <span className="dsh-browser-drawer__tl-latest">
+            <span className="dsh-browser-track__latest">
               {steps[0] ? steps[0].label : '等待 AI 操作…'}
             </span>
-            <span className="dsh-browser-drawer__tl-toggle">{timelineOpen ? '收起 ▾' : `操作记录${steps.length > 0 ? ` ${steps.length}` : ''} ▴`}</span>
+            {steps.length > 0 && <span className="dsh-browser-track__count">{steps.length}</span>}
+            <span className="dsh-browser-track__toggle" aria-hidden>
+              {timelineOpen ? <ChevronDownIcon size={14} /> : <ChevronUpIcon size={14} />}
+            </span>
           </button>
           {timelineOpen && (
-            <div className="dsh-browser-drawer__tl-list">
+            <div className="dsh-browser-track__list">
               {steps.length === 0
-                ? <div className="dsh-browser-drawer__empty">暂无操作记录</div>
+                ? <div className="dsh-browser-track__empty">暂无操作记录</div>
                 : steps.map(step => <StepRow key={step.seq} step={step} />)}
             </div>
           )}
@@ -1036,7 +1430,7 @@ export const BrowserSeat = memo(function BrowserSeat({ sessionId, input, inputAc
       aria-pressed={engaged}
       onClick={() => { setOpen(v => !v) }}
     >
-      <BrowserIcon size={14} />
+      <GlobeIcon size={14} />
     </button>
   )
 
@@ -1054,7 +1448,7 @@ export const BrowserSeat = memo(function BrowserSeat({ sessionId, input, inputAc
           aria-hidden={!gateOpen}
         >
           <div className="dsh-browser-gate__head">
-            <span className="dsh-browser-gate__title"><BrowserIcon size={14} /> AI 浏览器</span>
+            <span className="dsh-browser-gate__title"><GlobeIcon size={14} /> AI 浏览器</span>
             <span className={denied ? 'dsh-browser-gate__state dsh-browser-gate__state--deny' : 'dsh-browser-gate__state'}>
               {denied ? '已禁止' : '已允许'}
             </span>

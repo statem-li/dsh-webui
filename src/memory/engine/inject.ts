@@ -10,8 +10,8 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { MemoryConfig } from '../types.js'
 import { buildInjectionText, selectInjectionEntries, workspaceHashOf } from './compile.js'
 import { searchEntries } from './retrieval.js'
-import { applyHit, daysSince } from './scoring.js'
-import { nowIso, type MemoryStore } from './store.js'
+import { daysSince } from './scoring.js'
+import type { MemoryStore } from './store.js'
 
 /** pre-step 载荷的最小 agent 面。 */
 export interface PreStepAgent {

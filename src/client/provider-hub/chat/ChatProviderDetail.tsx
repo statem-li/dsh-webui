@@ -18,7 +18,7 @@
  * 移植自官方 ui-settings-models 的 ProviderEditor.tsx / CustomProviderCard.tsx。
  */
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 import type {
   CredentialView, IApiClient, SettingsNamespaceView, SettingsPathOpView,
@@ -199,10 +199,32 @@ export function ChatProviderDetail(props: ChatProviderDetailProps): ReactNode {
     setCustomProtocol('')
     setCustomModels([])
     setCommitted(false)
-    // 目标身份由 provider + settingsNs + path + mode 决定；revision 变化
-    // 时也重置，避免拿旧 revision 做写入基线。
+    // 目标身份由 provider + settingsNs + path + mode 决定；命名空间从「加载中」
+    // 变为可用时也需重新起稿（首帧 namespace 可能还没到）。
+    //
+    // ⚠ 绝不能把 namespace.revision 放进依赖：任何后台 settings 写入（另一张卡
+    // 保存、Developer Role 一键检测、推理等级检测自动落盘）都会推 revision，
+    // 卡片会在用户打字途中把 keyDraft / baseURL / 模型草稿整体清空；自定义创建
+    // 模式更致命——committed 被重置回 false 后重试会重跑 mutate，携带已被自己
+    // 那次写入取代的 revision，必得 settings-conflict，密钥再也存不进去。
+    // 陈旧基线由下面的「基线重挂」effect 维护，不必清空草稿。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [target.provider, target.settingsNs, target.settingsPath.join('/'), target.mode, namespace?.revision])
+  }, [target.provider, target.settingsNs, target.settingsPath.join('/'), target.mode, namespace === undefined])
+
+  // 基线重挂：后台写入推高 revision 后（本卡的推理等级检测就会 host 侧落盘），
+  // 只把写入基线换成最新的用户层子树与 revision，草稿一字不动——否则保存必得
+  // settings-conflict，而重置草稿又会吞掉用户已键入的内容。
+  const rebasedAt = useRef<number | undefined>(undefined)
+  useEffect(() => {
+    const revision = namespace?.revision
+    if (revision === undefined) return
+    if (rebasedAt.current === undefined) { rebasedAt.current = revision; return }
+    if (rebasedAt.current === revision) return
+    rebasedAt.current = revision
+    setExpectedRevision(revision)
+    setCommittedOriginal(getPath(namespace!.user, target.settingsPath))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [namespace?.revision])
 
   const layout = layoutOf(target.settingsNs)
   const root = useMemo(() => namespace === undefined ? undefined : rehydrateSchema(namespace.schema), [namespace])
@@ -226,6 +248,10 @@ export function ChatProviderDetail(props: ChatProviderDetailProps): ReactNode {
   useEffect(() => {
     let stale = false
     setKeyState(undefined)
+    // 自定义创建模式不查凭据：路由 id 还在键入中，keyRef 每敲一个字符就变一次，
+    // 会按键发一串 credentials.describe；而且新路由必然 unconfigured，那颗红点
+    // 只会在创建卡上谎报「API 密钥缺失」。留 undefined = 不显示状态点。
+    if (target.mode === 'custom') return () => { stale = true }
     // key 状态只是占位提示，不是编辑前提：业务拒绝或传输失败都不得以未
     // 处理的 rejection 到达浏览器，卡片直接不带「已配置」提示渲染。
     void api.credentials.describe({ refs: [keyRef] }).then(
@@ -236,7 +262,7 @@ export function ChatProviderDetail(props: ChatProviderDetailProps): ReactNode {
       () => undefined,
     )
     return () => { stale = true }
-  }, [api.credentials, keyRef])
+  }, [api.credentials, keyRef, target.mode])
 
   // 自定义创建的协议默认取适配器报告的第一个选项。
   useEffect(() => {

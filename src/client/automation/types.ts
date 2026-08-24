@@ -26,9 +26,12 @@ export interface CronJob {
   nextRunAt: string | null
 }
 
+/** 一次运行的状态。 */
+export type RunStatus = 'success' | 'error' | 'skipped'
+
 /** 单次运行记录。 */
 export interface RunRecord {
-  status: 'success' | 'error' | 'skipped'
+  status: RunStatus
   timestamp: string
   startedAt?: string
   finishedAt?: string
@@ -38,6 +41,10 @@ export interface RunRecord {
   staleConfigRevision?: boolean
   /** 成功时完整产出的文件名（经 /runs/file 读取全文）。 */
   file?: string
+  /** 触发来源：schedule=到点自动触发；manual=手动「立即运行」。 */
+  trigger?: 'schedule' | 'manual'
+  /** 本次执行实际使用的模型（provider/model）。 */
+  model?: string
 }
 
 /** 待确认的 AI 建议。 */
@@ -60,10 +67,20 @@ export interface ModelOption {
   readonly name: string
 }
 
+/** 任务列表响应（running = 服务端正在执行的任务 id）。 */
+export interface JobsResponse {
+  ok: boolean
+  jobs: CronJob[]
+  running?: string[]
+}
+
+/** 一条运行记录（合并视图带任务名）。 */
+export type RunRow = RunRecord & { jobId?: string, jobLabel?: string }
+
 /** 任务运行历史查询响应。 */
 export interface RunsResponse {
   ok: boolean
-  runs: Array<RunRecord & { jobId?: string, jobLabel?: string }>
+  runs: RunRow[]
 }
 
 /** 完成事件（host /events 载荷；与 host routes.ts 的 AutomationEvent 同构）。 */
@@ -72,7 +89,7 @@ export interface AutomationEvent {
   at: number
   jobId: string
   jobLabel: string
-  status: 'success' | 'error' | 'skipped'
+  status: RunStatus
   summary?: string
   error?: string
 }

@@ -26,10 +26,17 @@ export function applyProviderHub(ctx: ClientContext): void {
     const injected = (): ProviderHubInjected => ({ controller, api: connection.api })
 
     // 推送失效收敛：settings / credentials / provider 拓扑变化都重拉快照。
+    // 仅在页面已加载过（status 离开 idle）后才重拉：设置弹窗从未打开过的会话里，
+    // 每个 settings/credentials 事件都会白跑 llm.providers + settings.describe +
+    // credentials.describe 三次 wire 调用（对齐官方 refreshIfLoaded 语义）。
+    const refresh = (): void => {
+      if (controller.store.getSnapshot().status === 'idle') return
+      void controller.load()
+    }
     const disposers = [
-      ctx.remote.$on('settings/document-updated', () => { void controller.load() }),
-      ctx.remote.$on('credentials/updated', () => { void controller.load() }),
-      ctx.remote.$on('llm/adapters-updated', () => { void controller.load() }),
+      ctx.remote.$on('settings/document-updated', refresh),
+      ctx.remote.$on('credentials/reference-updated', refresh),
+      ctx.remote.$on('llm/adapters-updated', refresh),
     ]
 
     const unregister = ctx.slots.inject('settings.section', () =>

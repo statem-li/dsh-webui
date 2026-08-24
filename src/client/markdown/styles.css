@@ -12,20 +12,139 @@
   gap: 16px;
 }
 
-/* Card wrapper around the assistant's finalized reply content. */
+/* ── 对话流卡片 ───────────────────────────────────────────────────────
+   两种形态（见 flow-card.tsx）：
+    - --step：回合中间的已完成片段。左侧一条竖线 + 极淡纱，用来圈出「一步」，
+      不抢主回复注意力，也不加描边（长会话里满屏方框太吵）。
+    - --reply：回合最终回复（总结卡）。描边 + 顶部高光 + 头部完成标记与统计
+      chip，收口一条渐隐分隔线。
+   共同规则：跟随文字色的中性半透明纱（浅色=淡黑、深色=淡白，一条规则通吃
+   两个主题；靠 prefers-color-scheme 判深浅是错的——DSH 主题由
+   body[data-ds-dark-theme] 决定）。
+   ⚠ 不加 backdrop-filter：消息流里每条回复都是一张卡，长会话下大面积模糊
+   会拖垮滚动性能；玻璃质感下靠半透明纱透出壁纸即可。 */
 .dsh-better-markdown__card {
   min-width: 0;
-  border: 1px solid var(--dsw-alias-border-base, rgba(127,127,127,.25));
-  border-radius: 10px;
-  background: rgba(127, 127, 127, .06);
-  padding: 12px 14px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, .05);
+  border-radius: 14px;
 }
 
-@media (prefers-color-scheme: dark) {
-  .dsh-better-markdown__card {
-    background: rgba(255, 255, 255, .05);
-  }
+/* 中间步骤：轻量竖线卡 */
+.dsh-better-markdown__card--step {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border-left: 2px solid var(--dsw-alias-border-l2, rgba(127,127,127,.22));
+  border-radius: 0 12px 12px 0;
+  padding: 10px 14px;
+  background: color-mix(in srgb, var(--dsw-alias-label-primary) 2.5%, transparent);
+}
+
+/* 最终回复：总结卡 */
+.dsh-better-markdown__card--reply {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--dsw-alias-border-l3, rgba(127,127,127,.16));
+  padding: 0;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--dsw-alias-bg-base) 26%, transparent), transparent 42%),
+    var(--dsh-flow-veil, color-mix(in srgb, var(--dsw-alias-label-primary) 4%, transparent));
+  box-shadow: 0 1px 2px rgba(15, 17, 21, .04), 0 8px 24px -18px rgba(15, 17, 21, .28);
+}
+
+/* 顶边一条品牌蓝渐隐细线：只在总结卡出现，作为「本轮收尾」的视觉锚点。 */
+.dsh-better-markdown__card--reply::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(
+    90deg,
+    var(--dsw-alias-state-business-primary, #4176e6) 0%,
+    color-mix(in srgb, var(--dsw-alias-state-business-primary, #4176e6) 35%, transparent) 42%,
+    transparent 100%
+  );
+  opacity: .75;
+  pointer-events: none;
+}
+
+.dsh-better-markdown__card--reply[data-interrupted]::before {
+  background: linear-gradient(
+    90deg,
+    var(--dsw-alias-state-warn-primary, #f59e0b) 0%,
+    transparent 100%
+  );
+}
+
+/* 头部：完成标记 + 统计 chip 行 */
+.dsh-reply-card__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--dsw-alias-border-l3, rgba(127,127,127,.12));
+  padding: 10px 16px;
+}
+
+.dsh-reply-card__badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  height: 22px;
+  border-radius: 11px;
+  padding: 0 9px;
+  background: color-mix(in srgb, var(--dsw-alias-state-success-primary, #2f9e44) 12%, transparent);
+  color: var(--dsw-alias-state-success-primary, #2f9e44);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 22px;
+  white-space: nowrap;
+}
+
+.dsh-reply-card__badge[data-interrupted] {
+  background: color-mix(in srgb, var(--dsw-alias-state-warn-primary, #f59e0b) 14%, transparent);
+  color: var(--dsw-alias-state-warn-label, #b45309);
+}
+
+.dsh-reply-card__chips {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.dsh-reply-card__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  border: 1px solid var(--dsw-alias-border-l3, rgba(127,127,127,.16));
+  border-radius: 4px;
+  padding: 0 6px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 20px;
+  white-space: nowrap;
+}
+
+.dsh-reply-card__chip-value {
+  color: var(--dsw-alias-label-secondary);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+
+.dsh-reply-card__chip[data-kind="time"] .dsh-reply-card__chip-value {
+  color: var(--dsw-alias-state-business-primary, #4176e6);
+}
+
+.dsh-reply-card__body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 14px 16px;
 }
 
 .dsh-better-markdown__markdown {
@@ -233,55 +352,140 @@
   white-space: nowrap;
 }
 
-/* reasoning entry chip (opens the activity drawer) */
+/* ── 思考入口 chip：与工具 chip（dts__entry）同一套视觉语言 ──────────────
+   胶囊 28px + 圆形图标底 + 强调色（品牌蓝）运行态。--dsh-rea-accent 只在
+   本组件根上声明一次，子元素继承；玻璃质感主题只覆盖表面变量即可。 */
 .dsh-better-markdown__reasoning-entry {
+  --dsh-rea-accent: var(--dsw-alias-state-business-primary, #4176e6);
+  /* 内部填充面：跟随文字色的中性半透明纱（浅色=淡黑、深色=淡白）。不用
+     bg-layer-* 实色——浅色主题下各层同为纯白，叠在白卡上看不出层次；半透明
+     纱还能直接叠在玻璃质感的模糊面上，不会「模糊之上再蒙厚纱」。 */
+  --dsh-rea-fill: var(--dsh-flow-veil, color-mix(in srgb, var(--dsw-alias-label-primary) 5%, transparent));
+  /* chip 表面/描边走变量：玻璃质感只覆盖这两个变量（见 glass.ts），不必用
+     更高特异性的规则去压 chip，否则会连「思考中」的强调色底一起吃掉。 */
+  --dsh-rea-surface: var(--dsw-alias-bg-layer-1, rgba(127,127,127,.05));
+  --dsh-rea-border: var(--dsw-alias-border-l2, rgba(127,127,127,.22));
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 6px;
+  gap: 8px;
   max-width: 100%;
 }
 
 .dsh-better-markdown__reasoning-entry-btn {
+  position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
+  max-width: 100%;
+  height: 28px;
   margin: 0;
-  border: 1px solid var(--dsw-alias-border-base, rgba(127,127,127,.25));
+  overflow: hidden;
+  border: 1px solid var(--dsh-rea-border);
   border-radius: 999px;
-  padding: 2px 12px;
-  background: var(--dsw-alias-bg-layer-1, rgba(127,127,127,.06));
+  padding: 0 12px 0 5px;
+  background: var(--dsh-rea-surface);
+  box-shadow: 0 1px 2px rgba(15,17,21,.04);
   color: var(--dsw-alias-label-secondary);
   cursor: pointer;
   font-size: 12px;
-  line-height: 22px;
+  line-height: 26px;
   white-space: nowrap;
+  transition: border-color .18s ease, background-color .18s ease, box-shadow .18s ease, transform .18s ease;
 }
 
 .dsh-better-markdown__reasoning-entry-btn:hover {
-  background: var(--dsw-alias-interactive-bg-hover, rgba(127,127,127,.12));
+  border-color: color-mix(in srgb, var(--dsh-rea-accent) 34%, var(--dsh-rea-border));
+  background: var(--dsw-alias-interactive-bg-hover, rgba(127,127,127,.1));
+  box-shadow: 0 2px 8px rgba(15,17,21,.08);
   color: var(--dsw-alias-label-primary);
+  transform: translateY(-1px);
 }
 
-.dsh-better-markdown__reasoning-entry[data-running="true"] .dsh-better-markdown__reasoning-entry-btn {
-  color: var(--dsw-alias-state-business-primary, #3182ce);
-  border-color: color-mix(in srgb, var(--dsw-alias-state-business-primary, #3182ce) 45%, transparent);
+.dsh-better-markdown__reasoning-entry-btn:active {
+  box-shadow: 0 1px 2px rgba(15,17,21,.06);
+  transform: none;
+}
+
+.dsh-better-markdown__reasoning-entry-btn:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--dsh-rea-accent) 55%, transparent);
+  outline-offset: 2px;
 }
 
 .dsh-better-markdown__reasoning-entry-icon {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--dsh-rea-accent) 13%, transparent);
+  color: var(--dsh-rea-accent);
   font-size: 12px;
+  line-height: 1;
 }
 
-/* live thinking preview: streams the latest reasoning text, auto-scrolls to
-   the newest line, and adapts its width to the transcript column. */
+.dsh-better-markdown__reasoning-entry-btn > span:not(.dsh-better-markdown__reasoning-entry-icon) {
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 思考中：描边/文字染成强调色 + 扫光高光 + 图标呼吸圈。动画仅在本轮进行中
+   存在（单元素 background-position / box-shadow），思考结束即消失。 */
+.dsh-better-markdown__reasoning-entry[data-running="true"] .dsh-better-markdown__reasoning-entry-btn {
+  border-color: color-mix(in srgb, var(--dsh-rea-accent) 42%, transparent);
+  background:
+    linear-gradient(color-mix(in srgb, var(--dsh-rea-accent) 9%, transparent), color-mix(in srgb, var(--dsh-rea-accent) 9%, transparent)),
+    var(--dsh-rea-surface);
+  color: var(--dsh-rea-accent);
+}
+
+.dsh-better-markdown__reasoning-entry[data-running="true"] .dsh-better-markdown__reasoning-entry-icon {
+  background: color-mix(in srgb, var(--dsh-rea-accent) 20%, transparent);
+  animation: dsh-rea-breathe 1.8s ease-in-out infinite;
+}
+
+.dsh-better-markdown__reasoning-entry[data-running="true"] .dsh-better-markdown__reasoning-entry-btn::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(100deg,
+    transparent 22%,
+    color-mix(in srgb, var(--dsh-rea-accent) 16%, transparent) 50%,
+    transparent 78%);
+  background-size: 220% 100%;
+  pointer-events: none;
+  animation: dsh-rea-sheen 1.9s linear infinite;
+}
+
+@keyframes dsh-rea-sheen {
+  from { background-position: 160% 0; }
+  to { background-position: -60% 0; }
+}
+
+@keyframes dsh-rea-breathe {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--dsh-rea-accent) 32%, transparent); }
+  50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--dsh-rea-accent) 0%, transparent); }
+}
+
+/* 实时思考预览：流式滚动最新思考文字。左侧强调色导轨点明「这是思考流」，
+   顶部一层极淡的强调色渐变让它与正文卡片区分开。 */
 .dsh-better-markdown__reasoning-live {
   align-self: stretch;
+  position: relative;
   max-height: 180px;
   overflow-y: auto;
-  padding: 8px 12px;
-  border: 1px solid var(--dsw-alias-border-base, rgba(127,127,127,.2));
-  border-radius: 8px;
-  background: var(--dsw-alias-bg-layer-2, rgba(127,127,127,.04));
+  border: 1px solid var(--dsw-alias-border-l3, rgba(127,127,127,.16));
+  border-left: 2px solid color-mix(in srgb, var(--dsh-rea-accent) 38%, transparent);
+  border-radius: 4px 12px 12px 4px;
+  padding: 10px 14px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--dsh-rea-accent) 7%, transparent), transparent 56%),
+    var(--dsh-rea-fill, rgba(127,127,127,.04));
   color: var(--dsw-alias-label-secondary);
   font-size: 12px;
   line-height: 20px;
@@ -307,6 +511,17 @@
 
 .dsh-better-markdown__reasoning-live::-webkit-scrollbar-thumb:hover {
   background: var(--dsw-alias-scrollbar-hover-l2, rgba(127,127,127,.6));
+}
+
+/* 尊重系统「减少动态效果」偏好 */
+@media (prefers-reduced-motion: reduce) {
+  .dsh-better-markdown__reasoning-entry[data-running="true"] .dsh-better-markdown__reasoning-entry-btn::after { display: none; }
+  .dsh-better-markdown__reasoning-entry-btn,
+  .dsh-better-markdown__reasoning-entry[data-running="true"] .dsh-better-markdown__reasoning-entry-icon {
+    animation: none;
+    transition: none;
+  }
+  .dsh-better-markdown__reasoning-entry-btn:hover { transform: none; }
 }
 
 /* Hide markstream's "reset font size" toolbar button while it is disabled.
@@ -792,3 +1007,299 @@
 .dsh-better-markdown__markdown .math-inline {
   padding: 0 2px;
 }
+
+
+
+
+
+/* ============================================================
+   图表块（mermaid 围栏 → DiagramBlock，见 diagram.tsx）
+   引擎按需加载，卡片形态与代码块统一：头部 + 画布 + 操作按钮。
+   ============================================================ */
+.dsh-diagram {
+  display: flex;
+  flex-direction: column;
+  margin: 1em 0;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--dsw-alias-border-l3, rgba(127, 127, 127, .16));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--dsw-alias-label-primary) 3%, transparent);
+}
+
+.dsh-diagram__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-bottom: 1px solid var(--dsw-alias-border-l3, rgba(127, 127, 127, .12));
+  padding: 6px 10px;
+}
+
+.dsh-diagram__kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.dsh-diagram__kind-icon {
+  color: var(--dsw-alias-state-business-primary, #4176e6);
+}
+
+.dsh-diagram__spacer {
+  flex: 1 1 auto;
+}
+
+.dsh-diagram__act {
+  flex: none;
+  height: 22px;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  padding: 0 8px;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 20px;
+}
+
+.dsh-diagram__act:hover {
+  border-color: var(--dsw-alias-border-l3, rgba(127, 127, 127, .18));
+  background: var(--dsw-alias-interactive-bg-hover, rgba(127, 127, 127, .1));
+  color: var(--dsw-alias-label-primary);
+}
+
+.dsh-diagram__canvas {
+  display: flex;
+  justify-content: center;
+  overflow-x: auto;
+  padding: 14px 12px;
+}
+
+.dsh-diagram__canvas svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.dsh-diagram__hint,
+.dsh-diagram__error {
+  padding: 12px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 20px;
+}
+
+.dsh-diagram__error {
+  color: var(--dsw-alias-state-warn-label, #b45309);
+}
+
+.dsh-diagram__source {
+  margin: 0;
+  overflow-x: auto;
+  padding: 12px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-markdown-code);
+  font-family: var(--ds-font-family-code);
+  font-size: 12px;
+}
+
+/* 流式骨架：三条呼吸条，不做位移动画（滚动中位移会掉帧）。 */
+.dsh-diagram__skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px 12px;
+}
+
+.dsh-diagram__skeleton-bar {
+  height: 10px;
+  border-radius: 5px;
+  background: var(--dsw-alias-bg-skeleton, rgba(127, 127, 127, .16));
+  animation: dsh-diagram-breathe 1.4s ease-in-out infinite;
+}
+
+.dsh-diagram__skeleton-bar:nth-child(2) { width: 72%; animation-delay: .15s; }
+.dsh-diagram__skeleton-bar:nth-child(3) { width: 48%; animation-delay: .3s; }
+
+@keyframes dsh-diagram-breathe {
+  0%, 100% { opacity: .45; }
+  50% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dsh-diagram__skeleton-bar { animation: none; }
+}
+
+/* 放大查看：整屏遮罩，点任意处关闭。 */
+.dsh-diagram__zoom {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+  background: var(--dsw-alias-bg-mask-2, rgba(0, 0, 0, .55));
+  cursor: zoom-out;
+}
+
+.dsh-diagram__zoom-inner {
+  max-width: 96vw;
+  max-height: 92vh;
+  overflow: auto;
+  border-radius: 12px;
+  padding: 16px;
+  background: var(--dsw-alias-bg-base, #fff);
+}
+
+.dsh-diagram__zoom-inner svg {
+  width: auto;
+  height: auto;
+  max-width: none;
+}
+
+/* ============================================================
+   MOOD 卡片（```mood 围栏 → MoodBlock，见 mood/MoodBlock.tsx）
+   默认折叠：一枚 chip（星标 + MOOD + 首节摘要 + 条目数）；点击展开出
+   左侧竖线面板，小节名斜体、条目常规。折叠时面板不进 DOM。
+   ============================================================ */
+.dsh-mood {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 1em 0;
+  min-width: 0;
+}
+
+/* 折叠态 chip：与「思考」chip 同一套视觉语言（胶囊 28px + 星标 + 摘要）。
+   默认折叠，点击展开面板；折叠时面板不进 DOM（见 MoodBlock.tsx）。 */
+.dsh-mood__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  max-width: 100%;
+  height: 28px;
+  margin: 0;
+  border: 1px solid var(--dsw-alias-border-l2, rgba(127, 127, 127, .22));
+  border-radius: 999px;
+  padding: 0 12px;
+  background: var(--dsw-alias-bg-layer-1, rgba(127, 127, 127, .05));
+  color: var(--dsw-alias-state-business-primary, #4176e6);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 26px;
+  white-space: nowrap;
+  transition: border-color .18s ease, background-color .18s ease;
+}
+
+.dsh-mood__chip:hover {
+  border-color: color-mix(in srgb, var(--dsw-alias-state-business-primary, #4176e6) 34%, var(--dsw-alias-border-l2, rgba(127, 127, 127, .22)));
+  background: var(--dsw-alias-interactive-bg-hover, rgba(127, 127, 127, .1));
+}
+
+.dsh-mood__chip:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--dsw-alias-state-business-primary, #4176e6) 55%, transparent);
+  outline-offset: 2px;
+}
+
+.dsh-mood__mark {
+  flex: none;
+}
+
+.dsh-mood__title {
+  flex: none;
+  font-size: 12px;
+  font-style: italic;
+  letter-spacing: .08em;
+  line-height: 18px;
+}
+
+/* 折叠态摘要：首节文本单行省略，给卡片一个「里面写了什么」的钩子。 */
+.dsh-mood__summary {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--dsw-alias-label-tertiary);
+  font-style: normal;
+  letter-spacing: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-mood__count {
+  flex: none;
+  color: var(--dsw-alias-label-caption, var(--dsw-alias-label-tertiary));
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+}
+
+.dsh-mood__chevron {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+  transition: transform .18s ease;
+}
+
+.dsh-mood[data-open] .dsh-mood__chevron {
+  transform: rotate(90deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dsh-mood__chip,
+  .dsh-mood__chevron { transition: none; }
+}
+
+.dsh-mood__panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-left: 2px solid var(--dsw-alias-border-l2, rgba(127, 127, 127, .22));
+  border-radius: 0 12px 12px 0;
+  padding: 12px 14px;
+  background: color-mix(in srgb, var(--dsw-alias-label-primary) 3%, transparent);
+}
+
+.dsh-mood__section {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.dsh-mood__name {
+  margin: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+  font-style: italic;
+  line-height: 21px;
+}
+
+.dsh-mood__inline {
+  color: var(--dsw-alias-label-primary);
+  font-style: normal;
+}
+
+.dsh-mood__item {
+  margin: 0;
+  padding-left: 12px;
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  line-height: 21px;
+  text-indent: -12px;
+}
+
+.dsh-mood__item::before {
+  content: "— ";
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* 小节内 inline 文本已经在名字行上，条目不再重复项目符号缩进基准。 */
+.dsh-mood__pending {
+  margin: 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 13px;
+  line-height: 21px;
+}
+

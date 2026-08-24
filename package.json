@@ -23,7 +23,9 @@
     "scripts/build.sh",
     "scripts/conversation-done-card.ps1",
     "assets/task-done.wav",
-    "assets/planweave-skills"
+    "assets/planweave-skills",
+    "assets/vendor",
+    "scripts/voice-speaker.ps1"
   ],
   "license": "BSD-3-Clause",
   "dsh": {
@@ -120,6 +122,7 @@
     "build": "bash scripts/build.sh",
     "build:client": "tsdown",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "typecheck:client": "tsc -p tsconfig.client.json --noEmit"
+    "typecheck:client": "tsc -p tsconfig.client.json --noEmit",
+    "test:memory": "node scripts/test-memory.mjs"
   }
 }

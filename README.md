@@ -1,6 +1,6 @@
 # dsh-webui — DeepSeek Harness 会话增强全家桶
 
-一个插件融合视图切换、消息导航、技能管理、供应商管理、辅助视觉、生图/生视频、记忆（hybrid 检索）、AI 浏览器、文件浏览器、Markdown 渲染、工具聚合、用量统计、网页搜索、定时自动化任务引擎、PlanWeave 计划项目、会话产物清单、对话退回与文件回退/修改历史对比、提示音、壳管理更新、网络代理、消息截图、中文思考、工作区临时垃圾清理等能力。纯插件实现，不改动 DSH 源码。
+一个插件融合视图切换、消息导航、技能管理、供应商管理、辅助视觉、生图/生视频、记忆（hybrid 检索）、AI 浏览器、文件浏览器、Markdown 渲染、工具聚合、用量统计、网页搜索、定时自动化任务引擎、PlanWeave 计划项目、团队 Agent 编排（多团队多角色接力）、会话产物清单、对话退回与文件回退/修改历史对比、提示音、壳管理更新、插件自更新、网络代理、消息截图、中文思考、工作区临时垃圾清理等能力。纯插件实现，不改动 DSH 源码。
 
 ## 一句话安装（DSH）
 
@@ -33,6 +33,7 @@ webui-modules:
   browser: false      # 不需要 AI 浏览器
   automation: false   # 不需要自动化
   planweave: false    # 不需要 PlanWeave 计划项目
+  team: false         # 不需要团队 Agent 编排
   peakValley: false   # 不需要峰谷时刻卡片
 ```
 
@@ -58,12 +59,14 @@ curl -X POST http://127.0.0.1:3080/api/webui-modules \
 | | `sessionMotion` | 会话切换柔和过渡 |
 | | `sessionPin` | 会话置顶 / 归档 / 右键菜单 |
 | | `rewind` | 对话退回 |
-| | `screenshot` | 单条消息截图 / 会话长图 |
+| | `screenshot` | 对话截图（本条回复 / 一轮问答 / 整段会话） |
 | | `promptOptimize` | 提示词优化图标 |
 | | `zhThinking` | 中文思考开关 |
+| | `mood` | MOOD 自述（按 Agent 预设的开关 + 人设 + 对话流卡片） |
 | | `peakValley` | DeepSeek 峰谷时刻卡片 |
 | | `chatStats` | 会话统计条 |
 | | `toolSummary` | 工具调用聚合 + 活动抽屉 |
+| | `diagram` | mermaid 图表渲染（引擎按需加载）+ 作图提示词 |
 | 模型与供应商 | `reasoningSync` | `webui_sync_reasoning` 推理等级补全工具 |
 | | `modelSeats` | 模型座位接管 + 推理等级弹出 |
 | | `providerHub` | 供应商管理设置页 |
@@ -74,6 +77,7 @@ curl -X POST http://127.0.0.1:3080/api/webui-modules \
 | AI 浏览器 | `browser` | 浏览器工具 + dock UI + 设置开关 |
 | 自动化与计划 | `automation` | 自动化任务 + 真实执行引擎 |
 | | `planweave` | PlanWeave 计划项目 |
+| | `team` | 团队 Agent 编排器（多团队多角色接力 + 一句话生成 + 可拖拽关联画布 + 每角色工具/技能装配 + 对话框团队开关 + 执行 HUD） |
 | 记忆 | `memory` | 记忆引擎 + Memory Dream |
 | 用量与统计 | `usage` | 用量工作台 |
 | 文件与工作区 | `fileExplorer` | 文件浏览器 |
@@ -81,7 +85,8 @@ curl -X POST http://127.0.0.1:3080/api/webui-modules \
 | | `tmpCleaner` | 工作区临时垃圾清理器 |
 | 外观与系统 | `appearance` | 玻璃质感主题 |
 | | `sidebarFloat` | 悬浮侧边栏 |
-| | `updater` | 壳管理更新 |
+| | `updater` | 壳管理更新（DSH 源码一键更新 + 开机自启） |
+| | `pluginUpdate` | 插件自更新（检测上游新版本 + 增量补丁就地更新本插件） |
 | | `proxy` | 网络代理 |
 
 **注意事项**：
@@ -98,17 +103,18 @@ curl -X POST http://127.0.0.1:3080/api/webui-modules \
 |---|---|
 | 右上角视图图块 + 消息导航 | 对话/轨迹切换图块、消息徽标/弹窗列表、右侧消息横条、弹窗内手动加载更早消息 |
 | 会话置顶 | 侧边栏会话右键菜单：置顶（置顶组排最前）/ 归档按钮 / 重命名；localStorage 持久化，跨标签页实时同步 |
-| 对话退回 | 每条用户消息加退回按钮，一键回退工作区文件到该消息发送前 + 原地回退上下文（fork 到该消息之前 turn 边界 → 归档原会话 → 打开子会话）。v2 git 式内容寻址存储：文件内容按 SHA-1 入全局 blob 库（gzip），快照只落「路径 → 指纹」纯索引，体积降两个数量级 |
+| 对话退回 | 每条用户消息加退回按钮，一键回退工作区文件到该消息发送前 + 原地回退上下文（同会话内 surface 替换，不 fork、不归档、不切换会话、无刷新）。v2 git 式内容寻址存储：文件内容按 SHA-1 入全局 blob 库（gzip），快照只落「路径 → 指纹」纯索引，体积降两个数量级 |
 | 会话产物卡片 | host 端独立记账 agent 经 fs 服务的写入产物并落盘（jsonl），重启后消息操作栏「产物」入口仍可打开大卡片：左栏本会话产物清单、右栏应用内展示（图片内嵌 / markdown 渲染 / 代码高亮 / 二进制 hex 兜底），不经系统打开 |
-| 单条消息截图 | assistant 消息 actions 行截图按钮（渲染会话长图 / 单条樱花主题截图）；host 端 markdown-it + Shiki 渲染管线，支持代码高亮 / emoji 短码 / 任务清单 / 表格对齐 / 图片白名单，浅色 / 深色 / 玻璃 / 玻璃深色四主题 |
+| 对话截图 | assistant 消息操作栏相机按钮 → 截图面板：范围（本条回复 / 这一轮问答 / 整段会话）+ 版式（电脑横幅 / 手机窄幅）+ 画质（1080P / 2K / 4K，输出像素宽度）+ 四主题（浅 / 深 / 玻璃 / 玻璃深）；标题与徽章文案可编辑；打开即渲染、改选项即重渲染，预览确认后才落盘；可复制图片到剪贴板 / 下载 PNG / 打开目录。host 端 markdown-it + Shiki 渲染管线（代码高亮 / emoji 短码 / 任务清单 / 表格 / 图片白名单），常驻无头浏览器渲染（空闲自动回收），不再每次冷启动 |
 | 对话完成胶囊 | 顶部悬浮胶囊（常驻、可拖拽、位置持久化）——完成提醒 + 点击直达最新会话 + 运行中任务实时时长；悬停滑出记录面板；健康提醒徽章（时段可配）；空闲轮播开心话术与 AI 小知识；内置文件浏览器入口；胶囊大小 / 字体 / 显隐可调 |
 | 提示音 + 完成卡片 | 回合结束提示音 + 对话完成卡片 |
 | 审批提醒 | 有工具调用等待审批时顶部弹 toast |
 | 会话切换柔和过渡 | 内容区淡入上浮、面包屑轻淡入、侧边栏高亮 FLIP 式滑动；`prefers-reduced-motion` 自动禁用 |
 | 消息气泡宽度 | 「发送对话宽度」拖动条（px/% 单位，settings.yaml 持久化），只作用于本人消息气泡 |
 | 输入框增强 | Ctrl+Enter 换行；移动端响应式 |
-| 提示词优化 | 对话框「自动优化提示词」图标，用当前选中模型流式优化草稿（loopback-only API，仅本地可调） |
+| 提示词优化 | 对话框「优化提示词」图标：点击开面板，用当前选中模型改写草稿；均衡/精简/详尽三档风格可换档重跑，结果先在面板预览、点「应用到输入框」才写回草稿（可选包成 `/goal`）。模型输出会去掉解释文字/围栏/「主要改动」段落后才落地（loopback-only API，仅本地可调） |
 | 中文思考开关 | 设置页「中文思考」 |
+| MOOD 自述 | Agent 在思考结束、正式回答之前先写一段第一人称自述（```mood 围栏），渲染成对话流里的 MOOD 卡片。**默认折叠**成一枚 chip（星标 + 首节摘要 + 条目数），点击展开左竖线面板（按「小节名: / 条目」自动分节）；折叠态不挂面板 DOM。设置 →「MOOD」页：总开关 + 默认人设 + 按 Agent 预设逐个配开关与专属人设（留空沿用默认，新建的 Agent 自动继承）。提示词段按当次组装的 agent 解析其 preset id 渲染，关闭时返回空串零 token |
 
 ### 模型与供应商
 
@@ -135,10 +141,39 @@ curl -X POST http://127.0.0.1:3080/api/webui-modules \
 
 ### Markdown 渲染
 
-markstream 流式渲染 + Shiki 代码高亮 + 悬浮目录（TOC）/ 标题锚点 + 提示块（admonition）/ 脚注 / 定义列表 / 任务列表 / 数学公式（KaTeX）+ 思考 chip。
+markstream 流式渲染 + Shiki 代码高亮 + 悬浮目录（TOC）/ 标题锚点 + 提示块（admonition）/ 脚注 / 定义列表 / 任务列表 / 数学公式（KaTeX）+ 思考 chip + 图表。
 
 - **提示块**：`:::note` / `:::tip` / `:::warning` / `:::danger` / `:::error` 围栏容器，支持自定义标题（`:::warning 注意`）。
 - **目录 / 锚点**：正文标题 ≥ 3 个时自动在顶部生成可折叠目录，点击平滑滚动。
+
+### 对话流卡片
+
+对话流按「回合」分层呈现：
+
+| 形态 | 出现位置 | 视觉 |
+|---|---|---|
+| 步骤卡 | 回合中间已完成的 assistant 片段 | 左侧竖线 + 极淡纱，圈出「一步」不抢注意力 |
+| 总结卡 | 回合最终回复 | 顶边品牌蓝渐隐细线 + 头部「本轮完成」徽章 + 统计 chip（用时 / 步骤 / 工具 / 思考）+ 正文区 |
+
+流式输出中的片段不包卡（避免边框随文字增长反复重排）；中断的回合总结卡转为琥珀色顶边与「已中断」徽章。统计数字全部取自已有会话投影（turnTimings、本回合节点计数），不新增轮询或订阅。
+
+### 图表（流程图 / 架构图 / 时序图）
+
+语言标记为 mermaid 的代码围栏直接渲染成图，覆盖 flowchart / sequenceDiagram / stateDiagram-v2 / erDiagram / classDiagram / gantt / mindmap / timeline / block-beta / architecture-beta 等图种（各图种关键字也可直接作为围栏语言）。
+
+卡片带图种标签与操作：复制源码 / 导出 SVG / 图⇄源码切换 / 放大整屏查看，配色随 DSH 深浅主题走品牌蓝。
+
+**零常驻开销的实现方式**（这是本功能的关键约束）：
+
+| 维度 | 做法 |
+|---|---|
+| 体积 | mermaid 引擎不进 client bundle（tsdown 仍把裸导入 `mermaid` 换成 stub），而是随包分发 `assets/vendor/mermaid.min.js.gz`（预压缩 0.95MB），host 路由 `/dyn-assets/vendor/mermaid.min.js` 带 `content-encoding: gzip` + `immutable` 一年强缓存下发 |
+| 加载时机 | 首次遇到图表围栏才注入 `<script>`；**整个会话没有图表就永不请求** —— 零下载、零解析、零内存 |
+| 渲染时机 | 围栏收尾后才渲染（流式过程显示骨架，不逐 token 重排）；IntersectionObserver 懒渲染，滚出视口的图不计算 |
+| 重复渲染 | 结果按「主题 + 源码」LRU 缓存 60 张，滚动回滚 / 主题切回直接命中 |
+| 上下文 | 作图提示词仅约 100 token，基础设置「建议模型作图」可关（关闭后零 token，已写好的围栏照旧渲染） |
+
+失败降级：引擎加载失败或语法错误时原样展示源码 + 一行错误说明，不吞内容。整个能力可用模块开关 `diagram: false` 关掉。
 
 ### AI 浏览器（壳内多标签，零独立浏览器进程）
 
@@ -156,13 +191,28 @@ markstream 流式渲染 + Shiki 代码高亮 + 悬浮目录（TOC）/ 标题锚�
 
 | 工具 | 用途 |
 |---|---|
-| `browser_batch` | **一次调用按顺序执行最多 10 个动作**（click/type/select/hover/press/scroll/navigate），只返回最终快照 |
-| `browser_navigate` / `_click` / `_type` / `_select` / `_hover` / `_press` / `_scroll` | 单步操作（作用于当前激活标签） |
+| `browser_batch` | **一次调用按顺序执行最多 20 个动作**（click/type/select/hover/press/scroll/navigate/wait），只返回最终快照；失败时报「第 N 步失败」并附已完成步骤 |
+| `browser_navigate` | 打开 URL，可带 `wait_for_selector` / `wait_for_text`，加载与等待合成一次调用 |
+| `browser_click` / `_type` / `_select` / `_hover` / `_press` / `_scroll` | 单步操作（作用于当前激活标签）；`_press` 支持 `repeat`，`_scroll` 支持 `selector` 滚内部容器 |
+| `browser_wait_for` | 等选择器/文本出现或消失（`gone`），在页面内轮询完成——不消耗额外 LLM 轮次 |
+| `browser_extract` | 提取正文文本 + 链接列表（读内容比 snapshot 省 token 且无交互噪音） |
 | `browser_back` / `_forward` | 历史导航 |
-| `browser_snapshot` | 文本 ref 树（元素以 `[ref]` 定位） |
+| `browser_snapshot` | 文本 ref 树（元素以 `[ref]` 定位；含 shadow DOM 与同源 iframe 内元素） |
 | `browser_see` / `browser_screenshot` | 截图 + 视觉描述（自动降级 renderer 截图，detached 视图不卡死） |
-| `browser_evaluate` | 页面执行 JS（处理 ref 定位不到的场景） |
+| `browser_evaluate` | 页面执行 JS（含 `await`/多语句自动包 async 函数） |
 | `browser_status` / `browser_stop` | 状态查询 / 关闭全部标签 |
+
+#### 元素定位：ref / selector / text_match 三选一
+
+所有元素操作工具都接受三种定位方式，任选其一：
+
+| 参数 | 适用 | 优势 |
+|---|---|---|
+| `ref` | 刚拍过 snapshot | 最快 |
+| `selector` | 知道 CSS 选择器 | **免快照**；自动穿透 shadow DOM 与同源 iframe |
+| `text_match` | 只知道按钮文字 | **免快照**；精确 → 前缀 → 包含逐级匹配，`nth` 选第几个 |
+
+后两者不需要先 `browser_snapshot`，页面变化后也不必重拍——每省一次快照就省一整轮 LLM 推理。
 
 #### 效率技巧：连续操作用 browser_batch
 
@@ -170,15 +220,15 @@ markstream 流式渲染 + Shiki 代码高亮 + 悬浮目录（TOC）/ 标题锚�
 
 ```json
 {"action": "browser_batch", "actions": [
-  {"action": "click", "ref": 12},
-  {"action": "type", "ref": 15, "text": "me@example.com"},
-  {"action": "type", "ref": 18, "text": "密码123", "pressEnter": false},
-  {"action": "click", "ref": 22},
-  {"action": "click", "ref": 30}
+  {"action": "type", "selector": "#email", "text": "me@example.com"},
+  {"action": "type", "selector": "#password", "text": "密码123"},
+  {"action": "click", "text_match": "同意条款"},
+  {"action": "click", "text_match": "注册"},
+  {"action": "wait", "text": "注册成功", "timeoutMs": 8000}
 ]}
 ```
 
-任一步失败立即中止并报「第 N 步失败 + 原因」；全部成功返回最终快照。给 AI 的指令里写一句「用 browser_batch 批量完成」即可触发。
+任一步失败立即中止并报「第 N 步失败 + 原因 + 已完成步骤」；全部成功返回最终快照。给 AI 的指令里写一句「用 browser_batch 批量完成」即可触发。
 
 > 提速策略已默认常驻：插件会把「batch / evaluate 优先」的提速策略作为系统提示词自动注入（settings 命名空间 `browser-speed`，默认开启、关闭时零 token 占用），无需每次在指令里点名；开关在 dock 工具条悬停权限卡片里。
 
@@ -188,10 +238,20 @@ dock 工具条「选取元素」按钮进入选取模式，点击预览画面任
 
 #### 抽屉 UI
 
-- 标题右侧为**标签页栏**：切换 / 悬停关闭 / ＋ 新建
-- 第二行左侧是**快捷站点**（点一下新开标签打开，＋ 可添加/删除，全局共享持久化）；右侧是当前网址 + 一键复制
-- 底部悬浮条显示最新一条 AI 操作（一句话），点击展开完整时间线
-- 左侧留白区点击或 Esc 收起抽屉；收起后浏览器视图卸下、不占任何资源
+抽屉里是一套完整的浏览器 chrome，自上而下三条 38px 等高行 + 画面区 + 底部时间线：
+
+| 层 | 内容 |
+|---|---|
+| ① 标签页栏 | 品牌标记（运行时呼吸点）· 标签页（站点首字母 + 标题，悬停出关闭）· 新建 · 关闭抽屉 |
+| ② 工具栏 | 后退 / 前进（按导航历史自动置灰）· 刷新 · **地址栏** · 复制网址 · 收藏 · 选取元素 · 更多 |
+| ③ 书签栏 | 书签胶囊（点击新标签打开）· 管理面板（增删）；可在「更多」里整条隐藏 |
+| 画面区 | 原生 WebContentsView 贴合于此；未贴合时回退实时帧，可直接鼠标/键盘/滚轮操作 |
+| 时间线 | 收起为 34px 细轨（最新一条操作 + 步骤计数），点击展开完整列表 |
+
+- **地址栏**：非编辑态显示「安全标识 + 域名强调 + 路径淡化」，点击进入编辑并全选，Enter 导航、Esc 取消；导航中底缘显示进度轨。
+- **宽度可调**：左缘 4px 拖拽把手，范围 520px ~ 视口宽 −44px，结果持久化（localStorage）。
+- 左侧留白区点击或 Esc 收起抽屉；收起后浏览器视图卸下、不占任何资源。选取模式或「更多」菜单打开时，Esc 只关闭它们。
+- 图标全部为内联 SVG（`browser/icons.tsx`），规格对齐 DSH 官方 ui-primitives：28px 图标按钮 (r14)、24px 胶囊 (r12)、30px 输入件 (r8)、border-l2 细线。文字对比度在明暗 × 玻璃开关四种组合下均达 WCAG AA。
 
 ### 定时自动化任务引擎
 
@@ -216,13 +276,53 @@ dock 工具条「选取元素」按钮进入选取模式，点击预览画面任
 - HTTP API：`GET /api/planweave/status`（loopback，供 client 面板轮询）
 - 核心引擎复用 `@planweave-ai/runtime`；执行器走 `ctx.llm`
 
+### 团队 Agent 编排（`team`）
+
+把「多角色 AI 团队分工协作」做成可编排的数据：**多个团队**，每个团队有自己的角色集、协作链、
+团队默认模型；一次任务按链条串行接力，末尾由主脑整合成最终交付物。
+
+- **多团队**：一团队一文件持久化（`${DSH_HOME}/team/teams/<id>.json`，可直接编辑 / 纳入 git / 导入导出），
+  支持新建（空白或套用出厂编制）、复制、重命名、删除、恢复出厂编制；面板顶部团队切换器
+- **一句话生成团队**：面板「✨ 一句话生成」/ 对话内 `team_create` 工具——描述一句需求，模型设计出
+  完整编制（角色 + 各自的系统提示词 + 分组 + 协作链 + 关联关系）并落盘为新团队；生成只产结构不产
+  模型绑定（角色统一继承团队默认模型，避免模型编出不存在的 provider/model）；解析失败不留半成品
+- **全高抽屉面板**：占满右侧可视区（min(1180px, 92vw)），编制页为「左画布 + 右检视栏」双列，
+  抽屉窄于 860px 时自动退化为上下单列
+- **可交互编制画布**：SVG 手绘（无第三方图表依赖）——节点**可拖拽排布**（归一化坐标持久化，窗口缩放
+  等比例保持）、拖节点右下角连接柄**建立关联**、点连线可改单/双向或删除、一键「自动重排」；
+  中心主脑 + 分组配色，选中链高亮接力路径，运行中角色节点点亮并呼吸；拖拽只改一处 transform，
+  松手才保存一次（不影响性能）
+- **模型分层可设置**：团队默认模型 → 角色可单独覆盖（下拉首项固定「继承团队默认」）→ 单次运行还能临时覆盖。
+  解析优先级 **本次运行 > 角色覆盖 > 团队默认 > 全局默认**，每步开始时解析一次并记录来源层（运行中改配置不影响在跑的步骤）
+- **每角色能力装配（插件工具 + 技能包）**：角色编辑面里按角色开关——工具（继承全部 / 只允许所选白名单 / 禁用所选黑名单）
+  + 技能（不限制 / 只用所选 / 不用技能）+ 技能包多选（选中即展开包内技能）。subagent 通道走 DSH 原生
+  `toolFilter` **真实限制**（未授权工具从子 agent 提示词消失且拒绝执行）；llm 直跑通道无工具，工具装配仅作声明、
+  技能则把正文**内联进提示词**（按预算截断）。装配清单里当前环境缺失的名字只提示、不阻断执行。
+- **出厂编制**：主脑 hanako（中枢）+ 察/驳/策（信息与判断）+ 匠/造/笔/简（落地执行）+ 凉溯/导师/垣（守护支持），
+  四条预设链：`verify` 察→驳→整合、`ship` 策→匠→造→整合、`ops` 垣诊断→匠修复→垣验收→整合、`write` 察→笔→驳→整合
+- **两条执行通道**：`llm` 直跑（精确用设定模型，无工具）/ `subagent`（完整 agent，可读写文件跑命令，模型继承会话）；
+  角色 `executor` 为 `auto` 时按触发上下文自动选择（面板触发→llm，对话内触发→subagent）
+- **对话框团队开关**：输入区「团队」图标（order 4，提示词优化左侧）→ 悬浮卡选团队/链条/强制模式，
+  会话级持久化；开启后 host 动态注入系统提示词，模型在需要多角色协作时自行调用 `team_run`（零 DSH 源码改动）
+- **对话流执行 HUD**：运行中在对话区顶部浮出——团队名·链名、步骤圆点、总耗时、TODO 进度条，
+  展开后是**每角色一张运行卡**（状态灯呼吸 / 实际模型 + 来源徽标 / 单步计时 / 流式输出摘要 / 点开看全文），
+  支持取消运行、多团队并发分段、结束后停留 15s 再收成小胶囊
+- **产物落盘**：`${DSH_HOME}/team/runs/R-<ts>-<rand>/`（`run.json` + `steps/NN-<role>.md` + `final-deliverable.md`）
+- **工具**：`team_create`（一句话生成团队）、`team_list`（列出团队与链）、`team_run`（启动并等待完成，返回最终交付物）、`team_status`（查运行状态与每步模型来源）
+- **HTTP API**：`/api/webui-team/{teams,globals,providers,capabilities,chat-mode,runs}`（loopback-only）；
+  settings 命名空间 `webui-team` 承载全局默认（超时/重试/并发/上游预算/失败即停）
+
 ### 记忆
 
 - **记忆引擎**：侧边栏记忆面板 + 会话记忆注入 + 注入开关 + 手动写入长期记忆
-- **本地 hybrid 检索引擎**（零外部依赖）：keyword 精确子串 AND 命中；hybrid（默认）= 字符 n-gram Jaccard 相似度 + 精确命中加成 + 元数据加权（verified / confidence / importance）；semantic 模式预留，待 embedding 接口可用时替换打分实现即可
-- **设置 Tab**：记忆面板内运行时配置（开关 + 数字输入），改动即时生效并持久化到 config.json
+- **面板（主从布局）**：左列紧凑条目行（标题 / 摘要 / 相对时间 / 重要度迷你条 / 作用域徽章 / 行内启用开关），右列详情（语义徽章 + 重要度与置信度 + Markdown 正文 + 标签 + 版本/创建/命中脚注）；顶部 Tab 组带统计条（记忆数 · 项目数 · 置顶 · 长期 · 已禁用），项目胶囊带条目计数，工具行 = 搜索（260ms 防抖 + 一键清除）· 标签下拉 · 刷新 · 一键整理 · 添加 · 多选；四个 Tab（全部 / 变更 / 修订 / 设置）各自按需加载，切 Tab 不会把所有接口重打一遍
+- **条目编辑**：内容 / 标签 / 重要度 / 置顶 / 记忆类型（身份·偏好·事实·决策·踩坑·会话摘要）/ 归属（全局 ⇄ 项目）在同一编辑面完成；项目可就地改别名（清空回退目录名）、按项目开关自动记忆、清空该项目记忆（置顶豁免）
+- **变更 / 修订**：变更 Tab 可切「今天 / 全部」，动作徽标按语义配色（新增绿 / 沉淀金 / 删除红），改写类变更左右并排对比；修订 Tab 列出整理前快照并可一键回滚
+- **设置 Tab**：分组行卡片（注入 / 提取 / 编译与衰减 / 整理 / 诊断），每项显示取值范围与说明，数值失焦或回车才提交（避免把「删空重打」的中间态写进配置），越界由 host 钳制，另有「恢复默认」
+- **本地 hybrid 检索引擎**（零外部依赖）：keyword 精确子串 AND 命中；hybrid（默认）= 字符 n-gram Jaccard 相似度 + 精确命中加成 + 元数据加权（verified / confidence / importance）；semantic 模式预留，待 embedding 接口可用时替换打分实现即可。**面板搜索与 `memory_search` 工具走同一套打分**，不会出现「工具搜得到、面板搜不到」
 - **Memory Dream 记忆巩固**：每天（或手动触发）用 LLM 对记忆做语义化整理——合并近重复/强相关条目、精炼重写、删除过时/低价值、提升长期；与每日规则化衰减/折叠（处理「分数」）正交叠加，本引擎处理「语义」
-- **安全设计**：输入排除 pinned 条目（保护用户明确标记的内容），apply 时按 id 锚定防误删；整理前写入 revisions 快照支持一键回滚；LLM 失败/超时/解析失败一律空结果，绝不阻塞每日编译
+- **安全设计**：输入排除 pinned 与已禁用条目（保护用户明确标记/冻结的内容），apply 时按 id 锚定防误删；整理前写入 revisions 快照支持一键回滚；LLM 失败/超时/解析失败一律空结果，绝不阻塞每日编译
+- **回归测试**：`npm run test:memory`（`scripts/test-memory.mjs`）覆盖配置钳制、注入文本预算累积、记忆分类、条目 id 派生与合并，以及 HTTP 路由（含批量删除 / 配置合并写 / 变更全量查询 / 项目 hash 派生）——不依赖 DSH 运行时、不碰用户数据
 
 ### 用量与统计
 
@@ -251,7 +351,8 @@ dock 工具条「选取元素」按钮进入选取模式，点击预览画面任
 |---|---|
 | 玻璃质感主题 | 「通用」分区开关 + 不透明度滑块（40–95%，步进 5）——半透明毛玻璃材质（背景模糊 + 高光细边 + 柔和投影），与官方浅色/深色任意组合，拖动即时预览、松手落盘（settings.yaml + localStorage 双通道持久化） |
 | 悬浮侧边栏 | 「固定侧边栏」（默认开启=原生固定；关闭=悬浮模式，左侧常驻热区悬停展开、移出自动折叠，overlay 覆盖不挤压主内容；即时切换 + 持久化） |
-| 壳管理更新 | 宽度/自启/版本/一键更新 |
+| 壳管理更新 | 宽度/自启/版本/一键更新（更新的是 DSH 本体源码） |
+| 插件自更新（增量） | 「通用」分区行卡片：一键检测上游是否有新版本（匿名读 GitHub，无需 token），有则**增量更新**——只下载两版之间的改动补丁（实测 1.2 MB 文本、传输 336 KB；整包重装是 4.7 MB），自写 unified diff 应用器逐文件打补丁，再按 **git blob sha 逐文件校验**，全部通过才落盘；写入用「临时文件 + rename」顶替，避开 pnpm 硬链接写穿全局 store 的坑。校验不过（本地文件被改过 / 二进制改动）自动回退整包重装，绝不留半成品。源码 checkout 形态走 `git pull --ff-only`。提交级比对（包内 `.dsh-update-commit` 标记优先、回落 profile 锁文件里的已装 sha，作者不 bump 版本号也能发现新提交）、执行日志、上次更新结果与所走路径、自动检查开关、「强制重装最新」兜底。更新后需重启 DSH 生效 |
 | 网络代理 | 代理设置行 |
 | 工具调用聚合 | 工具 call shadow + 活动抽屉 |
 
@@ -271,18 +372,23 @@ src/
 ├── modules.ts                — 功能模块 key 清单与开关解析（host / client 共用）
 ├── modules-host.ts           — 模块开关 host（settings 命名空间 webui-modules + GET/POST /api/webui-modules）
 ├── planweave/                — PlanWeave 计划项目（engine / executor / host / workspace）
+├── team/                     — 团队 Agent 编排（types / seed 出厂编制 / store 多团队存储 / roster 模型解析 / prompts / engine 运行引擎 / capabilities 能力装配 / generate 一句话生成 / chat-mode 提示词注入 / tools / host 路由）
 ├── automation/               — 定时自动化任务引擎（store / scheduler / executor / tool / suggestions / routes）
 ├── deliverables.ts           — 会话产物记账 host（/api/webui-deliverables，按会话白名单授权）
 ├── devrole-probe.ts          — 供应商 Developer Role 兼容性一键检测 + 自动修复
-├── markdown-html.ts          — 截图用 Markdown 渲染管线（markdown-it + shiki，四主题）
+├── screenshot/               — 对话截图 host（card 卡片模板 / theme 主题 / presets 设备×画质 / renderer 常驻无头浏览器 / 路由 render·save·reveal·image）
+├── diagram.ts                — 图表支撑 host（/dyn-assets/vendor/mermaid.min.js 按需下发 + 作图提示词开关）
 ├── memory/                   — 记忆引擎（engine/retrieval.ts 本地 hybrid 检索、engine/consolidate.ts 为 Memory Dream 语义整理）
 ├── vision-helper.ts          — 辅助视觉 + 生图 + 生视频能力与 HTTP 接口
 ├── skill-toggles.ts          — 技能开关路由（读写 SKILL.md frontmatter）
 ├── usage-host.ts             — 用量统计 + 技能管理 host
 ├── sidebar-float.ts          — 悬浮侧边栏设置
 ├── message-width.ts          — 消息气泡宽度设置
-├── prompt-optimize.ts        — 提示词优化 host 路由（loopback-only）
+├── prompt-optimize.ts        — 提示词优化 host 路由（loopback-only，SSE 流式 + 风格档位）
+├── prompt-optimize-clean.ts  — 优化结果清洗纯函数（去围栏/小标题/结尾说明，两端共用）
 ├── appearance.ts             — 玻璃质感设置（/api/webui-appearance）
+├── plugin-update.ts          — 插件自更新 host（/api/webui-plugin-update：检测上游版本/提交 + 增量补丁 / 整包重装 / git pull）
+├── plugin-update-patch.ts    — 增量更新纯函数内核（unified diff 解析与应用 + git blob sha 校验，可单测）
 ├── done-pill.ts              — 对话完成胶囊 host
 ├── rewind.ts / rewind-diff.ts / screenshot.ts — 对话退回（git 式内容寻址快照）/ 行级 LCS 对齐 diff / 消息截图 host
 ├── workspace-dir-picker.ts   — 工作区目录选择器
@@ -295,7 +401,8 @@ src/
     ├── session-pin/          — 会话置顶 / 归档 / 右键菜单 / 重命名
     ├── provider-hub/         — 供应商设置页（chat / vision / image / video）
     ├── automation/           — 自动化面板（Tab 浮层：任务计划 / 运行记录 + AI 建议确认卡）
-    ├── markdown/             — markstream 渲染（Shiki 高亮 / stub 替换层）
+    ├── team/                 — 团队编排 client（Panel 全高抽屉 / TeamGraph 可拖拽关联画布 / RoleCard / CapabilityEditor 能力装配 / ChainEditor / ModelSelect / GenerateModal 一句话生成 / ChatToggle 对话框开关 / RunHud 执行 HUD / RoleRunCard 角色运行卡）
+    ├── markdown/             — markstream 渲染（Shiki 高亮 / stub 替换层）+ flow-card.tsx 对话流卡片 + diagram.tsx 图表块（引擎懒加载）
     ├── memory/ browser/ file-explorer/ image-gallery/ tool-summary/ message-deliverables/
     │                         — 记忆面板（含 SettingsTab）/ 浏览器 dock / 文件浏览器（FileHistoryView 修改历史、预览总线）/ 图库 / 工具聚合 / 会话产物大卡片
     ├── usage/                — 用量工作台（TrendTab / SignalTab / RangePicker / Heatmap / AreaChart）
@@ -305,10 +412,11 @@ src/
     ├── sidebar-float*.ts(x)  — 悬浮侧边栏 client
     ├── shell-titlebar.ts     — 壳子窗口控制按钮共存样式
     ├── tmp-cleaner-card.tsx  — 临时垃圾清理设置卡（计划 / 预览 / 立即清理）
+    ├── plugin-update-card.tsx — 插件更新设置卡（检查更新 / 增量更新 / 强制重装 / 日志）
     └── styles.ts             — 注入样式
 docs/
 ├── ELEMENT-PICKER.md         — 浏览器元素选取设计文档
-└── TEAM-ORCHESTRA.md         — 多智能体团队编排插件设计文档（v0.1 设计稿）
+└── TEAM-ORCHESTRA.md         — 团队 Agent 编排插件设计文档（v0.5：多团队 + 团队级模型 + 对话框开关 + 执行 HUD + 可拖拽关联画布 + 一句话生成 + 每角色工具/技能装配）
 ```
 
 ## 许可

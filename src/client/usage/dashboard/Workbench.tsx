@@ -18,9 +18,10 @@ const NAV: Array<{ key: TabKey; label: string }> = [
 ]
 
 /** 每个 tab 的理想卡片尺寸：切换时 width/height 以 240ms 平滑过渡（automation 同款）。
- *  整体在原始设计上放大 1.5 倍；PopoverShell 会按视口自动夹紧不越界。 */
+ *  整体在原始设计上放大 1.5 倍；PopoverShell 会按视口自动夹紧不越界。
+ *  趋势 tab 是仪表盘布局，用 fill 铺满锚点右侧的整块面板空间。 */
 const TAB_SIZES: Record<TabKey, PopoverSize> = {
-  trend: { width: 1680, height: 1170 },
+  trend: { width: 1680, height: 1170, fill: true },
   detail: { width: 1500, height: 1080 },
   signal: { width: 1560, height: 1140 },
   accounts: { width: 1230, height: 900 },
@@ -41,6 +42,8 @@ const css = {
     fontSize: 12, lineHeight: '18px', fontWeight: active ? 500 : 400,
   }),
   content: { flex: 1, overflowY: 'auto', padding: '14px 16px 32px', width: '100%', boxSizing: 'border-box' } as React.CSSProperties,
+  // 仪表盘 tab：bento 网格铺满卡片高度（内部区块各自滚动）；内容确实超高时整体兜底可滚。
+  contentFill: { flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', padding: '12px 14px 14px', width: '100%', boxSizing: 'border-box', display: 'flex', flexDirection: 'column' } as React.CSSProperties,
   title: { fontSize: 15, fontWeight: 600, color: 'var(--dsw-alias-label-primary)' } as React.CSSProperties,
   close: { marginLeft: 'auto', width: 28, height: 28, borderRadius: 6, border: 'none', background: 'transparent', color: 'var(--dsw-alias-label-secondary)', cursor: 'pointer', fontSize: 16 } as React.CSSProperties,
 }
@@ -117,7 +120,7 @@ export function Workbench({ onClose, closing = false, anchor = null, onCardMouse
           </div>
         )}
       </div>
-      <main style={css.content} className={modalStaggerClass}>
+      <main style={TAB_SIZES[tab].fill === true ? css.contentFill : css.content} className={modalStaggerClass}>
         {renderTab ? renderTab(tab) : tabContent[tab]}
       </main>
     </PopoverShell>

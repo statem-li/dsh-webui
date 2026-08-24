@@ -9,3 +9,6 @@ _build-fix*.log
 package-lock.json
 # SDD 工作区
 .superpowers/
+
+# 会话临时产物（本地约定目录）
+_tmp/

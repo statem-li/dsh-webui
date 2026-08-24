@@ -20,7 +20,20 @@ export interface MemoryEntryView {
   source: 'extract' | 'manual'
   createdAt: string
   updatedAt: string
+  /** 条目级版本号（每次内容变更 +1）。 */
+  version: number
+  /** 置信度 0-1（手动记忆=1）。 */
+  confidence: number
+  /** 用户是否已显式确认。 */
+  verified: boolean
+  /** 记忆类型。 */
+  kind: MemoryKind
+  /** 上次注入命中时间（null=从未命中）。 */
+  lastHitAt: string | null
 }
+
+/** 记忆类型（host MemoryKind 镜像）。 */
+export type MemoryKind = 'identity' | 'preference' | 'fact' | 'decision' | 'gotcha' | 'session-summary'
 
 /** 项目视图。 */
 export interface ProjectView {
@@ -58,6 +71,15 @@ export interface MemorySummaryResponse {
   entryCount: number
   projectCount: number
   todayChanges: number
+  /**
+   * 以下计数由较新的 host 提供。client 与 host 分别部署——插件更新后 client
+   * 刷新页面即生效，host 要重启 DSH 才换新；这段窗口里字段缺失，面板据 undefined
+   * 隐藏对应指标（补 0 会显示「全局 0」之类的假数据）。
+   */
+  pinnedCount?: number
+  disabledCount?: number
+  longtermCount?: number
+  globalCount?: number
 }
 
 /** 变更响应。 */
@@ -114,6 +136,53 @@ interface ApiError {
   error?: string
 }
 
+/** 记忆类型合法值（规范化用）。 */
+const KIND_VALUES: readonly MemoryKind[] = ['identity', 'preference', 'fact', 'decision', 'gotcha', 'session-summary']
+
+/**
+ * 规范化条目视图：补齐 schema v2 字段的缺省值。
+ *
+ * host 与 client 是各自独立部署的两半——用户更新插件后 client 立刻生效（刷新页面），
+ * 但 host 要重启 DSH 才换新。这段窗口里旧 host 不返回 version/confidence/kind/lastHitAt，
+ * 若直接渲染会出现「版本 vundefined」「置信度 NaN%」和空白徽章。
+ */
+function normalizeEntry(entry: MemoryEntryView): MemoryEntryView {
+  return {
+    ...entry,
+    tags: Array.isArray(entry.tags) ? entry.tags : [],
+    disabled: entry.disabled === true,
+    pinned: entry.pinned === true,
+    importance: Number.isFinite(entry.importance) ? entry.importance : 0,
+    version: Number.isFinite(entry.version) ? entry.version : 1,
+    confidence: Number.isFinite(entry.confidence) ? entry.confidence : (entry.source === 'manual' ? 1 : 0.6),
+    verified: entry.verified === true,
+    kind: KIND_VALUES.includes(entry.kind) ? entry.kind : 'fact',
+    lastHitAt: typeof entry.lastHitAt === 'string' ? entry.lastHitAt : null,
+  }
+}
+
+/** 规范化概览：基础计数缺省按 0；新增计数缺省保持 undefined（面板隐藏）。 */
+function normalizeSummary(summary: MemorySummaryResponse): MemorySummaryResponse {
+  const num = (value: unknown): number => (typeof value === 'number' && Number.isFinite(value) ? value : 0)
+  const opt = (value: unknown): number | undefined =>
+    (typeof value === 'number' && Number.isFinite(value) ? value : undefined)
+  return {
+    today: typeof summary.today === 'string' ? summary.today : '',
+    entryCount: num(summary.entryCount),
+    projectCount: num(summary.projectCount),
+    todayChanges: num(summary.todayChanges),
+    pinnedCount: opt(summary.pinnedCount),
+    disabledCount: opt(summary.disabledCount),
+    longtermCount: opt(summary.longtermCount),
+    globalCount: opt(summary.globalCount),
+  }
+}
+
+/** 规范化响应里的单个 entry 字段（pin/enable/update/move/remember 共用）。 */
+function withEntry<T extends { entry: MemoryEntryView }>(response: T): T {
+  return { ...response, entry: normalizeEntry(response.entry) }
+}
+
 /** GET helper with JSON parsing and error surfacing. */
 async function getJson<T>(path: string): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, { headers: { accept: 'application/json' } })
@@ -143,9 +212,18 @@ export interface MemoryApi {
   summary: () => Promise<MemorySummaryResponse>
   pin: (entryId: string, pinned: boolean) => Promise<{ ok: boolean; entry: MemoryEntryView }>
   enable: (entryId: string, enabled: boolean) => Promise<{ ok: boolean; entry: MemoryEntryView }>
-  update: (entryId: string, patch: { content?: string; tags?: string[] }) => Promise<{ ok: boolean; entry: MemoryEntryView }>
+  update: (entryId: string, patch: {
+    content?: string
+    tags?: string[]
+    importance?: number
+    pinned?: boolean
+    kind?: MemoryKind
+    layer?: 'short' | 'long'
+  }) => Promise<{ ok: boolean; entry: MemoryEntryView }>
   move: (entryId: string, target: { scope?: string; projectHash?: string; path?: string }) => Promise<{ ok: boolean; entry: MemoryEntryView }>
   deleteEntry: (entryId: string) => Promise<{ ok: boolean }>
+  /** 批量删除（一次事务 + 一次编译，替代 N 次 deleteEntry）。 */
+  deleteBatch: (entryIds: string[]) => Promise<{ ok: boolean; deleted: number; missing: number }>
   deleteProject: (projectHash: string) => Promise<{ ok: boolean; deleted: number }>
   meta: (projectHash: string, patch: { alias?: string; locked?: boolean; path?: string; autoMemory?: boolean }) => Promise<{ ok: boolean; meta: ProjectView }>
   remember: (input: {
@@ -164,6 +242,8 @@ export interface MemoryApi {
   rollback: (revisionId: string) => Promise<{ ok: boolean }>
   getConfig: () => Promise<{ config: MemoryConfigView }>
   setConfig: (patch: Partial<MemoryConfigView>) => Promise<{ ok: boolean; config: MemoryConfigView }>
+  /** 恢复引擎默认配置（清空 config.json 覆盖层）。 */
+  resetConfig: () => Promise<{ ok: boolean; config: MemoryConfigView }>
 }
 
 /** 构造面板 API 面。 */
@@ -176,20 +256,25 @@ export function createMemoryApi(): MemoryApi {
       if (params.q !== undefined && params.q !== '') query.set('q', params.q)
       if (params.tag !== undefined && params.tag !== '') query.set('tag', params.tag)
       const suffix = query.toString() === '' ? '' : `?${query.toString()}`
-      return getJson<MemoryListResponse>(`/list${suffix}`)
+      return getJson<MemoryListResponse>(`/list${suffix}`).then(response => ({
+        ...response,
+        entries: (response.entries ?? []).map(normalizeEntry),
+        projects: response.projects ?? [],
+      }))
     },
     projects: () => getJson<{ projects: ProjectView[] }>('/projects'),
     tags: () => getJson<MemoryTagsResponse>('/tags'),
     changes: (date) => getJson<MemoryChangesResponse>(`/changes${date !== undefined ? `?date=${encodeURIComponent(date)}` : ''}`),
-    summary: () => getJson<MemorySummaryResponse>('/summary'),
-    pin: (entryId, pinned) => sendJson<{ ok: boolean; entry: MemoryEntryView }>('/pin', { entryId, pinned }),
-    enable: (entryId, enabled) => sendJson<{ ok: boolean; entry: MemoryEntryView }>('/enable', { entryId, enabled }),
-    update: (entryId, patch) => sendJson<{ ok: boolean; entry: MemoryEntryView }>('/update', { entryId, ...patch }),
-    move: (entryId, target) => sendJson<{ ok: boolean; entry: MemoryEntryView }>('/move', { entryId, ...target }),
+    summary: () => getJson<MemorySummaryResponse>('/summary').then(normalizeSummary),
+    pin: (entryId, pinned) => sendJson<{ ok: boolean; entry: MemoryEntryView }>('/pin', { entryId, pinned }).then(withEntry),
+    enable: (entryId, enabled) => sendJson<{ ok: boolean; entry: MemoryEntryView }>('/enable', { entryId, enabled }).then(withEntry),
+    update: (entryId, patch) => sendJson<{ ok: boolean; entry: MemoryEntryView }>('/update', { entryId, ...patch }).then(withEntry),
+    move: (entryId, target) => sendJson<{ ok: boolean; entry: MemoryEntryView }>('/move', { entryId, ...target }).then(withEntry),
     deleteEntry: (entryId) => sendJson<{ ok: boolean }>('/delete', { entryId }),
+    deleteBatch: (entryIds) => sendJson<{ ok: boolean; deleted: number; missing: number }>('/delete-batch', { entryIds }),
     deleteProject: (projectHash) => sendJson<{ ok: boolean; deleted: number }>('/delete-project', { projectHash }),
     meta: (projectHash, patch) => sendJson<{ ok: boolean; meta: ProjectView }>('/meta', { projectHash, ...patch }),
-    remember: (input) => sendJson<{ ok: boolean; created: boolean; entry: MemoryEntryView }>('/remember', input),
+    remember: (input) => sendJson<{ ok: boolean; created: boolean; entry: MemoryEntryView }>('/remember', input).then(withEntry),
     getInjectState: (sessionId) => getJson<{ enabled: boolean }>(`/inject-state?sessionId=${encodeURIComponent(sessionId)}`),
     setInjectState: (sessionId, enabled) => sendJson<{ ok: boolean; enabled: boolean }>('/inject-state', { sessionId, enabled }),
     consolidate: (scope = 'all', projectHash) => sendJson<{ ok: boolean; results: ConsolidateResultView[] }>('/consolidate', { scope, projectHash }),
@@ -197,5 +282,6 @@ export function createMemoryApi(): MemoryApi {
     rollback: (revisionId) => sendJson<{ ok: boolean }>('/rollback', { revisionId }),
     getConfig: () => getJson<{ config: MemoryConfigView }>('/config'),
     setConfig: (patch) => sendJson<{ ok: boolean; config: MemoryConfigView }>('/config', patch),
+    resetConfig: () => sendJson<{ ok: boolean; config: MemoryConfigView }>('/config', { reset: true }),
   }
 }

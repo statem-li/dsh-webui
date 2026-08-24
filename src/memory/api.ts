@@ -7,9 +7,10 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { URL } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
-import { applyConfigOverrides, publicConfig, type ConsolidateResult, type MemoryConfig, type MemoryEntry } from './types.js'
+import { applyConfigOverrides, DEFAULT_CONFIG, publicConfig, type ConsolidateResult, type MemoryConfig, type MemoryEntry, type MemoryKind } from './types.js'
 import { compileAll } from './engine/compile.js'
 import { consolidateAll, consolidateScope } from './engine/consolidate.js'
+import { searchEntries } from './engine/retrieval.js'
 import { localDate, mergeTags, nowIso, projectHashOf, entryIdOf, summarize, type MemoryStore } from './engine/store.js'
 
 /** Minimal service-shaped view of the webserver route register. */
@@ -27,7 +28,7 @@ declare module '@deepseek-ai/cordis' {
 
 const ROUTE_PREFIX = '/api/dsh-memory'
 
-/** 面板条目视图。 */
+/** 面板条目视图（含 schema v2 元数据：版本 / 置信度 / 确认态 / 类型 / 命中时间）。 */
 interface EntryView {
   id: string
   content: string
@@ -42,6 +43,22 @@ interface EntryView {
   source: 'extract' | 'manual'
   createdAt: string
   updatedAt: string
+  /** 条目级版本号（每次内容变更 +1）。 */
+  version: number
+  /** 置信度 0-1（手动记忆=1）。 */
+  confidence: number
+  /** 用户是否已显式确认。 */
+  verified: boolean
+  /** 记忆类型。 */
+  kind: MemoryKind
+  /** 上次注入命中时间（null=从未命中）。 */
+  lastHitAt: string | null
+}
+
+/** MemoryKind 取值校验（/update 的 kind 字段）。 */
+function isMemoryKindValue(value: unknown): value is MemoryKind {
+  return value === 'identity' || value === 'preference' || value === 'fact'
+    || value === 'decision' || value === 'gotcha' || value === 'session-summary'
 }
 
 function toView(entry: MemoryEntry): EntryView {
@@ -58,6 +75,11 @@ function toView(entry: MemoryEntry): EntryView {
     source: entry.source,
     createdAt: entry.createdAt,
     updatedAt: entry.updatedAt,
+    version: entry.version,
+    confidence: entry.confidence,
+    verified: entry.verified,
+    kind: entry.kind,
+    lastHitAt: entry.lastHitAt,
   }
 }
 
@@ -122,8 +144,13 @@ async function handle(
       return
     }
     if (method === 'GET' && rest === '/changes') {
-      const date = url.searchParams.get('date') ?? localDate()
-      json(res, 200, { date, changes: await store.readChanges(date) })
+      // date=all → 全部历史变更（面板「变更」Tab 的「全部」筛选）；缺省=当日。
+      const raw = url.searchParams.get('date')
+      const changes = raw === 'all' ? await store.readChanges() : await store.readChanges(raw ?? localDate())
+      json(res, 200, {
+        date: raw ?? localDate(),
+        changes: changes.sort((a, b) => b.at.localeCompare(a.at)),
+      })
       return
     }
     if (method === 'GET' && rest === '/summary') {
@@ -134,6 +161,10 @@ async function handle(
         entryCount: entries.length,
         projectCount: (await store.listProjects(entries)).length,
         todayChanges: (await store.readChanges(today)).length,
+        pinnedCount: entries.filter(entry => entry.pinned).length,
+        disabledCount: entries.filter(entry => entry.disabled === true).length,
+        longtermCount: entries.filter(entry => entry.layer === 'long').length,
+        globalCount: entries.filter(entry => entry.scope === 'global').length,
       })
       return
     }
@@ -145,8 +176,17 @@ async function handle(
     }
     if (method === 'POST' && rest === '/config') {
       const body = await readBody(req) as Record<string, unknown>
+      if (body.reset === true) {
+        // 恢复默认：清空 config.json 覆盖层并把运行时配置写回默认值。
+        applyConfigOverrides(config, DEFAULT_CONFIG)
+        await store.writeConfig({})
+        json(res, 200, { ok: true, config: publicConfig(config) })
+        return
+      }
+      // 合并写：与已持久化的覆盖层合并后整体落盘。旧实现只写本次补丁，
+      // 改第二个字段会冲掉第一个字段的覆盖，重启后回退默认值。
       const applied = applyConfigOverrides(config, body)
-      await store.writeConfig(applied)
+      await store.writeConfig({ ...store.readConfigSync(), ...applied })
       json(res, 200, { ok: true, config: publicConfig(config) })
       return
     }
@@ -173,6 +213,9 @@ async function handle(
       const pinned = body.pinned !== false
       const entry = await store.patchEntry(entryId, { pinned })
       if (entry === undefined) throw new Error(`记忆不存在：${entryId}`)
+      // 不写变更流：变更流驱动入口未读 badge，用户自己点置顶不该给自己刷未读。
+      // 但产物要跟上（pinned.md / 注入常驻集合按 pinned 取）。
+      await compileAll(store, config)
       json(res, 200, { ok: true, entry: toView(entry) })
       return
     }
@@ -190,9 +233,8 @@ async function handle(
         scope: entry.scope,
         projectHash: entry.projectHash,
         summary: `${enabled ? '启用' : '禁用'}：${summarize(entry.content)}`,
-        before: existing.content,
-        after: entry.content,
       })
+      await compileAll(store, config)
       json(res, 200, { ok: true, entry: toView(entry) })
       return
     }
@@ -206,6 +248,13 @@ async function handle(
       if (Array.isArray(body.tags)) {
         patch.tags = body.tags.filter((tag): tag is string => typeof tag === 'string' && tag.trim() !== '').map(tag => tag.trim()).slice(0, 8)
       }
+      // 重要度 / 置顶 / 类型 / 层：面板编辑区可直接改（此前只能改内容与标签）。
+      if (typeof body.importance === 'number' && Number.isFinite(body.importance)) {
+        patch.importance = Math.max(1, Math.min(20, Math.round(body.importance * 10) / 10))
+      }
+      if (typeof body.pinned === 'boolean') patch.pinned = body.pinned
+      if (isMemoryKindValue(body.kind)) patch.kind = body.kind
+      if (body.layer === 'short' || body.layer === 'long') patch.layer = body.layer
       const before = await store.getEntry(entryId)
       const entry = await store.patchEntry(entryId, patch)
       if (entry === undefined) throw new Error(`记忆不存在：${entryId}`)
@@ -218,6 +267,7 @@ async function handle(
         before: before?.content,
         after: entry.content,
       })
+      await compileAll(store, config)
       json(res, 200, { ok: true, entry: toView(entry) })
       return
     }
@@ -233,15 +283,26 @@ async function handle(
         projectHash = null
       } else if (body.scope === 'project') {
         scope = 'project'
-        projectHash = typeof body.projectHash === 'string' && body.projectHash !== ''
-          ? body.projectHash
-          : existing.projectHash
-        if (projectHash === null) throw new Error('移入项目需要 projectHash')
+        const rawHash = typeof body.projectHash === 'string' ? body.projectHash.trim() : ''
+        const rawPath = typeof body.path === 'string' ? body.path.trim() : ''
+        // 12 位 hex 视为项目 hash；否则当作 workspace 路径派生 hash
+        // （旧实现把路径原样当 hash 存，会造出以路径为目录名的伪项目）。
+        projectHash = /^[0-9a-f]{12}$/i.test(rawHash)
+          ? rawHash.toLowerCase()
+          : rawHash !== ''
+            ? projectHashOf(rawHash)
+            : rawPath !== ''
+              ? projectHashOf(rawPath)
+              : existing.projectHash
+        if (projectHash === null) throw new Error('移入项目需要 projectHash 或 path')
         // 目标项目无 meta 时自动创建占位（手动归属）。
         const meta = await store.readProjectMeta(projectHash)
         if (meta === undefined) {
+          const rawPath = typeof body.path === 'string' ? body.path.trim() : ''
+          const rawHash = typeof body.projectHash === 'string' ? body.projectHash.trim() : ''
+          const path = rawPath !== '' ? rawPath : (/^[0-9a-f]{12}$/i.test(rawHash) ? '手动归属' : rawHash)
           await store.writeProjectMeta(projectHash, {
-            path: typeof body.path === 'string' && body.path !== '' ? body.path : '手动归属',
+            path: path === '' ? '手动归属' : path,
             alias: null,
             locked: true,
           })
@@ -287,13 +348,42 @@ async function handle(
       json(res, 200, { ok: true })
       return
     }
+    if (method === 'POST' && rest === '/delete-batch') {
+      // 批量删除（面板多选）：一次事务删完再编译一次产物。
+      const body = await readBody(req) as Record<string, unknown>
+      const ids = Array.isArray(body.entryIds)
+        ? body.entryIds.filter((id): id is string => typeof id === 'string' && id.trim() !== '').map(id => id.trim())
+        : []
+      if (ids.length === 0) throw new Error('entryIds 不能为空')
+      const wanted = new Set(ids)
+      const removed = await store.mutateEntries(entries => {
+        const targets = entries.filter(entry => wanted.has(entry.id))
+        for (const target of targets) entries.splice(entries.indexOf(target), 1)
+        return targets
+      })
+      for (const entry of removed) {
+        await store.appendChange({
+          action: 'delete',
+          entryId: entry.id,
+          scope: entry.scope,
+          projectHash: entry.projectHash,
+          summary: `删除：${summarize(entry.content)}`,
+          before: entry.content,
+        })
+      }
+      await compileAll(store, config)
+      json(res, 200, { ok: true, deleted: removed.length, missing: ids.length - removed.length })
+      return
+    }
     if (method === 'POST' && rest === '/meta') {
       const body = await readBody(req) as Record<string, unknown>
       const hash = requireString(body.projectHash, 'projectHash')
       const meta = await store.readProjectMeta(hash)
       const next = {
         path: meta?.path ?? (typeof body.path === 'string' && body.path !== '' ? body.path : '手动归属'),
-        alias: typeof body.alias === 'string' && body.alias !== '' ? body.alias.slice(0, 64) : (meta?.alias ?? null),
+        alias: typeof body.alias === 'string'
+          ? (body.alias.trim() === '' ? null : body.alias.trim().slice(0, 64))
+          : (meta?.alias ?? null),
         locked: typeof body.locked === 'boolean' ? body.locked : (meta?.locked ?? true),
         autoMemory: typeof body.autoMemory === 'boolean' ? body.autoMemory : (meta?.autoMemory ?? true),
       }
@@ -420,29 +510,34 @@ async function handle(
 }
 
 /** 面板列表视图（scope/项目/搜索/标签过滤）。 */
-async function listView(store: MemoryStore, params: URLSearchParams): Promise<{ entries: EntryView[]; projects: Array<{ hash: string; path: string; alias: string | null; locked: boolean; entryCount: number; pinnedCount: number }> }> {
+async function listView(store: MemoryStore, params: URLSearchParams): Promise<{ entries: EntryView[]; projects: ProjectView[] }> {
   const entries = await store.readEntries()
   const scope = params.get('scope')
   const project = params.get('project')
   const q = params.get('q')?.trim().toLowerCase() ?? ''
   const tag = params.get('tag')
 
-  const views = entries
-    .filter(entry => {
-      if (scope === 'global' && entry.scope !== 'global') return false
-      if (scope === 'project' && entry.scope !== 'project') return false
-      if (project !== null && project !== '' && entry.projectHash !== project) return false
-      if (q !== '') {
-        const haystack = `${entry.content} ${entry.tags.join(' ')}`.toLowerCase()
-        if (!q.split(/\s+/).every(term => haystack.includes(term))) return false
-      }
-      if (tag !== null && tag !== '' && !entry.tags.includes(tag)) return false
-      return true
-    })
-    .sort((a, b) => {
+  // 硬过滤：scope / project / tag。
+  const scoped = entries.filter(entry => {
+    if (scope === 'global' && entry.scope !== 'global') return false
+    if (scope === 'project' && entry.scope !== 'project') return false
+    if (project !== null && project !== '' && entry.projectHash !== project) return false
+    if (tag !== null && tag !== '' && !entry.tags.includes(tag)) return false
+    return true
+  })
+  // 搜索：走同一套 hybrid 检索（n-gram 相似 + 精确命中加成），
+  // 让"打错一个字/换个说法"也能命中——旧实现是逐词子串 AND，
+  // 与工具 memory_search 的行为不一致，面板搜不到工具能搜到的条目。
+  const matched = q === ''
+    ? scoped
+    : searchEntries(q, scoped, 'hybrid').filter(match => match.score >= 0.2).map(match => match.entry)
+  const views = (q === ''
+    ? [...matched].sort((a, b) => {
       if (a.pinned !== b.pinned) return a.pinned ? -1 : 1
       return b.updatedAt.localeCompare(a.updatedAt)
     })
+    // 有查询词时按相关度排序，但置顶条目仍优先（用户明确标记的重要条目）。
+    : [...matched].sort((a, b) => (a.pinned === b.pinned ? 0 : a.pinned ? -1 : 1)))
     .map(toView)
 
   return { entries: views, projects: await mergeWorkspaces(store, await store.listProjects(entries)) }

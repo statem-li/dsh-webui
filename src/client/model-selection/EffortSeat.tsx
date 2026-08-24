@@ -1,10 +1,12 @@
 /**
- * EffortSeat — 推理等级滑动式弹出，注册在 composer 工具行右侧
- * （`conversation.input.right`，模型座位左侧）。
+ * EffortSeat — 推理等级滑动式弹出，接管 composer 的模型座位
+ * （`conversation.input.model`，位于模型名右侧）。
  *
- * 点击触发按钮弹出面板：面板内是一条渐变滑杆（低等级冷色 → 高等级暖色），
- * 拖动 / 点击刻度即可切换推理等级，松手提交；拖动过程中 thumb 处持续迸发
- * 彩色粒子。选择与模型座位、`/model` 弹窗共享同一 ModelDirectory。
+ * 悬停触发按钮弹出面板：面板内没有轨道长条、也没有底色面 —— 只有一层透明画布
+ * 上的光尘，从左端漂向当前档位并被吸收（深浅主题各自配色）。档位由刻度点与
+ * 档位名标识，滑块是一颗带呼吸光环的主色圆点。拖动 / 点击刻度 / 点击档位名即可
+ * 切换，色相随等级在品牌蓝 → 靛紫间漂移，切换瞬间在滑块处散开一圈火星。
+ * 选择与模型座位、`/model` 弹窗共享同一 ModelDirectory。
  */
 import {
   useEffect, useMemo, useRef, useState, useSyncExternalStore,
@@ -48,6 +50,8 @@ export function EffortSeat({ available, directory, load, select, locked }: Effor
   const rootRef = useRef<HTMLDivElement | null>(null)
   const sliderRef = useRef<HTMLDivElement | null>(null)
   const particleRef = useRef<ParticleFieldHandle | null>(null)
+  // 上一次迸发火花对应的档位（避免打开面板时立刻放一次多余的火花）。
+  const lastBurstIndex = useRef<number | null>(null)
 
   /** 带滑出动画的关闭：closing 期间重复调用被守卫忽略。 */
   const closePanel = (): void => {
@@ -135,19 +139,38 @@ export function EffortSeat({ available, directory, load, select, locked }: Effor
   const activeChoice = effortChoices[activeIndex]
   // 当前档位的归一化位置（用于渐变填充宽度 / thumb 定位）。
   const activeT = n <= 1 ? 0.5 : (activeIndex >= 0 ? activeIndex : 0) / (n - 1)
+  // 动效强度：等级越高，能量流越密越快、呼吸光环越急。
+  const intensity = 0.25 + activeT * 0.75
+  // 呼吸光环周期：低等级 1.9s → 高等级 1.0s。
+  const pulseMs = Math.round(1900 - activeT * 900)
 
   useEffect(() => {
     if (available) load()
   }, [available, load])
 
-  // 打开面板期间持续流动：光点沿轨道从左流向滑块，关闭时停止。
+  // 面板关闭后重置火花基准，下次打开不会立刻迸发。
+  useEffect(() => {
+    if (!open) lastBurstIndex.current = null
+  }, [open])
+
+  // 打开面板期间持续流动：光点沿轨道从左流向滑块并被吸收，关闭时停止。
   useEffect(() => {
     if (!open) {
       particleRef.current?.stop()
       return
     }
-    particleRef.current?.flow(activeT, 0.5)
-  }, [open, activeT])
+    particleRef.current?.flow({ end: activeT, intensity, hue: activeHue })
+  }, [open, activeT, intensity, activeHue])
+
+  // 档位变化（含提交生效）→ 在滑块处迸发一次火花，给出「已切换」的触感反馈。
+  useEffect(() => {
+    if (!open) return
+    if (lastBurstIndex.current === activeIndex) return
+    const first = lastBurstIndex.current === null
+    lastBurstIndex.current = activeIndex
+    if (first) return
+    particleRef.current?.burst({ end: activeT, intensity, hue: activeHue })
+  }, [open, activeIndex, activeT, intensity, activeHue])
 
   if (!available || reasoning === undefined || effortChoices.length === 0) return null
 
@@ -216,7 +239,11 @@ export function EffortSeat({ available, directory, load, select, locked }: Effor
     window.setTimeout(() => { setDragIndex(null) }, 160)
   }
 
-  const dotStyle = { '--eff-dot-color': activeColor } as CSSProperties
+  /** 面板级 CSS 变量：强调色 + 呼吸周期，供轨道 / 滑块 / 刻度共享。 */
+  const accentStyle = {
+    '--eff-accent': activeColor,
+    '--eff-pulse': `${pulseMs}ms`,
+  } as CSSProperties
   const activeDescription = activeChoice?.description
 
   return (
@@ -237,6 +264,7 @@ export function EffortSeat({ available, directory, load, select, locked }: Effor
       {open && (
         <div
           className={`${css.effPanel} ${closing ? 'dsh-glass-anim-out' : 'dsh-glass-anim-in'}`}
+          style={accentStyle}
           role="dialog"
           aria-label="修改推理等级"
           onMouseEnter={showPanel}
@@ -244,12 +272,14 @@ export function EffortSeat({ available, directory, load, select, locked }: Effor
         >
           <div className={css.effPanelHead}>
             <span className={css.effPanelTitle}>推理等级</span>
-            <span className={css.effPanelValue}>{activeChoice?.label ?? '默认'}</span>
+            <span key={activeChoice?.key ?? 'none'} className={css.effPanelValue}>
+              {activeChoice?.label ?? '默认'}
+            </span>
           </div>
 
           <div
             ref={sliderRef}
-            className={css.effSlider}
+            className={dragIndex === null ? css.effSlider : `${css.effSlider} ${css.effSliderDrag}`}
             role="slider"
             tabIndex={0}
             aria-valuemin={0}
@@ -262,14 +292,26 @@ export function EffortSeat({ available, directory, load, select, locked }: Effor
             onPointerCancel={() => { setDragIndex(null) }}
             onKeyDown={onKeyDown}
           >
-            <div className={css.effTrack} />
-            <div
-              className={css.effFill}
-              style={{ width: `calc((100% - 20px) * ${activeT})`, '--eff-dot-color': activeColor } as CSSProperties}
-            />
             <ParticleField ref={particleRef} className={css.effCanvas} />
-            <div className={css.effThumb} style={{ left: posPct(activeIndex >= 0 ? activeIndex : 0), ...dotStyle }}>
+            {/* 刻度点：展示全部档位；已越过的点亮起，滑块所在的点隐藏（避免与滑块重叠）。 */}
+            <div className={css.effTicks}>
+              {effortChoices.map((choice, index) => {
+                const tickClasses: string[] = [css.effTick]
+                if (index <= activeIndex) tickClasses.push(css.effTickOn)
+                if (index === activeIndex) tickClasses.push(css.effTickAt)
+                return (
+                  <span
+                    key={choice.key}
+                    className={tickClasses.join(' ')}
+                    style={{ left: n <= 1 ? '50%' : `${(index / (n - 1)) * 100}%` }}
+                  />
+                )
+              })}
+            </div>
+            <div className={css.effThumb} style={{ left: posPct(activeIndex >= 0 ? activeIndex : 0) }}>
               <span className={css.effThumbGlow} />
+              <span className={css.effThumbRing} />
+              <span className={css.effThumbCore} />
             </div>
           </div>
 
@@ -277,8 +319,9 @@ export function EffortSeat({ available, directory, load, select, locked }: Effor
             {effortChoices.map((choice, index) => (
               <span
                 key={choice.key}
-                className={index <= activeIndex ? `${css.effLabelsItem} ${css.effLabelsItemOn}` : css.effLabelsItem}
+                className={index === activeIndex ? `${css.effLabelsItem} ${css.effLabelsItemOn}` : css.effLabelsItem}
                 title={choice.description}
+                onClick={() => { commit(index) }}
               >
                 {choice.label}
               </span>
@@ -286,7 +329,7 @@ export function EffortSeat({ available, directory, load, select, locked }: Effor
           </div>
 
           {activeDescription !== undefined && (
-            <div className={css.effEmpty}>{activeDescription}</div>
+            <div key={activeChoice?.key ?? 'none'} className={css.effEmpty}>{activeDescription}</div>
           )}
         </div>
       )}

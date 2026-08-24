@@ -2,18 +2,22 @@
  * webui — 对话「退回」能力（client 半身）。
  *
  * 给「我发送的消息」（user 节点）在复制按钮旁增加一个「退回」按钮。点击后：
- *   1. 先调 host `/api/webui-rewind/restore` 回退工作区文件到该消息发送前；
- *   2. 文件回退成功后，再「原地回退」上下文：
- *        - 有上一条已完成 turn：fork 到该边界 → 打开子会话 → 归档原会话
- *          （原对话从列表消失，只留回退后的对话）；
- *        - 第一条消息：归档原会话 → 回到空白会话。
+ *   1. 先查 host `/api/webui-rewind/diff` 列出本次会回退的文件（有变化才弹确认）；
+ *   2. 确认后调 host `/api/webui-rewind/rewind`，host 端一次性完成：
+ *        - 回退工作区文件到该消息发送前；
+ *        - **原地回退上下文**（追加 surface 替换事件遮蔽该消息及之后的节点）。
  *
- * 顺序保证一致性：文件回退失败则绝不切上下文，用户停留在原会话且文件未被
- * 改动，可放心重试。
+ * 原地回退 = 不 fork、不归档、不切换会话。回退后页面不刷新、无重载、无空态
+ * 闪屏；被遮蔽的历史消息由「已退回到此处」标记行隐藏（CSS），标记与隐藏
+ * 区间都能从会话日志重建，刷新后依然正确。
+ *
+ * 「修改并重新发送」与「重新生成回复」仍走官方 fork（保留原对话、新开分支），
+ * 语义上与「退回」不同，不受影响。
  */
 import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
-import type { ClientContext, ISessions, IWorkspaces, SessionId, SnapshotStore } from '@deepseek-ai/dsh-client-runtime/client'
+import type { ClientContext, ISessions, IWorkspaces, SessionId, SnapshotStore, ConversationNodeDefinition } from '@deepseek-ai/dsh-client-runtime/client'
+import { isReplacementSurfaceEvent } from '@deepseek-ai/dsh-client-runtime/client'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm/types'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import type { ChatNodeViewProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
@@ -94,6 +98,8 @@ const SHEET = `
 .dsh-rewind-edit:disabled{opacity:.55}
 .dsh-rewind-inlineEditor{display:flex;flex-direction:column;gap:8px;width:min(760px,100%);min-width:min(600px,100%);box-sizing:border-box}
 .dsh-rewind-editActions{display:flex;justify-content:flex-end;gap:8px}
+.dsh-rewind-marker{display:flex;align-items:center;justify-content:center;gap:6px;margin:10px 0 4px;padding:4px 10px;border-radius:999px;background:var(--dsw-alias-bg-layer-2,rgba(255,255,255,.04));color:var(--dsw-alias-label-tertiary,#888);font-size:12px;line-height:18px;user-select:none}
+.dsh-rewind-marker svg{flex:none;opacity:.7}
 @media (hover:hover){
   [data-time-hover-root] .dsh-rewind-time{opacity:0;transition:opacity 80ms ease}
   [data-time-hover-root]:hover .dsh-rewind-time,[data-time-hover-root]:focus-within .dsh-rewind-time{opacity:1}
@@ -270,7 +276,7 @@ function describeDiff(diff: RewindDiffResult): string {
   if (deleted > 0) parts.push(`恢复 ${deleted} 个已删除文件`)
   if (added > 0) parts.push(`删除 ${added} 个新增文件`)
   const changes = parts.length > 0 ? `本次将${parts.join('、')}` : '工作区文件无变化'
-  return `将回退工作区文件到这条消息发送前的状态，并消除这条消息及之后的上下文。${changes}，此操作不可撤销。`
+  return `将回退工作区文件到这条消息发送前的状态，并把对话原地回退到这条消息之前（仍停留在当前会话，不切换、不刷新）。${changes}，此操作不可撤销。`
 }
 
 // ── 组件 ────────────────────────────────────────────────────────────────────
@@ -343,42 +349,25 @@ export const UserRewindNodeView = memo(function UserRewindNodeView({
   }, [copied, text])
 
   /**
-   * 执行退回闭环：先（可选）回退文件，成功后 fork 上下文。
-   * @param skipRestore 无文件修改时为 true，跳过文件回退直接切上下文。
+   * 执行退回闭环：调 host `/api/webui-rewind/rewind`，host 端完成
+   * 「文件回退 + 原地上下文回退（surface 替换）」后直接返回。
+   * **成功不做任何会话操作**：不 fork、不归档、不切换会话——被遮蔽的历史
+   * 由 host 追加的替换事件经 SSE 实时送达，客户端自动出现「已退回」标记并
+   * 隐藏被遮蔽的消息行，页面无刷新、无重载、无空态闪屏。
    */
-  const doRewind = useCallback((skipRestore: boolean) => {
+  const doRewind = useCallback(() => {
     setBusy(true)
     const seq = node.anchorSeq
     void (async () => {
       let errorMsg: string | null = null
       try {
-        if (!skipRestore) {
-          const res = await fetch('/api/webui-rewind/restore', {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ sessionId, seq }),
-          })
-          const result = await res.json() as { ok?: boolean; error?: string }
-          if (result.ok !== true) errorMsg = result.error ?? '未知错误'
-        }
-        if (errorMsg === null) {
-          // 文件回退成功后，才「原地回退」：
-          //   - 有上一条已完成 turn：fork 到该边界 → 等子会话浮出列表 → 打开
-          //     子会话 → 归档原会话。不等浮出就 open 会把 current 打到不在
-          //     列表的 blank 会话上，UI 闪进「无会话空态」再恢复（用户看到的
-          //     「像刷新一样的闪屏」）。
-          //   - 第一条消息：先 startSession 切到新空白会话，再归档原会话。
-          //     顺序反了的话，归档瞬间 current 被清成 no-session，同样闪空态。
-          if (prevTurnEnd !== undefined) {
-            const childId = await sessions.fork({ sessionId, atSeq: prevTurnEnd })
-            await waitSessionSurfaced(sessions.list, childId)
-            sessions.open(childId)
-            await archiveBestEffort(workspaces, sessionId)
-          } else {
-            workspaces.startSession()
-            await archiveBestEffort(workspaces, sessionId)
-          }
-        }
+        const res = await fetch('/api/webui-rewind/rewind', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ sessionId, seq }),
+        })
+        const result = await res.json() as { ok?: boolean; error?: string }
+        if (result.ok !== true) errorMsg = result.error ?? '未知错误'
       } catch (err: unknown) {
         errorMsg = err instanceof Error ? err.message : String(err)
       } finally {
@@ -387,7 +376,7 @@ export const UserRewindNodeView = memo(function UserRewindNodeView({
         setBusy(false)
       }
     })()
-  }, [node.anchorSeq, sessionId, sessions, prevTurnEnd, workspaces])
+  }, [node.anchorSeq, sessionId])
 
   const onRewind = useCallback(() => {
     if (busy) return
@@ -408,7 +397,7 @@ export const UserRewindNodeView = memo(function UserRewindNodeView({
           setConfirmOpen(true)
           setBusy(false)
         } else {
-          void doRewind(true)
+          void doRewind()
         }
       })
       .catch((err: unknown) => {
@@ -419,7 +408,7 @@ export const UserRewindNodeView = memo(function UserRewindNodeView({
 
   const onConfirmRewind = useCallback(() => {
     if (busy) return
-    void doRewind(false)
+    void doRewind()
   }, [busy, doRewind])
 
   /**
@@ -622,7 +611,7 @@ export const UserRewindNodeView = memo(function UserRewindNodeView({
             </Tooltip>
           )}
           {isUser && (
-            <Tooltip label={prevTurnEnd !== undefined ? '退回到这条消息之前' : '退回并回到空白会话'} side="bottom">
+            <Tooltip label="退回到这条消息之前（原地回退，不切换会话、不刷新）" side="bottom">
               <button
                 type="button"
                 className={[ 'dsh-rewind-action', busy ? 'dsh-rewind-action-busy' : '' ].filter(Boolean).join(' ')}
@@ -642,7 +631,7 @@ export const UserRewindNodeView = memo(function UserRewindNodeView({
         open={confirmOpen}
         onClose={() => { if (!busy) setConfirmOpen(false) }}
         title="退回确认"
-        description={diffInfo !== null ? describeDiff(diffInfo) : '将回退工作区文件到这条消息发送前的状态，并消除这条消息及之后的上下文。'}
+        description={diffInfo !== null ? describeDiff(diffInfo) : '将回退工作区文件到这条消息发送前的状态，并把对话原地回退到这条消息之前（仍停留在当前会话，不切换、不刷新）。'}
         footer={(
           <>
             <Button variant="outline" disabled={busy} onClick={() => { if (!busy) setConfirmOpen(false) }}>取消</Button>
@@ -681,6 +670,132 @@ export const UserRewindNodeView = memo(function UserRewindNodeView({
   )
 })
 
+// ── 「已退回」标记节点（原地回退的可视锚点）────────────────────────────────
+
+/** 标记节点 kind：合并进 ChatNodeDataMap，供 keyed 渲染器分发。 */
+const REWIND_KIND = 'webui-rewind'
+
+interface RewindMarkerState {
+  /** 被遮蔽区间的起点 seq（回退目标消息）。 */
+  fromSeq: number
+  /** 被遮蔽区间的终点 seq（回退时的 surface 末尾）。 */
+  toSeq: number
+  /** 被遮蔽的表面节点数（sourceEventSeqs 长度）。 */
+  count: number
+}
+
+declare module '@deepseek-ai/dsh-client-ui-conversation/client' {
+  interface ChatNodeDataMap {
+    /** 原地回退标记：标识被遮蔽的消息区间。 */
+    'webui-rewind': RewindMarkerState
+  }
+}
+
+/**
+ * 匹配 host 追加的 `user/message` 表面替换事件（source.plugin ===
+ * 'webui-rewind'），生成「已退回」标记节点。事件持久化在会话日志里，
+ * 因此刷新页面后标记与隐藏区间仍能从日志重建，无需额外状态存储。
+ */
+export const rewindMarkerDefinition: ConversationNodeDefinition<RewindMarkerState> = {
+  kind: REWIND_KIND,
+  target: 'chat',
+  match: (event) => {
+    if (event.type !== 'user/message' || !isReplacementSurfaceEvent(event)) return null
+    const source = event.data.source as { plugin?: unknown }
+    if (source.plugin !== 'webui-rewind') return null
+    return { id: String(event.seq), role: 'start' }
+  },
+  start: (_context, match) => {
+    const event = match.event as { surfaceOp?: { op: 'replace'; start: number; end: number }; sourceEventSeqs?: number[] }
+    return {
+      fromSeq: event.surfaceOp?.start ?? 0,
+      toSeq: event.surfaceOp?.end ?? 0,
+      count: event.sourceEventSeqs?.length ?? 0,
+    }
+  },
+  update: (context) => context.state,
+  buildViewNode: (context) => {
+    if (context.state === undefined) return null
+    const location = context.start?.location ?? context.matches[0]?.location ?? { kind: 'unresolved' }
+    return {
+      key: context.key,
+      kind: REWIND_KIND,
+      id: context.id,
+      target: 'chat',
+      anchorSeq: context.start?.event.seq ?? 0,
+      location,
+      visibility: 'visible',
+      data: context.state,
+    }
+  },
+}
+
+/** CSS 属性值转义（data-chat-flow-key 含冒号等字符，需转义引号与反斜杠）。 */
+function attrEscape(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+}
+
+/**
+ * 计算需要隐藏的 chat 行：anchorSeq ∈ [fromSeq, toSeq] 的所有节点
+ * （标记节点自身除外）。用 WeakMap 按 order 引用缓存，order 不变（流式
+ * 更新只改节点内容不改行集合）时选择器返回同一字符串，不触发重渲染。
+ */
+const rulesCache = new WeakMap<readonly string[], string>()
+
+function computeHiddenRules(
+  order: readonly string[],
+  nodes: { get(key: string): { kind: string; anchorSeq: number } | undefined },
+  fromSeq: number,
+  toSeq: number,
+): string {
+  let rules = ''
+  for (const key of order) {
+    const node = nodes.get(key)
+    if (node === undefined || node.kind === REWIND_KIND) continue
+    if (node.anchorSeq >= fromSeq && node.anchorSeq <= toSeq) {
+      rules += `[data-chat-flow-key="${attrEscape(key)}"]{display:none!important}`
+    }
+  }
+  return rules
+}
+
+/** 「已退回」标记渲染器：显示标记行，并把被遮蔽区间内的消息行 CSS 隐藏。 */
+export const RewindMarkerNodeView = memo(function RewindMarkerNodeView({
+  node, useSession,
+}: ChatNodeViewProps<'webui-rewind'>) {
+  const data = node.data
+  const hiddenRules = useSession(snapshot => {
+    const order = snapshot.chat.order
+    let rules = rulesCache.get(order)
+    if (rules === undefined) {
+      rules = computeHiddenRules(order, snapshot.chat.nodes, data.fromSeq, data.toSeq)
+      rulesCache.set(order, rules)
+    }
+    return rules
+  })
+
+  // 注入隐藏规则（document.head 上的 style 标签，组件卸载即移除）。
+  useEffect(() => {
+    if (hiddenRules === '') return
+    const tag = document.createElement('style')
+    tag.dataset.rewindHide = 'true'
+    tag.textContent = hiddenRules
+    document.head.appendChild(tag)
+    return () => { tag.remove() }
+  }, [hiddenRules])
+
+  return (
+    <div
+      className="dsh-rewind-marker"
+      data-rewind-marker
+      title={`已退回：被移除的消息区间 ${data.fromSeq}–${data.toSeq}，共 ${data.count} 条`}
+    >
+      <IconUndoOutline16 />
+      <span>已退回到此处 · {data.count} 条消息已从上下文移除</span>
+    </div>
+  )
+})
+
 // ── 插件入口 ────────────────────────────────────────────────────────────────
 
 /**
@@ -692,7 +807,7 @@ export function applyRewindClient(ctx: ClientContext): void {
   injectStyles()
   // modelDirectories（ui-model-selection）就绪后再接线：辅助视觉徽章需要
   // 当前会话的共享模型目录来读「当前选中模型」。
-  ctx.inject(['slots', 'sessions', 'workspaces', 'modelDirectories'], (scope) => {
+  ctx.inject(['slots', 'sessions', 'workspaces', 'modelDirectories', 'conversationEvents'], (scope) => {
     const sessions = scope.sessions
     const workspaces = scope.workspaces
     const models = scope.modelDirectories
@@ -715,5 +830,15 @@ export function applyRewindClient(ctx: ClientContext): void {
       locale: 'conversation',
       inject: injectFace,
     }, UserRewindNodeView))
+    // 「已退回」标记节点：匹配 host 追加的表面替换事件（source.plugin ===
+    // 'webui-rewind'）。它是 keyed 渲染，无需注入业务面。
+    scope.slots.inject('conversation.chat.node', () => scope.slots.register({
+      name: 'conversation.chat.node',
+      key: REWIND_KIND,
+      priority: -100,
+      locale: 'conversation',
+    }, RewindMarkerNodeView))
+    // 标记的 conversation 定义：让替换事件能产出 chat 节点。
+    scope.conversationEvents.register(rewindMarkerDefinition)
   })
 }
