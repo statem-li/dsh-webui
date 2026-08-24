@@ -1,6 +1,6 @@
 # dsh-webui — DeepSeek Harness 会话增强全家桶
 
-一个插件融合视图切换、消息导航、技能管理、供应商管理、辅助视觉、生图/生视频、记忆（hybrid 检索）、AI 浏览器、文件浏览器、Markdown 渲染、工具聚合、用量统计、网页搜索、定时自动化任务引擎、PlanWeave 计划项目、会话产物清单、对话退回与文件回退/修改历史对比、提示音、壳管理更新、网络代理、消息截图、中文思考等能力。纯插件实现，不改动 DSH 源码。
+一个插件融合视图切换、消息导航、技能管理、供应商管理、辅助视觉、生图/生视频、记忆（hybrid 检索）、AI 浏览器、文件浏览器、Markdown 渲染、工具聚合、用量统计、网页搜索、定时自动化任务引擎、PlanWeave 计划项目、会话产物清单、对话退回与文件回退/修改历史对比、提示音、壳管理更新、网络代理、消息截图、中文思考、工作区临时垃圾清理等能力。纯插件实现，不改动 DSH 源码。
 
 ## 一句话安装（DSH）
 
@@ -78,6 +78,7 @@ curl -X POST http://127.0.0.1:3080/api/webui-modules \
 | 用量与统计 | `usage` | 用量工作台 |
 | 文件与工作区 | `fileExplorer` | 文件浏览器 |
 | | `dirPicker` | 工作区目录选择器 |
+| | `tmpCleaner` | 工作区临时垃圾清理器 |
 | 外观与系统 | `appearance` | 玻璃质感主题 |
 | | `sidebarFloat` | 悬浮侧边栏 |
 | | `updater` | 壳管理更新 |
@@ -242,6 +243,7 @@ dock 工具条「选取元素」按钮进入选取模式，点击预览画面任
 | 文件修改历史 | 基于对话退回快照体系：时间线列出该文件在各次发消息前的内容变化点，选中后左右分栏 diff（LCS 行级双向对齐、天然同步滚动），对比历史版本与当前磁盘内容 |
 | 应用内文件预览卡 | 官方产物 chip / 正文文件提及的点击接管为应用内滑出预览——图片查看器 / markdown 渲染 / 高亮文本 / 二进制 hex 兜底，全程不经系统打开 |
 | 工作区目录选择器 | 自写弹窗（添加工作区时选文件夹，shadow 官方 native 选择器） |
+| 临时垃圾清理器 | 定时清空各工作区 `_tmp/` 内的 AI 临时脚本与常见垃圾文件：`_tmp/` 约定目录整体清理 + 规则扫描（内置 `*.tmp` `*.bak` `*.swp` `*.log` `.DS_Store` `Thumbs.db` 等 + 自定义追加规则）；调度可自定（每天 HH:mm / 每 N 小时，设置页通用分区行卡片配置）+ 可选启动补跑；最小文件年龄保护（默认 24h，到龄才清）、`.git`/`node_modules` 等保护目录永不下钻、单轮条目上限、每轮落 jsonl 日志（`${DSH_HOME}/tmp-cleaner/dsh-webui/log.jsonl`）；「预览待清理 / 立即清理」手动入口 + agent 工具 `webui_tmp_clean`；默认注入「临时脚本一律写工作区 `_tmp/`」系统提示词约定（与清理边界闭环） |
 
 ### 外观与系统
 
@@ -284,6 +286,7 @@ src/
 ├── done-pill.ts              — 对话完成胶囊 host
 ├── rewind.ts / rewind-diff.ts / screenshot.ts — 对话退回（git 式内容寻址快照）/ 行级 LCS 对齐 diff / 消息截图 host
 ├── workspace-dir-picker.ts   — 工作区目录选择器
+├── tmp-cleaner.ts            — 工作区临时垃圾清理器（_tmp 约定目录 + 规则扫描 + 调度 + webui_tmp_clean 工具）
 ├── browser/                  — AI 浏览器 host（壳内多标签对接 + CDP 原语）
 └── client/
     ├── index.ts              — client 入口：注册各 UI 槽位（按模块开关裁剪）
@@ -301,6 +304,7 @@ src/
     ├── session-motion.ts     — 会话切换柔和过渡
     ├── sidebar-float*.ts(x)  — 悬浮侧边栏 client
     ├── shell-titlebar.ts     — 壳子窗口控制按钮共存样式
+    ├── tmp-cleaner-card.tsx  — 临时垃圾清理设置卡（计划 / 预览 / 立即清理）
     └── styles.ts             — 注入样式
 docs/
 ├── ELEMENT-PICKER.md         — 浏览器元素选取设计文档

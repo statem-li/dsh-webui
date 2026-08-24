@@ -114,6 +114,32 @@ export type T = (key: ChatCopyKey) => string
 export const t: T = (key) => chatCopy[key]
 
 /**
+ * 展开编辑 UI 的共享伪类样式：focus 描边、placeholder、disabled、按钮 hover
+ * 都无法用内联样式表达，随首个编辑器挂载注入一次（幂等）。规格与官方
+ * ModelsSection.module.css 的 `.input:focus/::placeholder/:disabled` 与各
+ * 按钮 `:hover` 一致。
+ */
+export function ensureProviderFieldStyles(): void {
+  const marker = 'dsh-webui-provider-fields'
+  if (document.getElementById(marker) !== null) return
+  const style = document.createElement('style')
+  style.id = marker
+  style.textContent = [
+    '.dsh-webui-field:focus{outline:none;border-color:var(--dsw-alias-brand-primary)}',
+    '.dsh-webui-field::placeholder{color:var(--dsw-alias-label-dimmed,#c9cdd4)}',
+    '.dsh-webui-field:disabled{opacity:.6;cursor:default}',
+    '.dsh-webui-link-btn:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary)}',
+    '.dsh-webui-icon-btn:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
+    '.dsh-webui-icon-btn-danger:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover-danger);color:var(--dsw-alias-state-error-primary)}',
+    '.dsh-webui-capsule-btn:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}',
+    '.dsh-webui-primary-btn:hover:not(:disabled){background:var(--dsw-alias-button-primary-hover,var(--dsw-alias-button-primary-fill))}',
+    '.dsh-webui-secondary-btn:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover-solid,rgba(0,0,0,0.05))}',
+    '.dsh-webui-danger-btn:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover-danger)}',
+  ].join('\n')
+  document.head.append(style)
+}
+
+/**
  * 一条已配置的模型行。结构上保持开放，与官方 DeepSeek catalog 编辑器的
  * 行一样：本卡不编辑的 profile 字段——未来 schema 新增的，或 settings.yaml
  * 手写的——必须在此编辑中幸存，而不是被重建丢弃。
@@ -357,18 +383,18 @@ function DetectProgress({ state }: { state?: any }): ReactNode {
       : it.ok === true ? 'var(--dsw-alias-label-primary, #1f2329)' : 'var(--dsw-alias-label-tertiary, #8f959e)'
     return (
       <div key={it.key} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '2px 0', minWidth: 0 }}>
-        <span style={{ flex: 'none', width: 96, fontSize: 12.5, color: 'var(--dsw-alias-label-primary, #1f2329)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <span style={{ flex: 'none', width: 96, fontSize: 12, lineHeight: '18px', color: 'var(--dsw-alias-label-primary, #1f2329)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {it.key.startsWith('level:') ? it.key.slice(6) : it.label}
         </span>
-        <span style={{ flex: 'none', width: 76, fontSize: 12.5, color: markColor }}>{mark}{it.status === 'running' ? ' 检测中' : ''}</span>
-        <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: 'var(--dsw-alias-label-tertiary, #8f959e)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={it.note}>
+        <span style={{ flex: 'none', width: 76, fontSize: 12, lineHeight: '18px', color: markColor }}>{mark}{it.status === 'running' ? ' 检测中' : ''}</span>
+        <span style={{ flex: 1, minWidth: 0, fontSize: 12, lineHeight: '18px', color: 'var(--dsw-alias-label-tertiary, #8f959e)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={it.note}>
           {it.note}
         </span>
       </div>
     )
   }
   const groupTitle = (t: string): ReactNode => (
-    <div style={{ marginTop: 4, marginBottom: 2, fontSize: 11.5, fontWeight: 600, color: 'var(--dsw-alias-label-secondary, #4e5969)' }}>{t}</div>
+    <div style={{ marginTop: 4, marginBottom: 2, fontSize: 12, lineHeight: '18px', fontWeight: 500, color: 'var(--dsw-alias-label-secondary, #4e5969)' }}>{t}</div>
   )
   return (
     <div style={{
@@ -603,7 +629,9 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
   }
 
   // 预设项的悬停高亮无法用内联样式表达 :hover；随编辑器挂载注入一次规则。
+  // 同一注入块还携带展开 UI 共享的 focus/placeholder/hover 伪类样式。
   useEffect(() => {
+    ensureProviderFieldStyles()
     const marker = 'dsh-webui-capacity-menu'
     if (document.getElementById(marker) !== null) return
     const style = document.createElement('style')
@@ -688,10 +716,10 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
         setFailure(chatCopy.fetchEmpty)
         return
       }
-      // 已配置的条目默认不勾选：采纳选择永不静默重写用户修正过的容量。
-      const known = new Set(models.map(model => textOf(model, 'id')))
+      // 全部候选默认不勾选，由用户显式挑选要添加的模型；采纳选择永不
+      // 静默重写用户修正过的容量。
       setCandidates(found)
-      setPicked(new Set(found.filter(model => !known.has(model.id)).map(model => model.id)))
+      setPicked(new Set())
     } catch (error) {
       // 传输拒绝而非作答；不捕获按钮会一直 busy 且无任何提示。
       setFailure(messageOf(error))
@@ -734,7 +762,7 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
   return (
     <section style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-        <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--dsw-alias-label-primary, #1f2329)' }}>
+        <span style={{ fontSize: 12, lineHeight: '18px', fontWeight: 500, color: 'var(--dsw-alias-label-secondary, #4e5969)' }}>
           {chatCopy.models}
         </span>
         <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -742,6 +770,7 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
             ? (
               <button
                 type="button"
+                className="dsh-webui-link-btn"
                 style={linkButtonStyle}
                 disabled={disabled}
                 onClick={props.onReset}
@@ -752,6 +781,7 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
             : null}
           <button
             type="button"
+            className="dsh-webui-link-btn"
             disabled={disabled || busy || !askable}
             title={askable ? undefined : chatCopy.fetchNeedsBaseUrl}
             style={linkButtonStyle}
@@ -765,9 +795,10 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
         ? <p style={hintStyle}>{chatCopy.modelsEmpty}</p>
         : null}
       {models.map((model, index) => (
-        <div key={index} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <div key={index} style={modelEntryStyle}>
           <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
             <input
+              className="dsh-webui-field"
               style={inputStyle}
               type="text"
               value={textOf(model, 'id')}
@@ -777,6 +808,7 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
               onChange={(event) => { patch(index, { id: event.target.value }) }}
             />
             <input
+              className="dsh-webui-field"
               style={inputStyle}
               type="text"
               value={textOf(model, 'name')}
@@ -787,6 +819,7 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
             />
             <button
               type="button"
+              className="dsh-webui-icon-btn"
               style={iconButtonStyle}
               aria-label={`${chatCopy.modelAdvanced} ${index + 1}`}
               aria-expanded={expanded.has(index)}
@@ -797,6 +830,7 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
             </button>
             <button
               type="button"
+              className="dsh-webui-icon-btn dsh-webui-icon-btn-danger"
               style={{ ...iconButtonStyle, color: 'var(--dsw-alias-state-error-primary, #d54941)' }}
               aria-label={`${chatCopy.removeModel} ${index + 1}`}
               title={chatCopy.removeModel}
@@ -833,6 +867,7 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
                       >
                         <span style={fieldLabelStyle}>{chatCopy[field]}</span>
                         <input
+                          className="dsh-webui-field"
                           style={capacityInputStyle}
                           type="text"
                           value={capacityText(model, index, field)}
@@ -937,6 +972,7 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
       ))}
       <button
         type="button"
+        className="dsh-webui-capsule-btn"
         style={addModelButtonStyle}
         disabled={disabled}
         onClick={() => { onChange([...models, { id: '' }]) }}
@@ -953,29 +989,29 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
             style={modalStyle}
             onClick={(event) => { event.stopPropagation() }}
           >
-            <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--dsw-alias-label-primary, #1f2329)' }}>
+            <div style={{ fontSize: 14, lineHeight: '22px', fontWeight: 500, color: 'var(--dsw-alias-label-primary, #1f2329)' }}>
               {chatCopy.fetchTitle}
             </div>
             <p style={hintStyle}>{chatCopy.fetchDescription}</p>
-            <ul style={{ listStyle: 'none', margin: 0, padding: 0, maxHeight: 260, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <ul style={{ listStyle: 'none', margin: 0, padding: 0, maxHeight: 320, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }}>
               {candidates.map(candidate => (
-                <li key={candidate.id}>
+                <li key={candidate.id} style={candidateStyle}>
                   <label style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '6px 8px', borderRadius: 6, cursor: 'pointer' }}>
                     <input
                       type="checkbox"
                       checked={picked.has(candidate.id)}
                       onChange={() => { toggle(candidate.id) }}
                     />
-                    <span style={{ fontSize: 13, color: 'var(--dsw-alias-label-primary, #1f2329)' }}>{candidate.id}</span>
+                    <span style={candidateIdStyle}>{candidate.id}</span>
                   </label>
                 </li>
               ))}
             </ul>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
-              <button type="button" style={secondaryButtonStyle} onClick={closePicker}>
+              <button type="button" className="dsh-webui-secondary-btn" style={secondaryButtonStyle} onClick={closePicker}>
                 {chatCopy.cancel}
               </button>
-              <button type="button" style={primaryButtonStyle} onClick={adoptPicked}>
+              <button type="button" className="dsh-webui-primary-btn" style={primaryButtonStyle} onClick={adoptPicked}>
                 {chatCopy.fetchAdopt}
               </button>
             </div>
@@ -987,6 +1023,16 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
 }
 
 /* ---------- 内联样式（主题令牌 + fallback） ---------- */
+
+/* 官方 .modelEntry：每条模型一个细边框盒，与行卡片语言一致。 */
+const modelEntryStyle: CSSProperties = {
+  border: '1px solid var(--dsw-alias-border-l2, #dcdfe6)',
+  borderRadius: 8,
+  padding: 6,
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 6,
+}
 
 /* 官方 .input 规格：32px 高、14px 字、8px 圆角、0 10px 内边距。 */
 const inputStyle: CSSProperties = {
@@ -1005,13 +1051,14 @@ const inputStyle: CSSProperties = {
 }
 
 /* 容量预设输入框：.input 规格叠加共享 chevron——点击弹出常用档位列表，
- * 仍可自由键入任意值（如 131072）。 */
+ * 仍可自由键入任意值（如 131072）。chevron 内嵌位置与 .selectInput 一致
+ * （右 12px，右内边距预留 32px）。 */
 const capacityInputStyle: CSSProperties = {
   ...inputStyle,
-  paddingRight: 30,
+  paddingRight: 32,
   backgroundImage: 'url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'12\' height=\'12\' viewBox=\'0 0 12 12\' fill=\'none\'%3E%3Cpath d=\'M3 4.5L6 7.5L9 4.5\' stroke=\'%2381858C\' stroke-width=\'1.5\' stroke-linecap=\'round\' stroke-linejoin=\'round\'/%3E%3C/svg%3E")',
   backgroundRepeat: 'no-repeat',
-  backgroundPosition: 'right 10px center',
+  backgroundPosition: 'right 12px center',
   backgroundSize: '12px 12px',
 }
 

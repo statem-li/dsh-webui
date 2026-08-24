@@ -1,16 +1,19 @@
 /**
  * sidebar-nav — 侧边栏导航区共享挂载器（webui 插件内部）。
  *
- * 「用量/余额」「技能」「记忆」三个入口从 sidebar.footer.action 迁入侧边栏上部，
+ * 「用量/余额」与 PlanWeave 入口从 sidebar.footer.action 迁入侧边栏上部，
  * 排在「自动化」菜单项（#dsh-automation-menu-host）正下方：
  *  - 锚点 = `[data-slot="sidebar.workspaces"]`（slots 渲染器的稳定锚 div，
  *    与 automation mount.tsx 同一契约），host 插在浏览区容器之前；
- *  - host 内含固定顺序的槽位容器（usage / memory 各一）：各入口经 useNavSlot
+ *  - host 内含固定顺序的槽位容器（usage / planweave）：各入口经 useNavSlot
  *    轮询拿到自己的槽位后 portal 进去——顺序确定、互不覆盖；
- *  - 自动化 host 尚未挂载时先贴浏览区之前，轮询检测到后自动修正到其正下方
- *    （两个模块的 apply 时序无关紧要）；
+ *  - 「技能」「记忆」两个入口的槽位由本模块维护在「自动化」host 内部
+ *    （AUTO_ROW_SLOTS），与自动化按钮合成一行（见 SHEET 合并行规则）；
+ *  - 自动化 host 尚未挂载时技能/记忆暂不渲染，轮询检测到后自动补槽
+ *    （各模块 apply 时序无关紧要）；
  *  - rail 折叠态由 useRail 观察 data-shell-overlay 框架容器的属性切换
- *    （与 AutomationApp 相同的 DOM 契约），rail 下导航行收缩为图标钮。
+ *    （与 AutomationApp 相同的 DOM 契约），rail 下导航行收缩为图标钮、
+ *    合并行恢复纵向排列（纯 CSS :has 跟随）。
  */
 
 import { useEffect, useState, type MouseEvent, type ReactNode } from 'react'
@@ -25,14 +28,38 @@ const AUTO_HOST_ID = 'dsh-automation-menu-host'
 /** 侧边栏折叠观察：AutomationApp / sidebar-float 相同的框架容器选择器。 */
 const FRAME_SELECTOR = 'div:has(> [data-shell-overlay])'
 
-/** 槽位名 → 顺序即 DOM 顺序（用量/技能一组，记忆一组，PlanWeave 一组）。 */
-const SLOT_NAMES = ['usage', 'memory', 'planweave'] as const
+/** nav host 内槽位名 → 顺序即 DOM 顺序（用量一行，PlanWeave 一行）。 */
+const SLOT_NAMES = ['usage', 'planweave'] as const
+
+/** 「自动化」host 内的合并行槽位：技能/记忆与自动化按钮同行（顺序即 DOM 顺序）。 */
+const AUTO_ROW_SLOTS = ['skills', 'memory'] as const
 
 /** 槽位名。 */
-export type NavSlotName = (typeof SLOT_NAMES)[number]
+export type NavSlotName = (typeof SLOT_NAMES | typeof AUTO_ROW_SLOTS)[number]
 
 let started = false
 let pollTimer = 0
+
+/**
+ * 确保「自动化」host 内的合并行槽位（skills → memory）按序存在（幂等）。
+ * React unmount（HMR/插件热重载）会清空 host，此时重建槽位，portal 侧的
+ * 轮询会自动重新挂入。返回 automation host 是否已就绪。
+ */
+function ensureAutoRowSlots(): boolean {
+  const auto = document.getElementById(AUTO_HOST_ID)
+  if (auto === null) return false
+  const existing = Array.from(auto.querySelectorAll<HTMLElement>(':scope > [data-nav-slot]'))
+  const names = existing.map(el => el.getAttribute('data-nav-slot'))
+  if (names.length === AUTO_ROW_SLOTS.length
+    && AUTO_ROW_SLOTS.every((name, index) => names[index] === name)) return true
+  for (const el of existing) el.remove()
+  for (const name of AUTO_ROW_SLOTS) {
+    const slot = document.createElement('div')
+    slot.dataset.navSlot = name
+    auto.appendChild(slot)
+  }
+  return true
+}
 
 /** 确保 host 已创建并插到「自动化」菜单下方（幂等）；返回是否已就位。 */
 function ensureHostPlaced(): boolean {
@@ -56,8 +83,11 @@ function ensureHostPlaced(): boolean {
   const inPlace = host.parentElement === parent
     && (anchor.compareDocumentPosition(host) & Node.DOCUMENT_POSITION_PRECEDING) !== 0
     && (auto === null || (auto.compareDocumentPosition(host) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0)
-  if (inPlace) return true
-  parent.insertBefore(host, auto !== null ? (auto.nextElementSibling ?? anchor) : anchor)
+  if (!inPlace) {
+    parent.insertBefore(host, auto !== null ? (auto.nextElementSibling ?? anchor) : anchor)
+  }
+  // 自动化 host 已出现时维护其内的合并行槽位（技能/记忆）。
+  ensureAutoRowSlots()
   return true
 }
 
@@ -80,14 +110,17 @@ export function ensureNavMount(): () => void {
   }
 }
 
-/** 轮询获取指定槽位容器（host 未就位时返回 null，组件据此暂不渲染）。 */
+/** 轮询获取指定槽位容器（未就位时返回 null，组件据此暂不渲染）。
+ *
+ * 槽位可能位于 nav host（usage / planweave）或自动化 host（skills / memory
+ * 合并行），因此全局按 data-nav-slot 查找——槽位名由本模块统一创建，唯一。
+ */
 export function useNavSlot(name: NavSlotName): HTMLElement | null {
   const [slot, setSlot] = useState<HTMLElement | null>(null)
   useEffect(() => {
     let timer = 0
     const poll = (): void => {
-      const found = document.getElementById(HOST_ID)
-        ?.querySelector<HTMLElement>(`:scope > [data-nav-slot='${name}']`) ?? null
+      const found = document.querySelector<HTMLElement>(`[data-nav-slot='${name}']`)
       setSlot(found)
       if (found === null) timer = window.setTimeout(poll, 400)
     }
@@ -139,6 +172,14 @@ const SHEET = `
 .dsh-nav-btn[data-rail='true']{width:36px;height:36px;padding:0;margin:0 0 8px;justify-content:center;border-radius:8px}
 /* 未读 badge（记忆入口）：右上角小圆标 */
 .dsh-nav-badge{position:absolute;top:2px;right:2px;min-width:16px;height:16px;box-sizing:border-box;padding:0 4px;display:flex;align-items:center;justify-content:center;border-radius:8px;background:var(--dsw-alias-state-warn-primary,#e8a33d);color:#0e1116;font-size:10px;font-weight:700;line-height:16px}
+/* 合并行：「自动化」host 承载 [自动化][技能][记忆] 一行；槽位 display:contents，
+   让按钮直接参与行布局、宽度收缩为内容宽（放不下时允许折行兜底）。 */
+#dsh-automation-menu-host{display:flex;flex-wrap:wrap;align-items:center;gap:2px}
+#dsh-automation-menu-host>[data-nav-slot]{display:contents}
+#dsh-automation-menu-host .dsh-nav-btn{width:auto;flex:none;margin:0 0 4px}
+/* 折叠 rail 态：恢复纵向图标列（与原生 rail 图标钮节奏一致） */
+#dsh-automation-menu-host:has(.dsh-nav-btn[data-rail]){flex-direction:column;align-items:flex-start;gap:0}
+#dsh-automation-menu-host:has(.dsh-nav-btn[data-rail]) .dsh-nav-btn{width:36px;margin:0 0 8px}
 `
 
 /** 注入导航行样式（幂等）。 */

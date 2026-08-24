@@ -90,6 +90,8 @@ import { registerPlanweaveSettingsCard } from './planweave/SettingsCard'
 import { applySessionSwitchMotion } from './session-motion'
 // 会话置顶：置顶排序 + 行内归档按钮（替代三个点）+ 右键菜单（置顶/重命名/分叉/归档）。
 import { applySessionPin } from './session-pin'
+// 工作区临时垃圾清理：通用分区行卡片（自动清理计划 / 预览 / 立即清理）。
+import { apply as registerTmpCleanerCard } from './tmp-cleaner-card'
 const CUSTOM_COMPONENT_SCOPE = 'dsh-better-markdown'
 
 export const inject = ['slots', 'settingsScope', 'connection', 'conversationEvents', 'locale', 'remote', 'sessions', 'workspaces', 'inputTriggers', 'layout', 'theme']
@@ -216,6 +218,9 @@ export function apply(ctx: ClientContext): void {
 
   // ---- 工作区目录选择器：自写弹窗（添加工作区选文件夹，shadow 官方 native）---
   if (on('dirPicker')) applyWorkspaceDirPickerClient(ctx)
+
+  // ---- 工作区临时垃圾清理：通用分区行卡片（tmpCleaner host 模块联动）-------
+  if (on('tmpCleaner')) registerTmpCleanerCard(ctx)
 
   // ---- 用量工作台 + 技能面板（自 dsh-usage-skill 融合）：侧边栏导航行入口 ----
   if (on('usage')) applyUsageEntries(ctx)

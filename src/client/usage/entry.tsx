@@ -6,7 +6,7 @@
  */
 import { useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { IconDataOutline16, IconFolderOpenOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconDataOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import { Workbench } from './dashboard/Workbench'
 import { SkillsPanel } from './dashboard/SkillsPanel'
@@ -93,8 +93,14 @@ function SkillsEntry(): JSX.Element {
   const rail = useRail()
   return (
     <>
+      {/* 打开的书（Feather book-open 线性风，与自动化/记忆的自绘图标同款描边） */}
       <NavButton
-        icon={<IconFolderOpenOutline16 size={rail ? 18 : 16} />}
+        icon={(
+          <svg width={rail ? 18 : 16} height={rail ? 18 : 16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
+            <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
+          </svg>
+        )}
         label="技能"
         rail={rail}
         expanded={open}
@@ -109,14 +115,19 @@ function SkillsEntry(): JSX.Element {
   )
 }
 
-/** 导航行应用：两条入口 portal 到 nav host 的 usage 槽位。 */
+/** 导航行应用：用量入口 portal 到 nav host 的 usage 槽（独立行）；
+ * 技能入口 portal 到「自动化」host 的 skills 槽——与自动化、记忆合成一行。 */
 function UsageSkillsNavApp(): JSX.Element | null {
   ensureNavStyles()
   return (
-    <NavPortal name="usage">
-      <UsageWorkbenchEntry />
-      <SkillsEntry />
-    </NavPortal>
+    <>
+      <NavPortal name="usage">
+        <UsageWorkbenchEntry />
+      </NavPortal>
+      <NavPortal name="skills">
+        <SkillsEntry />
+      </NavPortal>
+    </>
   )
 }
 

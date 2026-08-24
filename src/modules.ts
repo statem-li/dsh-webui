@@ -59,6 +59,7 @@ export const WEBUI_MODULE_KEYS = [
   // ── 文件与工作区 ──
   'fileExplorer',      // 文件浏览器
   'dirPicker',         // 工作区目录选择器
+  'tmpCleaner',        // 工作区临时垃圾清理器（_tmp 约定目录 + 规则扫描）
   // ── 外观与系统 ──
   'appearance',        // 玻璃质感主题
   'sidebarFloat',      // 悬浮侧边栏

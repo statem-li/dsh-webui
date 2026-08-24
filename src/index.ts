@@ -31,6 +31,7 @@ import { applyBrowserSpeed } from './browser/speed.js'
 import { applyMemory } from './memory/index.js'
 import { applyFileExplorer } from './file-explorer.js'
 import { applyWorkspaceDirPicker } from './workspace-dir-picker.js'
+import { applyTmpCleaner } from './tmp-cleaner.js'
 import { applyUsageHost } from './usage-host.js'
 import { applyVisionHelper } from './vision-helper.js'
 import { applyMail } from './mail.js'
@@ -280,6 +281,10 @@ export async function apply(ctx: Context, config: WebuiConfig = {}): Promise<voi
   // 9.5) 工作区目录选择器：应用内弹窗浏览目录（/api/webui-dir-picker），
   // 供「添加工作区」选择文件夹（shadow 官方 native surface）。
   if (modules.dirPicker) applyWorkspaceDirPicker(ctx)
+
+  // 9.6) 工作区临时垃圾清理器：_tmp 约定目录 + 规则扫描 + 定时调度 +
+  //      webui_tmp_clean 工具（/api/webui-tmp-cleaner；设置页自定触发时间）。
+  if (modules.tmpCleaner) applyTmpCleaner(ctx)
 
   // 10) 用量统计 + 技能管理（自 dsh-usage-skill 融合；host 复用其 lib 产物）。
   if (modules.usage) await applyUsageHost(ctx, config.usage)

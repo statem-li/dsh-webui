@@ -4,8 +4,9 @@
  * 「自动化」菜单项必须出现在「新会话」按钮正下方（sidebar.workspaces 是
  * single 插槽，无法再注册条目），因此沿用 DOM 注入契约：
  *  - 锚点 = `[data-slot="sidebar.workspaces"]`（slots 渲染器的稳定锚 div）；
- *  - host div（#dsh-automation-menu-host）插到该容器之前——sidebar-nav 的
- *    用量/技能/记忆入口会自动排到本模块之后；
+ *  - host div（#dsh-automation-menu-host）插到该容器之前——host 内由
+ *    sidebar-nav 维护 skills / memory 合并行槽位（与自动化按钮同行），
+ *    用量/PlanWeave 等其余导航行排在 host 之后；
  *  - 低频轮询兜底：侧边栏整体重挂（HMR/插件重载）后自动重新插入。
  */
 
