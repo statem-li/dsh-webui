@@ -214,7 +214,9 @@ function sectionHeader(section: keyof InjectionSections): string {
 
 /** 全量编译入口：写项目层 + 全局层产物（ticker 调用）。 */
 export async function compileAll(store: MemoryStore, config: MemoryConfig): Promise<void> {
-  const entries = await store.readEntries()
+  const all = await store.readEntries()
+  // disabled 条目不进任何产物（memory.md / facts.md / pinned.md / identity.md）。
+  const entries = all.filter(entry => entry.disabled !== true)
   const byProject = new Map<string, MemoryEntry[]>()
   for (const entry of entries) {
     if (entry.scope !== 'project' || entry.projectHash === null) continue

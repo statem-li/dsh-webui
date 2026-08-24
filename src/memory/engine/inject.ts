@@ -87,8 +87,10 @@ export function createMemoryInjector(
   ): Promise<{ text: string; sections: Array<{ name: string; text: string }> } | null> {
     const entries = await store.readEntries()
     const hash = workspaceHashOf(agent.session.header)
+    // disabled 条目保留在库与检索中，但绝不参与注入。
     const visible = entries.filter(entry =>
-      entry.scope === 'global' || (entry.scope === 'project' && entry.projectHash === hash))
+      entry.disabled !== true &&
+      (entry.scope === 'global' || (entry.scope === 'project' && entry.projectHash === hash)))
     if (visible.length === 0) return null
 
     // 常驻：pinned（无条件）+ 全局身份/偏好 + 长期沉淀；其余按当前任务检索 top-k。

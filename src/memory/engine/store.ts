@@ -688,6 +688,8 @@ function migrateEntries(entries: unknown): MemoryEntry[] {
       kind: isMemoryKind(entry.kind) ? entry.kind : inferKind(entry.tags),
       provenance: entry.provenance,
       embedding: Array.isArray(entry.embedding) ? entry.embedding : undefined,
+      // disabled 是可选字段：仅 true 时保留（undefined=启用，落盘不冗余）。
+      ...(entry.disabled === true ? { disabled: true } : {}),
     })
   }
   return out

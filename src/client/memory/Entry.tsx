@@ -10,7 +10,7 @@ import { createMemoryApi, type MemoryApi } from './api.js'
 import { MemoryPanel, BrainIcon, type MemoryTab } from './Panel.tsx'
 import { useUnreadChanges } from './Notify.tsx'
 import { makeT } from './locales.js'
-import { ensureNavStyles, NavButton, NavPortal, useRail } from '../sidebar-nav.js'
+import { ensureNavStyles, NavButton, NavPortal, navAnchorFrom, useRail } from '../sidebar-nav.js'
 import { ensureModalAnimStyles, useModalClose } from '../modal-animation.js'
 import { ensureShellStyles, type PopoverAnchor } from '../popover-shell.js'
 import { ensureStyles } from './styles.js'
@@ -49,8 +49,7 @@ export function MemoryNavApp(): JSX.Element | null {
         badgeTitle={t('unreadChanges', { n: unread.count })}
         onClick={e => {
           e.stopPropagation()
-          const rect = e.currentTarget.getBoundingClientRect()
-          setAnchor({ left: rect.right + 8, top: rect.top - 6 })
+          setAnchor(navAnchorFrom(e.currentTarget))
           openPanel(unread.count > 0 ? 'changes' : 'all')
         }}
       />
@@ -67,6 +66,7 @@ export function MemoryNavApp(): JSX.Element | null {
         changes={api.changes}
         summary={api.summary}
         pin={api.pin}
+        enable={api.enable}
         update={api.update}
         move={api.move}
         deleteEntry={api.deleteEntry}

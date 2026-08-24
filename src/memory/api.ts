@@ -35,6 +35,8 @@ interface EntryView {
   projectHash: string | null
   tags: string[]
   pinned: boolean
+  /** true = 已禁用（保留但不参与注入/编译）。 */
+  disabled: boolean
   importance: number
   layer: 'short' | 'long'
   source: 'extract' | 'manual'
@@ -50,6 +52,7 @@ function toView(entry: MemoryEntry): EntryView {
     projectHash: entry.projectHash,
     tags: entry.tags,
     pinned: entry.pinned,
+    disabled: entry.disabled === true,
     importance: entry.importance,
     layer: entry.layer,
     source: entry.source,
@@ -170,6 +173,26 @@ async function handle(
       const pinned = body.pinned !== false
       const entry = await store.patchEntry(entryId, { pinned })
       if (entry === undefined) throw new Error(`记忆不存在：${entryId}`)
+      json(res, 200, { ok: true, entry: toView(entry) })
+      return
+    }
+    if (method === 'POST' && rest === '/enable') {
+      const body = await readBody(req) as Record<string, unknown>
+      const entryId = requireString(body.entryId, 'entryId')
+      const enabled = body.enabled !== false
+      const existing = await store.getEntry(entryId)
+      if (existing === undefined) throw new Error(`记忆不存在：${entryId}`)
+      const entry = await store.patchEntry(entryId, { disabled: !enabled })
+      if (entry === undefined) throw new Error(`记忆不存在：${entryId}`)
+      await store.appendChange({
+        action: 'update',
+        entryId: entry.id,
+        scope: entry.scope,
+        projectHash: entry.projectHash,
+        summary: `${enabled ? '启用' : '禁用'}：${summarize(entry.content)}`,
+        before: existing.content,
+        after: entry.content,
+      })
       json(res, 200, { ok: true, entry: toView(entry) })
       return
     }

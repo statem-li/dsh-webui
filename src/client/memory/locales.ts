@@ -76,6 +76,11 @@ export const zh = {
   revEntries: '{n} 条',
   rollback: '回滚',
   rollbackConfirm: '回滚到该快照（{time}，{id}）？当前全部记忆将被替换为该快照内容，不可撤销。',
+  enable: '启用记忆（恢复参与注入）',
+  disable: '禁用记忆（保留但不参与注入）',
+  enabledAria: '启用开关，当前开启',
+  disabledAria: '启用开关，当前禁用',
+  disabledTag: '已禁用',
 } satisfies Record<string, string>
 
 /** dsh-memory locale key union. */
@@ -160,6 +165,11 @@ export const en = {
   revEntries: '{n} entries',
   rollback: 'Rollback',
   rollbackConfirm: 'Roll back to this snapshot ({time}, {id})? All memories will be replaced by that snapshot — this cannot be undone.',
+  enable: 'Enable memory (resume injection)',
+  disable: 'Disable memory (kept, not injected)',
+  enabledAria: 'Enable switch, currently on',
+  disabledAria: 'Enable switch, currently off',
+  disabledTag: 'Off',
 } satisfies Record<MemoryLocaleKey, string>
 
 /** 轻量翻译函数类型（面板/入口组件共用）。 */

@@ -66,8 +66,9 @@ export async function consolidateScope(
   let owned = all.filter(entry => scope === 'global'
     ? entry.scope === 'global'
     : entry.scope === 'project' && entry.projectHash === scope.projectHash)
-  // 排除 pinned：用户明确标记的条目绝不被自动合并/删除/重写。
-  owned = owned.filter(entry => !entry.pinned)
+  // 排除 pinned 与 disabled：用户明确标记的条目绝不被自动合并/删除/重写；
+  // 禁用条目处于「冻结」状态（不注入、不编译、不参与整理），同样跳过。
+  owned = owned.filter(entry => !entry.pinned && entry.disabled !== true)
   owned = selectConsolidationSet(owned, config.consolidateMaxEntries)
   // 至少 2 条才有语义整理空间（单条重写/提升由规则层处理）。
   if (owned.length < 2) return empty

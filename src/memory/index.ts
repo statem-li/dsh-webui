@@ -14,6 +14,7 @@ import { compileAll, workspaceHashOf } from './engine/compile.js'
 import { extractCandidates, isDuplicateContent, transcriptFromEvents } from './engine/extract.js'
 import { createMemoryInjector } from './engine/inject.js'
 import { MemoryStore, entryIdOf, summarize } from './engine/store.js'
+import { setWebuiMemoryStore } from '../memory-store-singleton.js'
 import { createTicker } from './engine/ticker.js'
 import { registerMemoryTools } from './tools.js'
 import { applyConfigOverrides, DEFAULT_CONFIG, type MemoryConfig } from './types.js'
@@ -48,9 +49,10 @@ export function applyMemory(ctx: Context, input: Partial<MemoryConfig> | undefin
   const store = new MemoryStore()
   // 单例共享：store 是「内存态权威副本 + 全量回刷磁盘」的设计，二次实例化会
   // 各持一份内存态互相覆盖丢数据。webui 内部模块（如 tmp-cleaner 托管置顶
-  // 记忆）经 ctx.webuiMemoryStore 复用本实例，绝不自行 new MemoryStore()。
-  const shared = ctx as any
-  shared.webuiMemoryStore = store
+  // 记忆）经共享单例复用本实例，绝不自行 new MemoryStore()。
+  // 注意：不能挂到 ctx 上——harness rc.8 起的 cordis 对未 declare/provide 的
+  // ctx 属性赋值直接 throw（cannot set property without provide），曾导致启动崩溃。
+  setWebuiMemoryStore(store)
   const config = resolveConfig(input, store.readConfigSync())
   const logError = (stage: string, error: unknown): void => {
     const message = error instanceof Error ? error.stack ?? error.message : String(error)

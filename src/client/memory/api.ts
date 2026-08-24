@@ -13,6 +13,8 @@ export interface MemoryEntryView {
   projectHash: string | null
   tags: string[]
   pinned: boolean
+  /** true = 已禁用（保留但不参与注入/编译）。 */
+  disabled: boolean
   importance: number
   layer: 'short' | 'long'
   source: 'extract' | 'manual'
@@ -140,6 +142,7 @@ export interface MemoryApi {
   changes: (date?: string) => Promise<MemoryChangesResponse>
   summary: () => Promise<MemorySummaryResponse>
   pin: (entryId: string, pinned: boolean) => Promise<{ ok: boolean; entry: MemoryEntryView }>
+  enable: (entryId: string, enabled: boolean) => Promise<{ ok: boolean; entry: MemoryEntryView }>
   update: (entryId: string, patch: { content?: string; tags?: string[] }) => Promise<{ ok: boolean; entry: MemoryEntryView }>
   move: (entryId: string, target: { scope?: string; projectHash?: string; path?: string }) => Promise<{ ok: boolean; entry: MemoryEntryView }>
   deleteEntry: (entryId: string) => Promise<{ ok: boolean }>
@@ -180,6 +183,7 @@ export function createMemoryApi(): MemoryApi {
     changes: (date) => getJson<MemoryChangesResponse>(`/changes${date !== undefined ? `?date=${encodeURIComponent(date)}` : ''}`),
     summary: () => getJson<MemorySummaryResponse>('/summary'),
     pin: (entryId, pinned) => sendJson<{ ok: boolean; entry: MemoryEntryView }>('/pin', { entryId, pinned }),
+    enable: (entryId, enabled) => sendJson<{ ok: boolean; entry: MemoryEntryView }>('/enable', { entryId, enabled }),
     update: (entryId, patch) => sendJson<{ ok: boolean; entry: MemoryEntryView }>('/update', { entryId, ...patch }),
     move: (entryId, target) => sendJson<{ ok: boolean; entry: MemoryEntryView }>('/move', { entryId, ...target }),
     deleteEntry: (entryId) => sendJson<{ ok: boolean }>('/delete', { entryId }),

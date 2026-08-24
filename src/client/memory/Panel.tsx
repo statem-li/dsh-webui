@@ -294,6 +294,11 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
     void run(() => api.pin(entry.id, !entry.pinned))
   }
 
+  /** 启用/禁用单条记忆（禁用=保留但不参与注入与编译）。 */
+  const handleEnable = (entry: MemoryEntryView): void => {
+    void run(() => api.enable(entry.id, entry.disabled))
+  }
+
   const handleDelete = (entry: MemoryEntryView): void => {
     if (!window.confirm(t('deleteConfirm'))) return
     void run(() => api.deleteEntry(entry.id))
@@ -480,13 +485,16 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
   const renderItemRow = (entry: MemoryEntryView): JSX.Element => {
     const selected = !selecting && entry.id === selectedId
     const checked = checkedIds.has(entry.id)
+    const enabled = entry.disabled !== true
     return (
-      <li key={entry.id}>
+      <li key={entry.id} className={css.itemRow}>
         <button
           type="button"
-          className={selecting
-            ? (checked ? `${css.item} ${css.itemSelected}` : css.item)
-            : (selected ? `${css.item} ${css.itemSelected}` : css.item)}
+          className={[
+            css.item,
+            selected ? css.itemSelected : '',
+            enabled ? '' : css.itemDisabled,
+          ].filter(Boolean).join(' ')}
           data-selected={(selecting ? checked : selected) || undefined}
           onClick={() => { if (selecting) toggleChecked(entry.id); else selectEntry(entry) }}
         >
@@ -503,40 +511,77 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
             <span className={css.itemTitle}>
               {entry.pinned && <span className={css.pinMark}><PinIcon size={11} filled /></span>}
               <span className={css.itemTitleText}>{entryTitle(entry.content)}</span>
+              {!enabled && <span className={css.disabledMark}>{t('disabledTag')}</span>}
             </span>
             <span className={css.itemSnippet}>{entrySnippet(entry.content)}</span>
             <span className={css.itemTime}>{relativeTime(entry.updatedAt)}</span>
           </span>
         </button>
+        {/* 行内启用开关：span role=switch（li>button 内禁嵌套 button），点击不触发行选中 */}
+        {!selecting && (
+          <span
+            role="switch"
+            aria-checked={enabled}
+            aria-label={enabled ? t('enabledAria') : t('disabledAria')}
+            title={enabled ? t('disable') : t('enable')}
+            tabIndex={0}
+            className={`${css.miniSwitch} ${enabled ? css.miniSwitchOn : ''}`}
+            onClick={(event) => { event.stopPropagation(); handleEnable(entry) }}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault()
+                event.stopPropagation()
+                handleEnable(entry)
+              }
+            }}
+          />
+        )}
       </li>
     )
   }
 
   /** 详情区头部操作钮组。 */
-  const detailActions = (entry: MemoryEntryView): JSX.Element => (
-    <div className={css.cardActions}>
-      <Tooltip label={entry.pinned ? t('unpin') : t('pin')} side="bottom" delayMs={500}>
-        <button type="button" className={css.iconAction} aria-label={entry.pinned ? t('unpin') : t('pin')} disabled={busy} onClick={() => { handlePin(entry) }}>
-          <PinIcon size={14} filled={entry.pinned} />
-        </button>
-      </Tooltip>
-      <Tooltip label={t('edit')} side="bottom" delayMs={500}>
-        <button type="button" className={css.iconAction} aria-label={t('edit')} disabled={busy} onClick={() => { startEdit(entry) }}>
-          <IconEditOutline16 size={14} />
-        </button>
-      </Tooltip>
-      <Tooltip label={t('move')} side="bottom" delayMs={500}>
-        <button type="button" className={css.iconAction} aria-label={t('move')} disabled={busy} onClick={() => { startMove(entry) }}>
-          <IconFolderOpenOutline16 size={14} />
-        </button>
-      </Tooltip>
-      <Tooltip label={t('delete')} side="bottom" delayMs={500}>
-        <button type="button" className={`${css.iconAction} ${css.iconActionDanger}`} aria-label={t('delete')} disabled={busy} onClick={() => { handleDelete(entry) }}>
-          <IconTrashOutline16 size={14} />
-        </button>
-      </Tooltip>
-    </div>
-  )
+  const detailActions = (entry: MemoryEntryView): JSX.Element => {
+    const enabled = entry.disabled !== true
+    return (
+      <div className={css.cardActions}>
+        <Tooltip label={entry.pinned ? t('unpin') : t('pin')} side="bottom" delayMs={500}>
+          <button type="button" className={css.iconAction} aria-label={entry.pinned ? t('unpin') : t('pin')} disabled={busy} onClick={() => { handlePin(entry) }}>
+            <PinIcon size={14} filled={entry.pinned} />
+          </button>
+        </Tooltip>
+        <Tooltip label={enabled ? t('disable') : t('enable')} side="bottom" delayMs={500}>
+          <button
+            type="button"
+            className={css.iconAction}
+            aria-label={enabled ? t('disable') : t('enable')}
+            disabled={busy}
+            onClick={() => { handleEnable(entry) }}
+          >
+            <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" style={{ opacity: enabled ? undefined : 0.45 }} aria-hidden="true">
+              <path d="M8 1.5v6" />
+              <path d="M11.3 3.7a4.7 4.7 0 1 1-6.6 0" />
+            </svg>
+          </button>
+        </Tooltip>
+        <Tooltip label={t('edit')} side="bottom" delayMs={500}>
+          <button type="button" className={css.iconAction} aria-label={t('edit')} disabled={busy} onClick={() => { startEdit(entry) }}>
+            <IconEditOutline16 size={14} />
+          </button>
+        </Tooltip>
+        <Tooltip label={t('move')} side="bottom" delayMs={500}>
+          <button type="button" className={css.iconAction} aria-label={t('move')} disabled={busy} onClick={() => { startMove(entry) }}>
+            <IconFolderOpenOutline16 size={14} />
+          </button>
+        </Tooltip>
+        <Tooltip label={t('delete')} side="bottom" delayMs={500}>
+          <button type="button" className={`${css.iconAction} ${css.iconActionDanger}`} aria-label={t('delete')} disabled={busy} onClick={() => { handleDelete(entry) }}>
+            <IconTrashOutline16 size={14} />
+          </button>
+        </Tooltip>
+      </div>
+    )
+  }
 
   /** 归属范围选择（编辑/新建共用）。 */
   const scopeFields = (

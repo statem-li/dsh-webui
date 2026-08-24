@@ -17,6 +17,8 @@ export interface MemoryEntry {
   tags: string[]
   /** 置顶标记（全局与项目各自独立）。 */
   pinned: boolean
+  /** 已禁用（缺省/undefined = 启用）：条目保留在面板与检索中，但不参与会话注入与产物编译。 */
+  disabled?: boolean
   /** 创建时间 ISO。 */
   createdAt: string
   /** 最近更新时间 ISO。 */
