@@ -11,7 +11,8 @@ export const css = {
   drawerClosing: 'fe-drawer-closing',
   // ⚠ 结构类避开 "modal"/"panel"/"drawer" 子串：玻璃主题的浮层总选择器按
   // 子串匹配，误伤的结构层会被各加一道模糊+高光投影叠出「多层卡片」；
-  // 仅抽屉/弹窗本体保留关键词以获得标准毛玻璃。
+  // 抽屉/弹窗本体虽保留关键词，但声明了 data-solid 实底豁免（本模块全程
+  // 无玻璃/模糊，见文件末尾「全程禁用玻璃」段），不会被总选择器命中。
   drawerHeader: 'fe-cap',
   drawerTitle: 'fe-cap-title',
   drawerClose: 'fe-cap-x',
@@ -106,7 +107,7 @@ const SHEET = `
 @keyframes fe-pop-in{from{opacity:0;transform:scale(.86)}to{opacity:1;transform:scale(1)}}
 @keyframes fe-pop-out{from{opacity:1;transform:scale(1)}to{opacity:0;transform:scale(.9)}}
 .fe-pop-root{position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;padding:24px}
-.fe-pop-mask{position:absolute;inset:0;background:var(--dsw-alias-bg-mask-1,rgba(0,0,0,.4));backdrop-filter:var(--dsw-mask-blur,blur(2px));animation:fe-fade-in 260ms ease-out both}
+.fe-pop-mask{position:absolute;inset:0;background:var(--dsw-alias-bg-mask-1,rgba(0,0,0,.4));animation:fe-fade-in 260ms ease-out both}
 .fe-pop-closing .fe-pop-mask{animation:fe-fade-out 220ms ease-in both}
 .fe-modal-dialog{position:relative;z-index:1;display:flex;flex-direction:column;gap:20px;width:min(480px,100%);max-height:min(86vh,900px);padding:0 0 20px;overflow:hidden;border:1px solid var(--dsw-alias-border-inverted,rgba(255,255,255,.14));border-radius:24px;background:var(--dsw-alias-bg-layer-2,#22252c);box-shadow:var(--dsw-shadow-lv3);transform-origin:center center;animation:fe-pop-in 320ms cubic-bezier(.22,1,.36,1) both}
 .fe-pop-closing .fe-modal-dialog{animation:fe-pop-out 220ms cubic-bezier(.45,.05,.65,.35) both}
@@ -237,22 +238,18 @@ const SHEET = `
 .fe-hist-editor .cm-scroller{font-family:ui-monospace,'JetBrains Mono','Cascadia Code',Menlo,Consolas,monospace;font-size:13px;line-height:1.6;overflow:auto}
 .fe-hist-editor .cm-editor,.fe-hist-editor .cm-gutters{background:transparent}
 
-/* ── 玻璃质感融合（仅 data-dsh-glass 期间生效）────────────────────────
- * 抽屉/弹窗本体已被玻璃主题的浮层总选择器命中（fe-drawer 含 "drawer"、
- * fe-modal-dialog 含 "modal"），获得 backdrop-filter 毛玻璃 + 高光投影；
- * 这里去掉自身实色底与内部实色小块，避免「模糊之上蒙厚纱」「卡中卡」，
- * 对齐记忆/技能面板的标准毛玻璃形态。非玻璃形态不受影响。 */
-html[data-dsh-glass] .fe-drawer,
-html[data-dsh-glass] .fe-modal-dialog{background-color:transparent}
-html[data-dsh-glass] .fe-workspace-select,
-html[data-dsh-glass] .fe-editor-host,
-html[data-dsh-glass] .fe-md-body,
-html[data-dsh-glass] .fe-hex-dump,
-html[data-dsh-glass] .fe-hist-editor,
-html[data-dsh-glass] .fe-hist-scroll{background-color:transparent}
-/* 图片舞台：棋盘底衬在毛玻璃上会显成一层「垫卡」，换成极轻纱保住区域感 */
-html[data-dsh-glass] .fe-viewer-stage{background:none;background-color:rgba(255,255,255,.05)}
-html[data-dsh-glass] body[data-ds-dark-theme] .fe-viewer-stage{background-color:rgba(255,255,255,.04)}
+/* ── 全程禁用玻璃/高斯模糊 ───────────────────────────────────────────
+ * 抽屉/弹窗本体声明 data-solid，被玻璃主题浮层总选择器排除：不再获得
+ * backdrop-filter 毛玻璃、内高光投影与 @supports 降级补差；弹窗遮罩的
+ * blur 也已移除（见上方 .fe-pop-mask）。这里再把玻璃 token 覆盖层换成半
+ * 透明 rgba 的表面 token（--dsw-alias-bg-layer-*）顶回官方实色——取自
+ * design-platform.css 各 layer 的原始定义：浅=#fff；深 layer-1=35,35,36、
+ * layer-2=44,44,46。保证玻璃开关与否观感一致：标准实色面板。
+ * ⚠ 官方调色后此处需同步更新。 */
+html[data-dsh-glass] .fe-drawer{background-color:rgb(35,35,36)}
+html[data-dsh-glass] .fe-modal-dialog{background-color:rgb(44,44,46)}
+html[data-dsh-glass] body:not([data-ds-dark-theme]) .fe-drawer,
+html[data-dsh-glass] body:not([data-ds-dark-theme]) .fe-modal-dialog{background-color:#fff}
 
 /* ── 移动端：抽屉全宽、编辑器/舞台加高 ──────────────────────────────── */
 @media (max-width: 767.98px) {

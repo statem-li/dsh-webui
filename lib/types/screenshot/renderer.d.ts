@@ -14,6 +14,8 @@ export interface RenderInput {
     height: number;
     /** 输出缩放（deviceScaleFactor；缺省 2x）。 */
     scale?: number;
+    /** 正文含 mermaid 围栏：投放引擎文件并等图画完再截。 */
+    needsMermaid?: boolean;
 }
 /**
  * 渲染 HTML 为 PNG（base64）。串行执行；实例失效时自动重建并重试一次。

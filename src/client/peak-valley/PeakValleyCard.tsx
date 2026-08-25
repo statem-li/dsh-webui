@@ -29,7 +29,23 @@ const shell: CSSProperties = {
   padding: '8px 10px',
   borderRadius: 10,
   border: '1px solid var(--dsw-alias-border-l1, rgba(255,255,255,.08))',
-  background: 'var(--dsw-alias-bg-layer-1, #1c1f26)',
+}
+
+/** 实底样式：玻璃质感开启时峰谷卡也保持不透明（data-solid 豁免玻璃规则）。 */
+const PEAK_STYLE_ID = 'dsh-peak-card-solid-styles'
+const PEAK_SHEET = [
+  '.dsh-peak-card[data-solid]{background:var(--dsw-alias-bg-layer-1,#1c1f26)}',
+  'html[data-dsh-glass] .dsh-peak-card[data-solid]{background:var(--dsw-static-neutral-bluish-00,#fff)}',
+  'html[data-dsh-glass] body[data-ds-dark-theme] .dsh-peak-card[data-solid]{background:var(--dsw-static-neutral-bluish-850,#2c2c2e)}',
+].join('\n')
+
+function ensurePeakSolidStyles(): void {
+  if (typeof document === 'undefined') return
+  if (document.getElementById(PEAK_STYLE_ID) !== null) return
+  const tag = document.createElement('style')
+  tag.id = PEAK_STYLE_ID
+  tag.textContent = PEAK_SHEET
+  document.head.appendChild(tag)
 }
 
 const headRow: CSSProperties = {
@@ -112,6 +128,7 @@ const railDot: CSSProperties = {
 /** 渲染峰谷时刻卡片（展开态完整卡片；收起态一个状态点）。点击打开账单弹窗。 */
 export function PeakValleyCard({ wide }: PeakValleyCardProps): JSX.Element {
   ensureModalAnimStyles()
+  ensurePeakSolidStyles()
   const [nowMs, setNowMs] = useState<number>(() => Date.now())
   const [open, setOpen] = useState(false)
   const { closing, requestClose } = useModalClose(open, () => { setOpen(false) })
@@ -146,6 +163,7 @@ export function PeakValleyCard({ wide }: PeakValleyCardProps): JSX.Element {
       <div
         style={shell}
         className="dsh-peak-card"
+        data-solid=""
         title={`DeepSeek 峰谷时刻 · ${weekendFlat ? '周末全天空闲价' : '高峰 工作日 09:00–12:00 / 14:00–18:00'} · 点击查看账单`}
         onClick={() => { setOpen(true) }}
       >

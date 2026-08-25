@@ -3,14 +3,14 @@
  *
  * 三处注册：
  *  1. settings.general.item（order 37）：通用分区「语音播报」设置行
- *     （总开关 + 引擎/音色/语速/音量 + 实时/总结 + 试听/停止）。
+ *     （总开关 + 引擎/音色/语速/音量 + 实时/总结 + 试听/停止/静音）。
  *  2. conversation.input.left（order 102）：对话框内「本会话播报」开关
- *     （ChatToggle，仅影响当前会话），紧贴「AI 浏览器」图标右侧。
+ *     （ChatToggle：单击开关本会话、右键展开细项、静音态一眼可见）。
  *  3. conversation.input.right（order 12）：渲染 null 的播报驱动哨兵
  *     （VoiceAnnouncer，实时增量分句 + 回合结束总结）。
  *
- * 启动时拉一次全局配置缓存（store.cacheGlobal），让 announcer 不依赖设置页
- * 是否被访问过。
+ * 启动时拉一次全局配置与静音状态缓存（store），让 announcer 不依赖设置页
+ * 是否被访问过；同时注入 sessions 服务，供多会话播报加会话名前缀。
  */
 import type { ClientContext, SessionId } from '@deepseek-ai/dsh-client-runtime/client'
 // Type-only: 拉入 ui-conversation 的 SlotMap 合并声明（input.left / settings.general.item 槽位契约）。
@@ -20,14 +20,19 @@ import { VoiceSettingsRow } from './SettingsRow'
 import { VoiceToggle, type VoiceToggleInjected } from './ChatToggle'
 import { VoiceAnnouncer } from './announcer'
 import { fetchVoice } from './api'
-import { cacheGlobal } from './store'
+import { cacheGlobal, cacheMuted } from './store'
+import { setSessionsService } from './session-label'
 
 /** 挂载语音播报（设置行 + 对话框开关 + 播报驱动）。 */
 export function applyVoiceClient(ctx: ClientContext): void {
-  // 启动即缓存全局开关（announcer 高频读，不依赖设置页被打开过）。
+  // 会话标题服务（多会话播报的会话名前缀）；拿不到就降级为不加前缀。
+  try { setSessionsService((ctx as any).get('sessions')) } catch { /* 忽略 */ }
+
+  // 启动即缓存全局开关与静音态（announcer 高频读，不依赖设置页被打开过）。
   void fetchVoice().then((state) => {
     if (state !== null) {
       cacheGlobal({ enabled: state.config.enabled, live: state.config.live, summary: state.config.summary })
+      cacheMuted(state.muted)
     }
   })
 

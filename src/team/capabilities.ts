@@ -75,10 +75,32 @@ export interface CapabilityCatalog {
   bundles: BundleOption[]
 }
 
+/**
+ * 安全读取一个 cordis 服务。
+ *
+ * 【必须走 ctx.get(name)，且绝不能写 `ctx.get(name) ?? ctx.name`】
+ * cordis 的 context 是 Proxy：对**未在插件 inject 声明**的服务做裸属性访问
+ * （`ctx.skills`）会直接抛 `cannot get property "<name>" without inject`。
+ * 而 `??` 的右操作数恰恰在 `get()` 返回 undefined（服务未挂载）时求值 ——
+ * 于是「本想兜底」的写法在服务缺失时必然抛错，是真正的故障源。
+ * `ctx.get()` 走 reflect store，对缺失服务返回 undefined，可安全降级。
+ *
+ * 注意：不要把这些可选服务加进 index.ts 的 inject 数组 —— inject 里的服务
+ * 全部视为**必需**，任一缺失会让整个插件 fiber 变 INACTIVE（插件整体停摆）。
+ */
+function serviceOf(ctx: AnyContext, name: string): any {
+  try {
+    return ctx.get?.(name)
+  } catch {
+    return undefined
+  }
+}
+
 /** 读取当前进程注册的全部工具（名称 + 描述首句）。 */
 export function listTools(ctx: AnyContext): ToolOption[] {
   try {
-    const schemas = ctx.tools?.schemas?.() as Array<{ name?: unknown, description?: unknown }> | undefined
+    const tools = serviceOf(ctx, 'tools')
+    const schemas = tools?.schemas?.() as Array<{ name?: unknown, description?: unknown }> | undefined
     if (!Array.isArray(schemas)) return []
     return schemas
       .map((schema) => {
@@ -98,7 +120,7 @@ export function listTools(ctx: AnyContext): ToolOption[] {
 /** 读取技能注册表（失败返回空数组，不抛）。 */
 export async function listSkills(ctx: AnyContext): Promise<SkillOption[]> {
   try {
-    const registry = ctx.get?.('skills') ?? ctx.skills
+    const registry = serviceOf(ctx, 'skills')
     if (registry?.list === undefined) return []
     const listed = await registry.list() as Array<{
       name?: unknown
@@ -262,7 +284,7 @@ export async function renderInlineSkills(
   resolved: ResolvedCapabilities,
 ): Promise<string> {
   if (resolved.skillMode !== 'allow' || resolved.skillNames.length === 0) return ''
-  const registry = ctx.get?.('skills') ?? ctx.skills
+  const registry = serviceOf(ctx, 'skills')
   if (registry?.get === undefined) return ''
   const perSkill = Math.max(600, Math.min(SKILL_INLINE_EACH_MAX, Math.floor(SKILL_INLINE_BUDGET / resolved.skillNames.length)))
   const parts: string[] = []

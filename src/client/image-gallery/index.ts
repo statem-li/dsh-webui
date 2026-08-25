@@ -17,7 +17,7 @@ import { injectStyles } from './styles'
 
 declare module '@deepseek-ai/dsh-client-ui-conversation/client' {
   interface ChatNodeDataMap {
-    /** 一次会话里 generate_image 的成功结果（并排画廊）。 */
+    /** 同一轮（turn）生图的成功结果（归并画廊，多图并排一行）。 */
     'generated-images': GeneratedImagesChatData
   }
 }

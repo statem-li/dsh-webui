@@ -26,7 +26,7 @@ export function RoleRunCard({ step, now, onOpen }: RoleRunCardProps): JSX.Elemen
 
   return (
     <div
-      className="team-card"
+      className="team-card team-surface"
       data-status={step.status}
       role="button"
       tabIndex={0}
@@ -52,6 +52,17 @@ export function RoleRunCard({ step, now, onOpen }: RoleRunCardProps): JSX.Elemen
           <span className="team-card-model-name">—</span>
         )}
       </div>
+      {/* 子 agent 任务清单进度（有清单时才显示） */}
+      {step.todos !== undefined && step.todos.length > 0 ? (
+        <div className="team-card-todos" title={`任务清单：${step.todos.filter(t => t.status === 'completed').length}/${step.todos.length} 完成`}>
+          <span className="team-card-todos-fill" style={{
+            width: `${(step.todos.filter(t => t.status === 'completed').length / step.todos.length) * 100}%`,
+          }} />
+          <span className="team-card-todos-text">
+            {step.todos.filter(t => t.status === 'completed').length}/{step.todos.length} 任务
+          </span>
+        </div>
+      ) : null}
       {inherited ? <div className="team-card-inherit team-card-time">继承会话模型</div> : null}
 
       <div className="team-card-time">{timeText}</div>

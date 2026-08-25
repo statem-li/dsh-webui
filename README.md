@@ -1,6 +1,6 @@
 # dsh-webui — DeepSeek Harness 会话增强全家桶
 
-一个插件融合视图切换、消息导航、技能管理、供应商管理、辅助视觉、生图/生视频、记忆（hybrid 检索）、AI 浏览器、文件浏览器、Markdown 渲染、工具聚合、用量统计、网页搜索、定时自动化任务引擎、PlanWeave 计划项目、团队 Agent 编排（多团队多角色接力）、会话产物清单、对话退回与文件回退/修改历史对比、提示音、壳管理更新、插件自更新、网络代理、消息截图、中文思考、工作区临时垃圾清理等能力。纯插件实现，不改动 DSH 源码。
+一个插件融合视图切换、消息导航、技能管理、供应商管理、辅助视觉、生图/生视频、记忆（hybrid 检索）、AI 浏览器、文件浏览器、Markdown 渲染、工具聚合、用量统计、网页搜索、定时自动化任务引擎、PlanWeave 计划项目、团队 Agent 编排（多团队多角色接力）、会话产物清单、对话退回与文件回退/修改历史对比、提示音、壳管理更新、插件自更新、网络代理、网关伪装接入、供应商限流、消息截图、中文思考、工作区临时垃圾清理等能力。纯插件实现，不改动 DSH 源码。
 
 ## 一句话安装（DSH）
 
@@ -52,6 +52,7 @@ curl -X POST http://127.0.0.1:3080/api/webui-modules \
 | 分组 | key | 控制的功能 |
 |---|---|---|
 | 对话体验 | `messageWidth` | 消息气泡宽度设置 |
+| | `voice` | 语音播报（总结播报 / 实时播报 + 多会话仲裁 + 静音） |
 | | `doneSound` | 回合结束提示音 + 完成卡片 |
 | | `donePill` | 对话完成胶囊 + 记录面板 |
 | | `approvalNotify` | 审批等待 toast 提醒 |
@@ -81,6 +82,7 @@ curl -X POST http://127.0.0.1:3080/api/webui-modules \
 | 记忆 | `memory` | 记忆引擎 + Memory Dream |
 | 用量与统计 | `usage` | 用量工作台 |
 | 文件与工作区 | `fileExplorer` | 文件浏览器 |
+| | `workspaceDocs` | 工作区文档卡片（AGENTS.md / CLAUDE.md 检测 + 预览 + 一键创建；依赖 `fileExplorer`） |
 | | `dirPicker` | 工作区目录选择器 |
 | | `tmpCleaner` | 工作区临时垃圾清理器 |
 | 外观与系统 | `appearance` | 玻璃质感主题 |
@@ -88,6 +90,8 @@ curl -X POST http://127.0.0.1:3080/api/webui-modules \
 | | `updater` | 壳管理更新（DSH 源码一键更新 + 开机自启） |
 | | `pluginUpdate` | 插件自更新（检测上游新版本 + 增量补丁就地更新本插件） |
 | | `proxy` | 网络代理 |
+| | `gatewayRewrite` | 网关伪装接入（按域名改写 UA / 强制代理，接白名单网关） |
+| | `providerThrottle` | 供应商限流（按域名 RPM 令牌桶 + 并发信号量，从源头避免 429） |
 
 **注意事项**：
 
@@ -105,9 +109,10 @@ curl -X POST http://127.0.0.1:3080/api/webui-modules \
 | 会话置顶 | 侧边栏会话右键菜单：置顶（置顶组排最前）/ 归档按钮 / 重命名；localStorage 持久化，跨标签页实时同步 |
 | 对话退回 | 每条用户消息加退回按钮，一键回退工作区文件到该消息发送前 + 原地回退上下文（同会话内 surface 替换，不 fork、不归档、不切换会话、无刷新）。v2 git 式内容寻址存储：文件内容按 SHA-1 入全局 blob 库（gzip），快照只落「路径 → 指纹」纯索引，体积降两个数量级 |
 | 会话产物卡片 | host 端独立记账 agent 经 fs 服务的写入产物并落盘（jsonl），重启后消息操作栏「产物」入口仍可打开大卡片：左栏本会话产物清单、右栏应用内展示（图片内嵌 / markdown 渲染 / 代码高亮 / 二进制 hex 兜底），不经系统打开 |
-| 对话截图 | assistant 消息操作栏相机按钮 → 截图面板：范围（本条回复 / 这一轮问答 / 整段会话）+ 版式（电脑横幅 / 手机窄幅）+ 画质（1080P / 2K / 4K，输出像素宽度）+ 四主题（浅 / 深 / 玻璃 / 玻璃深）；标题与徽章文案可编辑；打开即渲染、改选项即重渲染，预览确认后才落盘；可复制图片到剪贴板 / 下载 PNG / 打开目录。host 端 markdown-it + Shiki 渲染管线（代码高亮 / emoji 短码 / 任务清单 / 表格 / 图片白名单），常驻无头浏览器渲染（空闲自动回收），不再每次冷启动 |
+| 对话截图 | assistant 消息操作栏相机按钮 → 截图面板：范围（本条回复 / 这一轮问答 / 整段会话）+ 版式（电脑横幅 / 手机窄幅）+ 画质（1080P / 2K / 4K，输出像素宽度）+ 四主题（浅 / 深 / 玻璃 / 玻璃深）；标题与徽章文案可编辑；打开即渲染、改选项即重渲染，预览确认后才落盘；可复制图片到剪贴板 / 下载 PNG / 打开目录。host 端 markdown-it + Shiki 渲染管线（代码高亮 / emoji 短码 / 任务清单 / 表格 / 图片白名单），常驻无头浏览器渲染（空闲自动回收），不再每次冷启动；正文含 mermaid 围栏时把随包引擎投放到临时页面就地画成 SVG（主题配色与界面一致，语法错误的围栏降级成源码块；无图的截图零额外开销） |
 | 对话完成胶囊 | 顶部悬浮胶囊（常驻、可拖拽、位置持久化）——完成提醒 + 点击直达最新会话 + 运行中任务实时时长；悬停滑出记录面板；健康提醒徽章（时段可配）；空闲轮播开心话术与 AI 小知识；内置文件浏览器入口；胶囊大小 / 字体 / 显隐可调 |
 | 提示音 + 完成卡片 | 回合结束提示音 + 对话完成卡片 |
+| 语音播报 | 回合结束用系统语音（或任意 OpenAI 兼容 `/audio/speech` 模型）念一句**结论**——「做完了什么 / 什么原因 / 解决了什么问题」，约 35 字上限，本地提取零 token，可切模型总结。**多会话仲裁**：一台机器只有一个音响，谁先出声谁持话筒，其它会话的实时句直接丢弃、总结加会话名前缀排队，说完静默 4 秒释放话筒；同会话多标签页按文本去重。**随时闭嘴**：对话框图标单击即开关本会话（右键展开细项），静音是进程级硬开关，一次点击掐断所有会话正在念的那句并挡住后续（不写配置，重启复原）。会话覆盖是双向的：全局关着也能只为某会话打开，全局开着也能只让某会话闭嘴。实时逐句朗读默认关闭（长回复念起来就是长篇论述），只念总结 |
 | 审批提醒 | 有工具调用等待审批时顶部弹 toast |
 | 会话切换柔和过渡 | 内容区淡入上浮、面包屑轻淡入、侧边栏高亮 FLIP 式滑动；`prefers-reduced-motion` 自动禁用 |
 | 消息气泡宽度 | 「发送对话宽度」拖动条（px/% 单位，settings.yaml 持久化），只作用于本人消息气泡 |
@@ -128,6 +133,8 @@ curl -X POST http://127.0.0.1:3080/api/webui-modules \
 | 上下文窗口/最大输出预设 | 模型上下文窗口 / 最大输出 token 改为预设下拉选择（倒序档位，支持手输） |
 | 推理等级自动补全 | `webui_sync_reasoning` 工具按供应商模板补全 `reasoningEfforts` |
 | Developer Role 兼容检测 | 一键检测：对每个 openai-completions 供应商真实发 `developer`/`system` 角色对照请求，判定网关是否支持新式 developer 角色；不支持则自动写入路由级 `compat.supportsDeveloperRole: false` 热修复（解决中转网关推理模型一律 HTTP 400） |
+| 网关伪装接入 | 部分 LLM 网关按 User-Agent 白名单放行（如 agentrouter.org 只接受 claude-cli / codex_cli_rs 的完整 UA），DSH 归因 UA 会被 401 拒绝且无法经 provider 配置覆盖。fetch 层按域名规则改写 User-Agent、可选注入本地 HTTP 代理 dispatcher，让这类网关按原生 baseURL 直接接入，无需本地反代进程；未命中规则的请求原样透传（只多一次 URL 解析），保存即运行时生效 |
+| 供应商限流 | 部分供应商对并发数与 RPM 双限流且 429 空响应（B.AI 实测 6 并发即 429、3s 间隔单发 100% 成功）。fetch 层按域名施两道闸——RPM 令牌桶（泄漏桶语义抹平突发，burst = 每秒令牌数）+ 并发信号量（默认 2），排队时被 AbortSignal 打断原样 reject、超时（60s）返回带 "rate limit" 字样 429 交还 DSH 重试层指数退避接管；默认关闭，关闭时零开销透传，保存即运行时生效 |
 | 网页搜索 | AnySearch provider + 设置卡 |
 | 邮箱验证码 | `mail_get_code` 工具 + 设置卡（QQ 邮箱验证码提取，支持字母数字混合） |
 
@@ -342,6 +349,7 @@ dock 工具条「选取元素」按钮进入选取模式，点击预览画面任
 | 文件浏览器 | 右上角入口 + 树形目录 + 双击编辑（CodeMirror 语法高亮）+ 保存 |
 | 文件修改历史 | 基于对话退回快照体系：时间线列出该文件在各次发消息前的内容变化点，选中后左右分栏 diff（LCS 行级双向对齐、天然同步滚动），对比历史版本与当前磁盘内容 |
 | 应用内文件预览卡 | 官方产物 chip / 正文文件提及的点击接管为应用内滑出预览——图片查看器 / markdown 渲染 / 高亮文本 / 二进制 hex 兜底，全程不经系统打开 |
+| 工作区文档卡片 | 侧边栏 footer 峰谷时刻卡片上方按文件出卡：检测当前会话工作区根的 AGENTS.md 与 CLAUDE.md（大小写不敏感），存在即各一张卡片、点击经应用内预览卡查看/编辑；两文件皆缺时显示虚线「创建 AGENTS.md」占位卡，一键写入初始骨架并自动打开预览卡。数据全部走既有 `/api/file-explorer` 路由，30 秒一次 loopback 目录列表轻量复查 |
 | 工作区目录选择器 | 自写弹窗（添加工作区时选文件夹，shadow 官方 native 选择器） |
 | 临时垃圾清理器 | 定时清空各工作区 `_tmp/` 内的 AI 临时脚本与常见垃圾文件：`_tmp/` 约定目录整体清理 + 规则扫描（内置 `*.tmp` `*.bak` `*.swp` `*.log` `.DS_Store` `Thumbs.db` 等 + 自定义追加规则）；调度可自定（每天 HH:mm / 每 N 小时，设置页通用分区行卡片配置）+ 可选启动补跑；最小文件年龄保护（默认 24h，到龄才清）、`.git`/`node_modules` 等保护目录永不下钻、单轮条目上限、每轮落 jsonl 日志（`${DSH_HOME}/tmp-cleaner/dsh-webui/log.jsonl`）；「预览待清理 / 立即清理」手动入口 + agent 工具 `webui_tmp_clean`；默认维护一条「临时脚本一律写工作区 `_tmp/`」**置顶记忆**（tag `tmp-cleaner-convention`，可在记忆面板直接改文案、重启不打回；记忆引擎未启用时退回系统提示词注入，开关可关） |
 
@@ -376,6 +384,8 @@ src/
 ├── automation/               — 定时自动化任务引擎（store / scheduler / executor / tool / suggestions / routes）
 ├── deliverables.ts           — 会话产物记账 host（/api/webui-deliverables，按会话白名单授权）
 ├── devrole-probe.ts          — 供应商 Developer Role 兼容性一键检测 + 自动修复
+├── gateway-rewrite.ts        — 网关伪装接入（fetch 层按域名改写 UA + 可选代理 dispatcher；/api/webui-gateway-rewrite）
+├── provider-throttle.ts      — 供应商限流（fetch 层按域名 RPM 令牌桶 + 并发信号量；/api/webui-provider-throttle）
 ├── screenshot/               — 对话截图 host（card 卡片模板 / theme 主题 / presets 设备×画质 / renderer 常驻无头浏览器 / 路由 render·save·reveal·image）
 ├── diagram.ts                — 图表支撑 host（/dyn-assets/vendor/mermaid.min.js 按需下发 + 作图提示词开关）
 ├── memory/                   — 记忆引擎（engine/retrieval.ts 本地 hybrid 检索、engine/consolidate.ts 为 Memory Dream 语义整理）
@@ -390,6 +400,8 @@ src/
 ├── plugin-update.ts          — 插件自更新 host（/api/webui-plugin-update：检测上游版本/提交 + 增量补丁 / 整包重装 / git pull）
 ├── plugin-update-patch.ts    — 增量更新纯函数内核（unified diff 解析与应用 + git blob sha 校验，可单测）
 ├── done-pill.ts              — 对话完成胶囊 host
+├── voice.ts                  — 语音播报 host（朗读进程 / 多会话话筒仲裁 / 静音 / 结论总结；/api/webui-voice + /speak /summary /stop /mute）
+├── voice-text.ts             — 播报文本纯函数（Markdown 清洗 / 流式分句 / outcomeSummary 结论提取，两端共用）
 ├── rewind.ts / rewind-diff.ts / screenshot.ts — 对话退回（git 式内容寻址快照）/ 行级 LCS 对齐 diff / 消息截图 host
 ├── workspace-dir-picker.ts   — 工作区目录选择器
 ├── tmp-cleaner.ts            — 工作区临时垃圾清理器（_tmp 约定目录 + 规则扫描 + 调度 + webui_tmp_clean 工具）
@@ -407,12 +419,15 @@ src/
     │                         — 记忆面板（含 SettingsTab）/ 浏览器 dock / 文件浏览器（FileHistoryView 修改历史、预览总线）/ 图库 / 工具聚合 / 会话产物大卡片
     ├── usage/                — 用量工作台（TrendTab / SignalTab / RangePicker / Heatmap / AreaChart）
     ├── done-pill.tsx         — 完成胶囊 client
+    ├── voice/                — 语音播报 client（SettingsRow 全局默认 / ChatToggle 本会话开关与静音 / announcer 播报驱动 / store 会话覆盖与订阅 / session-label 会话名）
     ├── glass.ts / glass-row.tsx — 玻璃质感 client
     ├── session-motion.ts     — 会话切换柔和过渡
     ├── sidebar-float*.ts(x)  — 悬浮侧边栏 client
     ├── shell-titlebar.ts     — 壳子窗口控制按钮共存样式
     ├── tmp-cleaner-card.tsx  — 临时垃圾清理设置卡（计划 / 预览 / 立即清理）
     ├── plugin-update-card.tsx — 插件更新设置卡（检查更新 / 增量更新 / 强制重装 / 日志）
+    ├── gateway-rewrite-card.tsx — 网关伪装接入设置卡（UA / 代理 规则列表）
+    ├── provider-throttle-card.tsx — 供应商限流设置卡（RPM / 并发 规则列表）
     └── styles.ts             — 注入样式
 docs/
 ├── ELEMENT-PICKER.md         — 浏览器元素选取设计文档

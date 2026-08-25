@@ -1,11 +1,12 @@
 /**
  * dsh-image-gallery — 样式（运行时注入 <style>，卸载时移除）。
  * 类名前缀 gig-；颜色走 DSH 主题令牌（--dsw-alias-*），缺省兜底深色值。
+ * 缩略图无卡片外壳、无标题行，直接嵌入消息流；Lightbox 由组件层
+ * createPortal 挂到 body，这里只管全屏遮罩本身（z-index 对齐全屏弹层惯例 1200）。
  */
 
 export const css = {
   gallery: 'gig-gallery',
-  head: 'gig-head',
   row: 'gig-row',
   item: 'gig-item',
   thumb: 'gig-thumb',
@@ -25,14 +26,15 @@ export const css = {
 const STYLE_ID = 'dsh-image-gallery-styles'
 
 const SHEET = `
-.gig-gallery{display:flex;flex-direction:column;gap:8px;padding:10px 12px;border:1px solid var(--dsw-alias-border-l2,#333);border-radius:12px;background:var(--dsw-alias-bg-layer-2,#16181d)}
-.gig-head{font-size:11px;font-weight:600;color:var(--dsw-alias-label-secondary,#bbb)}
+.gig-gallery{display:flex;flex-direction:column;gap:10px;min-width:0}
 .gig-row{display:flex;flex-wrap:wrap;gap:10px}
-.gig-item{position:relative;display:block;padding:0;border:none;border-radius:10px;background:transparent;cursor:zoom-in;overflow:hidden;flex:0 0 auto;line-height:0}
+.gig-item{position:relative;display:block;padding:0;border:none;border-radius:10px;background:transparent;cursor:zoom-in;overflow:hidden;flex:1 1 180px;max-width:340px;min-width:140px;line-height:0}
+.gig-item:only-child{flex:0 1 auto;max-width:360px}
 .gig-item:hover .gig-thumb{outline:2px solid var(--dsw-alias-state-business-primary,#4a9eff);outline-offset:-2px}
-.gig-thumb{display:block;max-width:min(220px,38vw);max-height:190px;min-width:80px;object-fit:cover;border-radius:10px;transition:outline 120ms}
+.gig-thumb{display:block;width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:10px;transition:outline 120ms}
+.gig-item:only-child .gig-thumb{width:auto;max-width:360px;max-height:300px;aspect-ratio:auto;object-fit:contain}
 .gig-badge{position:absolute;left:6px;bottom:6px;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:rgba(0,0,0,.55);color:#fff;font-size:10px;line-height:18px;text-align:center;font-weight:600}
-.gig-backdrop{position:fixed;inset:0;z-index:6000;display:flex;align-items:center;justify-content:center;background:rgba(8,10,14,.78);backdrop-filter:blur(2px);animation:gig-fade .16s ease-out}
+.gig-backdrop{position:fixed;inset:0;z-index:1200;display:flex;align-items:center;justify-content:center;background:rgba(8,10,14,.78);backdrop-filter:blur(2px);animation:gig-fade .16s ease-out}
 .gig-stage{position:relative;display:flex;flex-direction:column;gap:10px;max-width:92vw;max-height:92vh}
 .gig-full{display:block;max-width:92vw;max-height:82vh;object-fit:contain;border-radius:8px;box-shadow:0 12px 48px rgba(0,0,0,.55);cursor:zoom-out}
 .gig-broken{display:flex;align-items:center;justify-content:center;min-width:280px;min-height:160px;border:1px dashed var(--dsw-alias-border-l2,#444);border-radius:10px;color:var(--dsw-alias-label-tertiary,#888);font-size:13px}

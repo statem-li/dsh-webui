@@ -16,7 +16,7 @@ export interface ModelBinding {
   maxTokens?: number
 }
 
-/** 角色在编制图上的归一化位置（0..1，相对画布宽高）。 */
+/** 角色在编制图上的位置（world 绝对像素，可为负 —— 无限画布）。 */
 export interface NodePos {
   x: number
   y: number
@@ -170,6 +170,8 @@ export interface RunStep {
     note?: string
   }
   warning?: string
+  /** 子 agent 任务清单快照（todo_write 调用投影，全量覆盖）。 */
+  todos?: Array<{ content: string, status: 'pending' | 'in_progress' | 'completed' }>
   startedAt?: string
   finishedAt?: string
   error?: string

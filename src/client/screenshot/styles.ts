@@ -48,7 +48,7 @@ const SHEET = `
 
 /* ── 遮罩 + 面板 ── */
 .wsh-mask{position:fixed;inset:0;z-index:1399;background:var(--dsw-alias-bg-mask-1,rgba(0,0,0,.45))}
-.wsh-panel{position:fixed;z-index:1400;left:50%;top:50%;transform:translate(-50%,-50%);display:flex;flex-direction:column;box-sizing:border-box;width:min(calc(100vw - 64px),1080px);height:min(calc(100vh - 80px),860px);border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.14));border-radius:14px;background:var(--dsw-specific-menu,var(--dsw-alias-bg-layer-2,#16181d));box-shadow:var(--dsw-shadow-lv3,0 8px 40px rgba(0,0,0,.5));overflow:hidden}
+.wsh-panel{position:fixed;z-index:1400;left:50%;top:50%;transform:translate(-50%,-50%);display:flex;flex-direction:column;box-sizing:border-box;width:min(calc(100vw - 48px),2160px);height:min(calc(100vh - 40px),1720px);border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.14));border-radius:14px;background:var(--dsw-specific-menu,var(--dsw-alias-bg-layer-2,#16181d));box-shadow:var(--dsw-shadow-lv3,0 8px 40px rgba(0,0,0,.5));overflow:hidden}
 /* 居中面板的开合动画自带 translate(-50%,-50%)，不能复用通用滑入类（会覆盖定位）。 */
 .wsh-panel[data-anim='in']{animation:wsh-panel-in 240ms cubic-bezier(.2,.8,.2,1)}
 .wsh-panel[data-anim='out']{animation:wsh-panel-out 240ms cubic-bezier(.4,0,.2,1) both}

@@ -64,6 +64,7 @@ export const WEBUI_MODULE_KEYS = [
   'usage',             // 用量工作台（趋势/热力图/账户）
   // ── 文件与工作区 ──
   'fileExplorer',      // 文件浏览器
+  'workspaceDocs',     // 工作区文档卡片（AGENTS.md / CLAUDE.md 检测 + 预览 + 一键创建）
   'dirPicker',         // 工作区目录选择器
   'tmpCleaner',        // 工作区临时垃圾清理器（_tmp 约定目录 + 规则扫描）
   // ── 外观与系统 ──
@@ -72,6 +73,8 @@ export const WEBUI_MODULE_KEYS = [
   'updater',           // 壳管理更新
   'pluginUpdate',      // 插件自更新（检测上游新版本 + 一键就地更新）
   'proxy',             // 网络代理
+  'gatewayRewrite',    // 网关伪装接入（按域名改写 UA / 强制代理，接白名单网关）
+  'providerThrottle',  // 供应商限流（按域名 RPM 令牌桶 + 并发信号量，从源头避免 429）
 ] as const
 
 /** 单个功能模块的 key。 */

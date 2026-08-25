@@ -18,6 +18,11 @@ export declare function baseOf(theme: ShotTheme): 'light' | 'dark';
 /** 是否玻璃质感主题（半透明卡片 + 壁纸背景）。 */
 export declare function isGlass(theme: ShotTheme): boolean;
 /**
+ * mermaid initialize 配置（JSON 字符串，直接插进截图页的引导脚本）。
+ * @param theme - 截图主题。
+ */
+export declare function mermaidConfigJson(theme: ShotTheme): string;
+/**
  * 画布外边距（卡片与截图边缘之间的背景留白）。
  * host 端计算视口宽度时用它保持一致：viewport = width + pad * 2。
  * @param width - 卡片 CSS 宽度。

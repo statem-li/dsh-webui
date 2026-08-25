@@ -15,6 +15,13 @@
 /** 单次播报文本上限（超出截断；防止把长文一次性灌给引擎）。 */
 export declare const SPEECH_MAX_CHARS = 600;
 /**
+ * 总结播报的目标长度。
+ *
+ * 播报的价值在于「它做完了什么 / 为什么 / 解决了什么问题」，不是复述过程，
+ * 所以这里刻意压得很短——宁可漏细节，也不要念长篇。
+ */
+export declare const SUMMARY_TARGET_CHARS = 90;
+/**
  * Markdown → 朗读文本。
  * @param input - 原始 Markdown（可为流式半截文本）。
  * @returns 适合朗读的纯文本（可能为空串，表示这段没有可念内容）。
@@ -36,6 +43,17 @@ export interface Segmented {
 export declare function segmentSentences(input: string, options?: {
     final?: boolean;
 }): Segmented;
+/**
+ * 从一段回复里提取「做完了什么 / 什么原因 / 解决了什么问题」的短总结。
+ *
+ * 播报的价值是结论，不是复述过程：按结论线索词与句子位置打分，取最多两句
+ * 原序拼接，硬截断到 {@link SUMMARY_TARGET_CHARS}。零 token、零延迟。
+ *
+ * @param text - 助手回复正文（Markdown 或已清洗文本皆可）。
+ * @param limit - 字符上限。
+ * @returns 一句（或两句）可直接朗读的总结；无可播内容返回空串。
+ */
+export declare function outcomeSummary(text: string, limit?: number): string;
 /**
  * 截断到引擎上限（按句边界优先，避免把半句喂进去）。
  * @param text - 待播报文本。

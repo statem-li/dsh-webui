@@ -3,15 +3,15 @@
  *
  * 注册进设置「通用」分区（settings.general.item，order 37，紧随一键继续）。
  * 行内样式对齐 General 分区条目的 Setting-Cell 规格：
- *  - 总开关「语音播报」；
+ *  - 总开关「语音播报」（全局默认；各会话可在对话框里单独覆盖）；
  *  - 展开后：实时播报 / 总结播报两个子开关、引擎（系统语音 / 模型语音）、
  *    音色（系统引擎列 System.Speech 全部音色，含男女与方言）、语速/音量、
- *    模型引擎的模型与音色参数、总结方式、试听按钮。
+ *    模型引擎的模型与音色参数、总结方式、试听 / 停止 / 静音。
  */
 import { useEffect, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
-import { fetchVoice, saveVoice, speakText, stopSpeak, type VoiceConfig, type VoiceOption } from './api'
-import { cacheGlobal } from './store'
+import { fetchVoice, saveVoice, setMuted, speakText, stopSpeak, type VoiceConfig, type VoiceOption } from './api'
+import { cacheGlobal, cacheMuted } from './store'
 
 // ---- 行布局（对齐 General 分区条目的 Setting-Cell 规格，同 glass-row）----
 const groupStyle: CSSProperties = {
@@ -97,6 +97,7 @@ export function VoiceSettingsRow(): JSX.Element {
   const [config, setConfig] = useState<VoiceConfig | null>(null)
   const [voices, setVoices] = useState<VoiceOption[]>([])
   const [models, setModels] = useState<string[]>([])
+  const [muted, setMutedState] = useState(false)
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [hint, setHint] = useState('')
@@ -110,6 +111,8 @@ export function VoiceSettingsRow(): JSX.Element {
       setConfig(state.config)
       setVoices(state.voices)
       setModels(state.models)
+      setMutedState(state.muted)
+      cacheMuted(state.muted)
       cacheGlobal({ enabled: state.config.enabled, live: state.config.live, summary: state.config.summary })
     })
     return () => { alive = false }
@@ -123,6 +126,8 @@ export function VoiceSettingsRow(): JSX.Element {
     setConfig(next.config)
     setVoices(next.voices)
     setModels(next.models)
+    setMutedState(next.muted)
+    cacheMuted(next.muted)
     cacheGlobal({ enabled: next.config.enabled, live: next.config.live, summary: next.config.summary })
   }
 
@@ -153,9 +158,11 @@ export function VoiceSettingsRow(): JSX.Element {
         <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
           <div style={titleStyle}>语音播报</div>
           <div style={descStyle}>
-            {on
-              ? `已开启 · ${config.engine === 'system' ? '系统语音' : '模型语音'} · ${config.systemVoice !== '' && config.engine === 'system' ? config.systemVoice : config.modelKey !== '' && config.engine === 'model' ? config.modelKey : '未选音色'}`
-              : '助手回复时语音播报，对话完成后播报总结'}
+            {muted
+              ? '已静音（运行期硬开关）——点下方「解除静音」恢复'
+              : on
+                ? `已开启 · ${config.engine === 'system' ? '系统语音' : '模型语音'} · ${config.systemVoice !== '' && config.engine === 'system' ? config.systemVoice : config.modelKey !== '' && config.engine === 'model' ? config.modelKey : '未选音色'}`
+                : '回复结束播报一句「做完了什么／为什么／解决了什么」；各会话可在对话框图标上单独开关'}
           </div>
         </div>
         <Switch
@@ -168,14 +175,14 @@ export function VoiceSettingsRow(): JSX.Element {
       {open && (
         <div style={editorStyle}>
           <div style={fieldRowStyle}>
-            <span style={fieldLabelStyle}>实时播报</span>
-            <Switch on={config.live} label="实时播报" onToggle={() => { void commit({ live: !config.live }) }} />
-            <span style={{ ...inlineHint, flex: 1 }}>边生成边念，按完整句子断句</span>
-          </div>
-          <div style={fieldRowStyle}>
             <span style={fieldLabelStyle}>总结播报</span>
             <Switch on={config.summary} label="总结播报" onToggle={() => { void commit({ summary: !config.summary }) }} />
-            <span style={{ ...inlineHint, flex: 1 }}>每轮回复结束后播一句总结</span>
+            <span style={{ ...inlineHint, flex: 1 }}>回复结束念一句结论（约 35 字，推荐只开这个）</span>
+          </div>
+          <div style={fieldRowStyle}>
+            <span style={fieldLabelStyle}>实时播报</span>
+            <Switch on={config.live} label="实时播报" onToggle={() => { void commit({ live: !config.live }) }} />
+            <span style={{ ...inlineHint, flex: 1 }}>边生成边逐句念——长回复会变成长篇朗读</span>
           </div>
           <div style={fieldRowStyle}>
             <span style={fieldLabelStyle}>语音引擎</span>
@@ -277,18 +284,21 @@ export function VoiceSettingsRow(): JSX.Element {
               disabled={busy}
               onChange={(event) => { void commit({ summaryStyle: event.target.value as 'digest' | 'llm' }) }}
             >
-              <option value="digest">本地摘要（零 token）</option>
+              <option value="digest">本地提取（零 token）</option>
               <option value="llm">模型总结（费 token）</option>
             </select>
-            <span style={inlineHint}>本地摘要截取开头几句；模型总结更精炼</span>
+            <span style={inlineHint}>都只念结论：做完了什么 / 原因 / 解决了什么；模型总结更凝练</span>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             <button
               type="button"
               style={pillStyle}
               disabled={busy}
-              onClick={() => { void speakText('你好，这是语音播报试听。', 'test') }}
+              onClick={() => {
+                void speakText('已修复对话框开关不生效的问题，原因是全局开关一票否决。', 'test')
+                  .then((ok) => { flash(ok ? '' : '试听未入队（可能处于静音）') })
+              }}
             >
               试听
             </button>
@@ -299,8 +309,29 @@ export function VoiceSettingsRow(): JSX.Element {
             >
               停止播报
             </button>
+            <button
+              type="button"
+              style={{
+                ...pillStyle,
+                ...muted ? {} : { color: 'var(--dsw-alias-state-error-primary)', borderColor: 'var(--dsw-alias-state-error-primary)' },
+              }}
+              onClick={() => {
+                void setMuted(!muted).then((value) => {
+                  const next = value === true
+                  setMutedState(next)
+                  cacheMuted(next)
+                  flash(next ? '已静音：所有会话立刻闭嘴' : '已解除静音')
+                })
+              }}
+            >
+              {muted ? '解除静音' : '立刻静音（全部会话）'}
+            </button>
             {hint !== '' && <span style={inlineHint}>{hint}</span>}
           </div>
+          <span style={inlineHint}>
+            多会话同时跑时只有一个会话出声（先出声者持话筒），其它会话的实时句丢弃、
+            总结加会话名前缀排队；静音不写配置，重启后回到未静音。
+          </span>
         </div>
       )}
 

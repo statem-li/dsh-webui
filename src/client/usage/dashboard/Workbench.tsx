@@ -96,7 +96,7 @@ export function Workbench({ onClose, closing = false, anchor = null, onCardMouse
     accounts: <AccountsTab />,
   }
   return (
-    <PopoverShell closing={closing} onClose={close} anchor={anchor} size={TAB_SIZES[tab]} onCardMouseEnter={onCardMouseEnter} onCardMouseLeave={onCardMouseLeave} ariaLabel="用量工作台">
+    <PopoverShell solid closing={closing} onClose={close} anchor={anchor} size={TAB_SIZES[tab]} onCardMouseEnter={onCardMouseEnter} onCardMouseLeave={onCardMouseLeave} ariaLabel="用量工作台">
       <div style={css.topbar}>
         <span style={css.title}>用量工作台</span>
         <button type="button" style={css.close} aria-label="关闭" onClick={close}>✕</button>

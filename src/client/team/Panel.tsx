@@ -1,16 +1,23 @@
 /**
- * team — 团队面板（侧边栏导航行入口 + 右侧全高抽屉）。
+ * team — 团队面板（侧边栏导航行入口 + 右侧全高抽屉 + 全屏关系画布）。
  *
- * 抽屉结构（占满右边可视区，宽度自适应 min(1180px, 92vw)）：
+ * 抽屉结构：
  *  - 头部：标题 + 团队切换器（下拉 + 生成/新建/复制/重命名/删除）+ 团队默认模型；
- *  - Tab：编制（左侧可拖拽关联的编制图 + 右侧检视栏：角色/链条列表与编辑）
+ *  - Tab：编制（角色卡片网格 + 协作链；「全屏画布」按钮进入独立的关系画布层）
  *          / 运行（链选择 + 任务 + 本次模型覆盖 + 步骤时间线）
  *          / 历史（运行清单 + 详情 + 产物）/ 设置（globals）。
+ *
+ * 三条硬规则（都是踩过的坑）：
+ *  1. 不用 window.prompt / window.confirm —— Electron 壳子里 prompt() 直接抛异常，
+ *     调用点没 catch 就表现为「按钮点了没反应」。统一走 useDialogs()。
+ *  2. 角色编辑走 RoleEditorModal 居中弹窗，不在卡片里内联展开（内联会撑高卡片、
+ *     盖住邻居节点，导致控件点不到）。
+ *  3. 所有 fixed 弹层/全屏层一律 createPortal 到 document.body。
  *
  * 数据全部走 /api/webui-team/*（纯 fetch），与 host 半身解耦。
  */
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { ensureShellStyles } from '../popover-shell.js'
 import { NavButton, ensureNavMount, ensureNavStyles, useNavSlot, useRail } from '../sidebar-nav.js'
@@ -21,6 +28,9 @@ import { TeamBoard } from './TeamBoard.tsx'
 import { ChainEditor } from './ChainEditor.tsx'
 import { ModelSelect } from './ModelSelect.tsx'
 import { GenerateModal } from './GenerateModal.tsx'
+import { GuideCard } from './GuideCard.tsx'
+import { RoleEditorModal } from './RoleEditorModal.tsx'
+import { useDialogs } from './Dialog.tsx'
 import {
   GROUP_META, SOURCE_LABEL,
   type CapabilityCatalog, type Chain, type ModelBinding, type NodePos, type ProviderView, type Role, type Run, type RunSummary,
@@ -71,22 +81,59 @@ export function TeamNavApp(): JSX.Element | null {
     }
   }, [])
 
+  const closeTimerRef = useRef(0)
   const close = useCallback((): void => {
+    // 关闭动画期间重复点击会叠加 setTimeout，导致 open/closing 状态错乱。
+    if (closeTimerRef.current !== 0) return
     setClosing(true)
-    window.setTimeout(() => { setClosing(false); setOpen(false) }, DRAWER_EXIT_MS)
+    closeTimerRef.current = window.setTimeout(() => {
+      closeTimerRef.current = 0
+      setClosing(false)
+      setOpen(false)
+    }, DRAWER_EXIT_MS)
   }, [])
 
-  // Esc 关闭抽屉（全文查看层/生成弹窗自行拦截各自的 Esc）。
+  useEffect(() => () => {
+    if (closeTimerRef.current !== 0) window.clearTimeout(closeTimerRef.current)
+  }, [])
+
+  // Esc 关闭抽屉——但上层浮层（输入/确认弹窗、角色编辑弹窗、全屏画布、
+  // 一句话生成、全文查看）自己消费 Esc，此处必须让行。
   useEffect(() => {
     if (!open || closing) return
     const onKey = (event: KeyboardEvent): void => {
       if (event.key !== 'Escape') return
+      if (document.querySelector('.team-ask') !== null) return
+      if (document.querySelector('.team-editor-card') !== null) return
+      if (document.querySelector('.team-canvas-layer') !== null) return
       if (document.querySelector('.team-gen-card') !== null) return
       if (document.querySelector('.team-viewer') !== null) return
+      if (document.querySelector('.team-step-card') !== null) return
       close()
     }
     document.addEventListener('keydown', onKey)
     return () => { document.removeEventListener('keydown', onKey) }
+  }, [open, closing, close])
+
+  // 点击抽屉外区域自动收起（含侧边栏）：pointerdown 命中判定、click 照常派发，
+  // 因此「点侧边栏其他入口」会一边收起抽屉一边正常切换功能，无需点两下。
+  // 团队自己的上层浮层（编辑/输入确认弹窗、全屏画布、一句话生成、全文查看、
+  // toast/pop/HUD/pill）不算外部——它们 portal 在 body 上不在抽屉 DOM 内，
+  // 不排除的话点一下弹窗就把抽屉连根卸了。团队入口按钮也交给它自身的
+  // onClick toggle 处理（pointerdown 先关、click 再走 toggle，结果一致）。
+  useEffect(() => {
+    if (!open || closing) return
+    const TEAM_FLOATS = '.team-drawer,.team-mask,.team-editor-card,.team-editor-mask,.team-ask,.team-ask-mask,'
+      + '.team-canvas-layer,.team-gen-card,.team-gen-mask,.team-viewer,.team-pop,.team-toast,.team-hud,.team-pill,'
+      + '.team-step-mask,.team-step-card'
+    const onPointerDown = (event: PointerEvent): void => {
+      const target = event.target as Element | null
+      if (target !== null && typeof target.closest === 'function'
+        && target.closest(TEAM_FLOATS) !== null) return
+      close()
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    return () => { document.removeEventListener('pointerdown', onPointerDown) }
   }, [open, closing, close])
 
   const button = (
@@ -120,6 +167,7 @@ export function TeamNavApp(): JSX.Element | null {
           <div
             className="team-drawer"
             data-anim={anim}
+            data-solid="true"
             style={{ left: sidebarRight, right: 0, width: 'auto' }}
             role="dialog"
             aria-modal="true"
@@ -145,14 +193,19 @@ function TeamPanel({ onClose }: { onClose: () => void }): JSX.Element {
   const [globals, setGlobals] = useState<TeamGlobals | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
-  const [openRoleIds, setOpenRoleIds] = useState<Record<string, boolean>>({})
   const [openChainIds, setOpenChainIds] = useState<Record<string, boolean>>({})
   const [viewing, setViewing] = useState<{ title: string, content: string } | null>(null)
   const [genOpen, setGenOpen] = useState(false)
+  /** 正在编辑的角色 id（非空 = 打开 RoleEditorModal 弹窗）。 */
+  const [editingRoleId, setEditingRoleId] = useState('')
+  /** 全屏关系画布是否打开。 */
+  const [canvasOpen, setCanvasOpen] = useState(false)
   /** 连线模式起点（非空 = 正在等待点目标卡片建关联）。 */
   const [linkFrom, setLinkFrom] = useState('')
   /** 当前选中角色（卡片描边高亮）。 */
   const [selectedRoleId, setSelectedRoleId] = useState('')
+  /** 输入 / 确认弹窗（替代 window.prompt / confirm）。 */
+  const dlg = useDialogs()
 
   // 运行态
   const [chainId, setChainId] = useState('')
@@ -272,10 +325,16 @@ function TeamPanel({ onClose }: { onClose: () => void }): JSX.Element {
   }
 
   const createTeam = async (seed: boolean): Promise<void> => {
-    const name = window.prompt(seed ? '新团队名称（将套用出厂编制）' : '新团队名称（空白团队）', seed ? '我的团队' : '空白团队')
-    if (name === null || name.trim() === '') return
+    const name = await dlg.prompt({
+      title: seed ? '新建团队（套用出厂编制）' : '新建空白团队',
+      message: seed ? '会带上出厂的角色与协作链，可再改。' : '只含一个主脑角色和一条空链。',
+      defaultValue: seed ? '我的团队' : '空白团队',
+      placeholder: '团队名称',
+      confirmLabel: '创建',
+    })
+    if (name === null) return
     try {
-      const data = await api.createTeam(name.trim(), seed)
+      const data = await api.createTeam(name, seed)
       await loadAll(data.team.id)
       notify(`已创建团队「${data.team.name}」`)
     } catch (err) {
@@ -296,11 +355,12 @@ function TeamPanel({ onClose }: { onClose: () => void }): JSX.Element {
 
   const renameTeam = async (): Promise<void> => {
     if (team === null) return
-    const name = window.prompt('团队名称', team.name)
-    if (name === null || name.trim() === '') return
+    const name = await dlg.prompt({ title: '重命名团队', defaultValue: team.name, confirmLabel: '保存' })
+    if (name === null) return
     try {
-      await api.renameTeam(team.id, name.trim())
+      await api.renameTeam(team.id, name)
       await loadAll(team.id)
+      notify('已重命名')
     } catch (err) {
       fail(err)
     }
@@ -308,7 +368,13 @@ function TeamPanel({ onClose }: { onClose: () => void }): JSX.Element {
 
   const removeTeam = async (): Promise<void> => {
     if (team === null) return
-    if (!window.confirm(`删除团队「${team.name}」？该团队的角色、链条与设置将一并删除（运行历史保留）。`)) return
+    const ok = await dlg.confirm({
+      title: `删除团队「${team.name}」？`,
+      message: '该团队的角色、链条与设置将一并删除（运行历史保留）。',
+      confirmLabel: '删除',
+      danger: true,
+    })
+    if (!ok) return
     try {
       const data = await api.removeTeam(team.id)
       await loadAll(data.activeTeamId)
@@ -320,7 +386,13 @@ function TeamPanel({ onClose }: { onClose: () => void }): JSX.Element {
 
   const resetTeam = async (): Promise<void> => {
     if (team === null) return
-    if (!window.confirm(`把「${team.name}」恢复为出厂编制？当前的角色、链条、直连会被覆盖（团队默认模型保留）。`)) return
+    const ok = await dlg.confirm({
+      title: `把「${team.name}」恢复为出厂编制？`,
+      message: '当前的角色、链条、关联会被覆盖（团队默认模型保留）。',
+      confirmLabel: '恢复',
+      danger: true,
+    })
+    if (!ok) return
     try {
       const data = await api.resetTeam(team.id)
       setTeam(data.team)
@@ -345,23 +417,43 @@ function TeamPanel({ onClose }: { onClose: () => void }): JSX.Element {
     if (team === null) return
     const role = team.roles.find(r => r.id === roleId)
     if (role === undefined) return
-    if (!window.confirm(`删除角色「${role.name}」？引用它的链步骤也会被移除。`)) return
+    const ok = await dlg.confirm({
+      title: `删除角色「${role.name}」？`,
+      message: '引用它的链步骤与关联也会被移除。',
+      confirmLabel: '删除',
+      danger: true,
+    })
+    if (!ok) return
+    setEditingRoleId(current => (current === roleId ? '' : current))
     await saveTeam({ ...team, roles: team.roles.filter(r => r.id !== roleId) })
   }
 
   const addRole = async (): Promise<void> => {
     if (team === null) return
-    const name = window.prompt('新角色名称', '新角色')
-    if (name === null || name.trim() === '') return
-    const base = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '') || `r${Date.now().toString(36).slice(-4)}`
+    const name = await dlg.prompt({
+      title: '添加角色',
+      message: '创建后会直接打开编辑弹窗，填提示词、模型与能力装配。',
+      defaultValue: '新角色',
+      placeholder: '角色名称，如「核」',
+      confirmLabel: '创建',
+    })
+    if (name === null) return
+    // 角色 id 只允许 [A-Za-z0-9_-]（host 侧 normalizeRole 会拒绝其它字符）；
+    // 中文名派生不出 ascii 时用随机短 id 兜底。
+    const base = name.toLowerCase().replace(/[^a-z0-9_-]+/g, '') || `r${Date.now().toString(36).slice(-4)}`
     let id = base
     for (let i = 2; team.roles.some(r => r.id === id); i += 1) id = `${base}${i}`
     const role: Role = {
-      id, name: name.trim(), en: id, tagline: '', group: 'act', prompt: '',
+      id, name, en: id, tagline: '', group: 'act', prompt: '',
       model: null, executor: 'auto',
     }
-    await saveTeam({ ...team, roles: [...team.roles, role] })
-    setOpenRoleIds(previous => ({ ...previous, [id]: true }))
+    try {
+      await saveTeam({ ...team, roles: [...team.roles, role] })
+      setSelectedRoleId(id)
+      setEditingRoleId(id)
+    } catch {
+      // saveTeam 已上报错误
+    }
   }
 
   const saveChain = async (next: Chain): Promise<void> => {
@@ -371,18 +463,29 @@ function TeamPanel({ onClose }: { onClose: () => void }): JSX.Element {
 
   const removeChain = async (id: string): Promise<void> => {
     if (team === null) return
-    if (!window.confirm(`删除链条「${team.chains.find(c => c.id === id)?.name ?? id}」？`)) return
+    const ok = await dlg.confirm({
+      title: `删除链条「${team.chains.find(c => c.id === id)?.name ?? id}」？`,
+      confirmLabel: '删除',
+      danger: true,
+    })
+    if (!ok) return
     await saveTeam({ ...team, chains: team.chains.filter(chain => chain.id !== id) })
   }
 
   const addChain = async (): Promise<void> => {
     if (team === null) return
-    const name = window.prompt('新链条名称', '新链条')
-    if (name === null || name.trim() === '') return
-    const base = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '') || `c${Date.now().toString(36).slice(-4)}`
+    const name = await dlg.prompt({
+      title: '添加协作链',
+      message: '创建后在链条卡片里按顺序添加角色步骤。',
+      defaultValue: '新链条',
+      placeholder: '链条名称',
+      confirmLabel: '创建',
+    })
+    if (name === null) return
+    const base = name.toLowerCase().replace(/[^a-z0-9_-]+/g, '') || `c${Date.now().toString(36).slice(-4)}`
     let id = base
     for (let i = 2; team.chains.some(c => c.id === id); i += 1) id = `${base}${i}`
-    await saveTeam({ ...team, chains: [...team.chains, { id, name: name.trim(), steps: [], finalSynthesize: true }] })
+    await saveTeam({ ...team, chains: [...team.chains, { id, name, steps: [], finalSynthesize: true }] })
     setOpenChainIds(previous => ({ ...previous, [id]: true }))
   }
 
@@ -414,7 +517,18 @@ function TeamPanel({ onClose }: { onClose: () => void }): JSX.Element {
     await saveTeam({ ...team, directLinks: team.directLinks.filter((_, i) => i !== index) })
   }
 
-  /** 画板拖拽结束：把全部节点位置固化进 role.pos。 */
+  /** 切换某条关联的方向（双向 ↔ 单向）。 */
+  const flipLink = async (index: number): Promise<void> => {
+    if (team === null) return
+    await saveTeam({
+      ...team,
+      directLinks: team.directLinks.map((link, i) => (
+        i === index ? { ...link, kind: link.kind === 'directed' ? 'bidirectional' as const : 'directed' as const } : link
+      )),
+    })
+  }
+
+  /** 画布拖拽结束：把全部节点位置固化进 role.pos（静默保存，不弹 toast）。 */
   const commitPositions = async (positions: Record<string, NodePos>): Promise<void> => {
     if (team === null) return
     try {
@@ -539,6 +653,28 @@ function TeamPanel({ onClose }: { onClose: () => void }): JSX.Element {
 
   const readonlyIssue = teams.find(t => t.id === activeId)?.issue
 
+  /** 正在编辑的角色对象（团队重载后自动跟随最新数据）。 */
+  const editingRole = useMemo(
+    () => (editingRoleId === '' ? null : team?.roles.find(role => role.id === editingRoleId) ?? null),
+    [team, editingRoleId],
+  )
+
+  // 全屏画布的 Esc 退出（角色编辑弹窗/输入框优先消费）。
+  useEffect(() => {
+    if (!canvasOpen) return
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return
+      if (document.querySelector('.team-ask') !== null) return
+      if (document.querySelector('.team-editor-card') !== null) return
+      event.stopPropagation()
+      event.preventDefault()
+      if (linkFrom !== '') { setLinkFrom(''); return }
+      setCanvasOpen(false)
+    }
+    document.addEventListener('keydown', onKey, true)
+    return () => { document.removeEventListener('keydown', onKey, true) }
+  }, [canvasOpen, linkFrom])
+
   return (
     <div className="team-panel">
       {/* 抽屉头部：标题 + 团队切换器 + 团队默认模型 + 关闭 */}
@@ -590,6 +726,9 @@ function TeamPanel({ onClose }: { onClose: () => void }): JSX.Element {
         </div>
       </div>
 
+      {/* 新手向导卡：首次使用展开，关闭后收成细行（localStorage 记忆） */}
+      <GuideCard />
+
       {/* Tab */}
       <div className="team-tabs" role="tablist">
         {([['roster', '编制'], ['run', '运行'], ['history', '历史'], ['settings', '设置']] as Array<[PanelTab, string]>).map(([key, label]) => (
@@ -614,66 +753,80 @@ function TeamPanel({ onClose }: { onClose: () => void }): JSX.Element {
           </div>
         </div>
       ) : tab === 'roster' ? (
-        /* ── 编制页：关系图画板（卡片节点）── */
-        <div className="team-roster">
+        /* ── 编制页：角色卡片网格 + 协作链；关系画布走全屏层 ── */
+        <div className="team-scroll">
           <div className="team-roster-bar">
+            <button type="button" className="team-btn team-btn-primary" onClick={() => void addRole()}>＋ 添加角色</button>
+            <button
+              type="button"
+              className="team-btn"
+              title="在全屏画布里拖拽排布、连线（Esc 退出）"
+              onClick={() => setCanvasOpen(true)}
+            >
+              <span aria-hidden="true" style={{ marginRight: 5 }}>⛶</span>全屏关系画布
+            </button>
             <select
               className="team-select"
               value={chainId}
               aria-label="高亮协作链"
               onChange={e => setChainId(e.target.value)}
             >
-              <option value="">显示全部角色</option>
+              <option value="">不高亮链条</option>
               {team.chains.map(chain => (
                 <option key={chain.id} value={chain.id}>链条：{chain.name}</option>
               ))}
             </select>
-            <button type="button" className="team-btn" onClick={() => void addRole()}>＋ 添加角色</button>
-            <button type="button" className="team-btn" onClick={() => void resetPositions()}>自动重排</button>
             <span style={{ flex: 1 }} />
-            {linkFrom !== '' ? (
-              <span className="team-link-tip">
-                已选中「{team.roles.find(r => r.id === linkFrom)?.name ?? linkFrom}」，点另一张卡片建立关联
-                <button type="button" className="team-btn" onClick={() => setLinkFrom('')}>取消</button>
-              </span>
-            ) : (
-              <span className="team-pop-hint">拖头像移动节点 · 点 🔗 再点目标卡片建立关联</span>
-            )}
             <button type="button" className="team-btn team-btn-danger" onClick={() => void resetTeam()}>恢复出厂编制</button>
           </div>
 
           {error !== null ? <div className="team-error" role="alert">{error}</div> : null}
           {readonlyIssue !== undefined ? <div className="team-error">{readonlyIssue}</div> : null}
 
-          <TeamBoard
-            team={team}
-            chain={currentChain}
-            chainOrder={chainOrder}
-            linkFrom={linkFrom}
-            selectedRoleId={selectedRoleId}
-            openRoleIds={openRoleIds}
-            catalog={catalog}
-            providers={providers}
-            linksByRole={linksByRole}
-            onToggleOpen={(roleId) => {
-              setSelectedRoleId(roleId)
-              setOpenRoleIds(p => ({ ...p, [roleId]: p[roleId] !== true }))
-            }}
-            onSave={saveRole}
-            onRemove={(roleId) => { void removeRole(roleId) }}
-            onStartLink={(roleId) => startLink(roleId)}
-            onFinishLink={(roleId) => finishLink(roleId)}
-            onRemoveLink={(index) => { void removeLink(index) }}
-            onCommitPositions={(positions) => { void commitPositions(positions) }}
-          />
-
-          {/* 协作链（画板下方） */}
-          <div className="team-roster-chains">
-            <div className="team-section-title" style={{ display: 'flex', alignItems: 'center' }}>
-              <span style={{ flex: 1 }}>协作链（{team.chains.length}）</span>
-              <button type="button" className="team-btn" onClick={() => void addChain()}>＋ 添加链条</button>
+          <div className="team-section-title">角色（{team.roles.length}）</div>
+          {team.roles.length === 0 ? (
+            <div className="team-empty">
+              <span>这个团队还没有角色</span>
+              <span>点「＋ 添加角色」新建第一个</span>
             </div>
-            {team.chains.map(chain => (
+          ) : (
+            <div className="team-role-grid">
+              {team.roles.map(role => (
+                <RoleCard
+                  key={role.id}
+                  role={role}
+                  teamModel={team.model}
+                  selected={selectedRoleId === role.id}
+                  linking={linkFrom === role.id}
+                  linkMode={linkFrom !== ''}
+                  chainIndex={chainOrder[role.id] ?? null}
+                  links={linksByRole[role.id] ?? []}
+                  onOpen={() => { setSelectedRoleId(role.id); setEditingRoleId(role.id) }}
+                  onRemove={() => { void removeRole(role.id) }}
+                  onStartLink={() => startLink(role.id)}
+                  onFinishLink={() => finishLink(role.id)}
+                  onRemoveLink={(index) => { void removeLink(index) }}
+                />
+              ))}
+            </div>
+          )}
+
+          {linkFrom !== '' ? (
+            <div className="team-link-tip">
+              已选中「{team.roles.find(r => r.id === linkFrom)?.name ?? linkFrom}」，点另一张卡片建立关联
+              <button type="button" className="team-btn" onClick={() => setLinkFrom('')}>取消</button>
+            </div>
+          ) : null}
+
+          {/* 协作链 */}
+          <div className="team-section-title" style={{ display: 'flex', alignItems: 'center', marginTop: 4 }}>
+            <span style={{ flex: 1 }}>协作链（{team.chains.length}）</span>
+            <button type="button" className="team-btn" onClick={() => void addChain()}>＋ 添加链条</button>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {team.chains.length === 0 ? (
+              <div className="team-empty"><span>还没有协作链</span><span>链条决定角色的接力顺序</span></div>
+            ) : team.chains.map(chain => (
               <ChainEditor
                 key={chain.id}
                 chain={chain}
@@ -824,6 +977,77 @@ function TeamPanel({ onClose }: { onClose: () => void }): JSX.Element {
         }}
       />
 
+      {/* ── 全屏关系画布（独立浮层，portal 到 body）── */}
+      {canvasOpen && team !== null ? createPortal(
+        <div className="team-canvas-layer" role="dialog" aria-modal="true" aria-label="团队关系画布">
+          <TeamBoard
+            team={team}
+            chain={currentChain}
+            chainOrder={chainOrder}
+            linkFrom={linkFrom}
+            selectedRoleId={selectedRoleId}
+            linksByRole={linksByRole}
+            toolbar={(
+              <>
+                <span className="team-canvas-title">{team.name}</span>
+                <button type="button" className="team-btn team-btn-primary" onClick={() => void addRole()}>＋ 添加角色</button>
+                <select
+                  className="team-select"
+                  value={chainId}
+                  aria-label="高亮协作链"
+                  onChange={e => setChainId(e.target.value)}
+                >
+                  <option value="">不高亮链条</option>
+                  {team.chains.map(chain => (
+                    <option key={chain.id} value={chain.id}>链条：{chain.name}</option>
+                  ))}
+                </select>
+                <button type="button" className="team-btn" onClick={() => void resetPositions()}>自动重排</button>
+                <span style={{ flex: 1 }} />
+                {linkFrom !== '' ? (
+                  <span className="team-link-tip">
+                    点目标卡片完成关联
+                    <button type="button" className="team-btn" onClick={() => setLinkFrom('')}>取消</button>
+                  </span>
+                ) : (
+                  <span className="team-pop-hint">拖卡片头部移动 · 空白处拖拽平移 · Ctrl+滚轮缩放 · 右键连线删除</span>
+                )}
+                <button
+                  type="button"
+                  className="team-btn"
+                  onClick={() => { setLinkFrom(''); setCanvasOpen(false) }}
+                >退出画布（Esc）</button>
+              </>
+            )}
+            onOpenRole={(roleId) => { setSelectedRoleId(roleId); setEditingRoleId(roleId) }}
+            onRemoveRole={(roleId) => { void removeRole(roleId) }}
+            onStartLink={roleId => startLink(roleId)}
+            onFinishLink={roleId => finishLink(roleId)}
+            onRemoveLink={(index) => { void removeLink(index) }}
+            onFlipLink={(index) => { void flipLink(index) }}
+            onCommitPositions={(positions) => { void commitPositions(positions) }}
+          />
+        </div>,
+        document.body,
+      ) : null}
+
+      {/* ── 角色编辑弹窗 ── */}
+      {editingRole !== null && team !== null ? (
+        <RoleEditorModal
+          role={editingRole}
+          teamModel={team.model}
+          providers={providers}
+          catalog={catalog}
+          links={(linksByRole[editingRole.id] ?? []).map(link => ({
+            index: link.index, peerName: link.peerName, kind: link.kind,
+          }))}
+          onClose={() => setEditingRoleId('')}
+          onSave={saveRole}
+          onRemove={() => { void removeRole(editingRole.id) }}
+          onRemoveLink={(index) => { void removeLink(index) }}
+        />
+      ) : null}
+
       {viewing !== null ? (
         <div className="team-viewer">
           <div className="team-viewer-head">
@@ -842,6 +1066,9 @@ function TeamPanel({ onClose }: { onClose: () => void }): JSX.Element {
         <div className="team-toast" role="status" onClick={() => setToast(null)}>{toast}</div>,
         document.body,
       ) : null}
+
+      {/* 输入 / 确认弹窗出口（内部走 body portal，z-index 最高） */}
+      {dlg.node}
     </div>
   )
 }

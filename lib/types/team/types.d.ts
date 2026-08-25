@@ -29,8 +29,9 @@ export type RoleGroup = 'core' | 'judge' | 'act' | 'guard';
 /** 执行通道偏好。 */
 export type ExecutorPref = 'auto' | 'llm' | 'subagent';
 /**
- * 角色在编制图上的位置（归一化 0..1，相对画布宽高）。
- * 缺省 = 前端按环形自动布局；用户拖拽后写入并持久化。
+ * 角色在编制图上的位置（**world 绝对像素，可为负 —— 无限画布**）。
+ * 缺省 = 前端按网格自动布局；用户拖拽后写入并持久化。
+ * 旧版本（≤2026-08）此处存的是 0..1 归一化值，前端会自动折算迁移。
  */
 export interface NodePos {
     x: number;

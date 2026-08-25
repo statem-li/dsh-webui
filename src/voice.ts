@@ -9,19 +9,28 @@
  *  2. **大模型语音引擎**：任何 OpenAI 兼容的 /audio/speech 端点（在「供应商 →
  *     模型」里给模型打开「语音」开关即成为候选），合成 mp3 后由同一个朗读
  *     进程播放。
- *  3. **总结播报**：回合结束后播一句总结。默认 digest（本地摘要，零 token），
- *     可切 llm（用所选模型压成一句话，费 token）。
+ *  3. **总结播报**：回合结束后播一句「做完了什么 / 什么原因 / 解决了什么」，
+ *     默认 digest（本地结论提取，零 token），可切 llm（模型压成一句话，费 token）。
  *
  * 队列语义：朗读进程一次只念一条，stdin 管道本身就是队列（先到先念）；
  * 「停止播报」= 杀掉进程（唯一能打断已在播的方式）并清空待播队列。
  * 进程按需拉起，空闲 ${IDLE_EXIT_MS} 后自动退出——不播报时零进程零开销。
  *
+ * 多会话仲裁（一台机器只有一个音响）：每条播报都带 sessionId。正在出声的会话
+ * 是「持话筒者」，其它会话的实时句直接丢弃（不交叉念），总结则加会话名前缀排队；
+ * 持话筒者播完（队列空）即释放话筒。同一会话在多个标签页打开时按文本去重，
+ * 避免同一句念两遍。
+ *
+ * 随时闭嘴：静音（muted）是运行期硬开关，一次调用即刻掐断所有会话的播报，
+ * 不改配置、不需要逐个会话关开关；恢复也是一次调用。
+ *
  * HTTP（全部 loopback-only：播报会在宿主机出声，不对局域网开放）：
- *   GET  ${VOICE_API}            → { config, voices, models, speaking }
+ *   GET  ${VOICE_API}            → { config, voices, models, speaking, muted, owner }
  *   POST ${VOICE_API}            → 部分覆盖配置，回读最新状态
- *   POST ${VOICE_API}/speak     → { text, kind } 入队朗读
- *   POST ${VOICE_API}/summary   → { text } 生成并朗读总结
- *   POST ${VOICE_API}/stop      → 打断当前朗读并清空队列
+ *   POST ${VOICE_API}/speak     → { text, kind, sessionId, turn, force, label } 入队朗读
+ *   POST ${VOICE_API}/summary   → { text, sessionId, force, label } 生成并朗读总结
+ *   POST ${VOICE_API}/stop      → { sessionId?, mute? } 打断并清空（可只清某会话 / 顺便静音）
+ *   POST ${VOICE_API}/mute      → { muted } 静音 / 解除静音
  */
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
@@ -30,7 +39,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import z from '@deepseek-ai/schemastery'
-import { clampSpeech, sanitizeForSpeech, SPEECH_MAX_CHARS } from './voice-text.js'
+import { clampSpeech, outcomeSummary, sanitizeForSpeech, SPEECH_MAX_CHARS, SUMMARY_TARGET_CHARS } from './voice-text.js'
 
 /** 注入服务均为运行时动态注册，类型上放宽为 any。 */
 type PluginContext = any
@@ -56,8 +65,11 @@ const SPEAK_TIMEOUT_MS = 120_000
 /** 模型语音合成超时。 */
 const SYNTH_TIMEOUT_MS = 60_000
 
-/** 总结播报的目标长度（digest 与 llm 共用）。 */
-const SUMMARY_TARGET_CHARS = 120
+/** 持话筒者播完后多久释放话筒（防止两句之间的空隙被别的会话抢走）。 */
+const OWNER_IDLE_MS = 4_000
+
+/** 同一句文本的去重窗口（同一会话在多标签页打开时会重复上报）。 */
+const DEDUPE_MS = 8_000
 
 /** 语音引擎。 */
 export type VoiceEngine = 'system' | 'model'
@@ -89,7 +101,8 @@ export interface VoiceConfig {
 
 const ConfigSchema = z.object({
   enabled: z.boolean().default(false),
-  live: z.boolean().default(true),
+  // 默认只播总结：实时逐句朗读长回复就是「长篇论述」，价值远低于一句结论。
+  live: z.boolean().default(false),
   summary: z.boolean().default(true),
   engine: z.union(['system', 'model'] as const).default('system'),
   systemVoice: z.string().default(''),
@@ -113,6 +126,8 @@ interface QueueItem {
   id: number
   kind: 'live' | 'summary' | 'test'
   text: string
+  /** 来源会话（多会话仲裁用；test / 无会话上下文为空串）。 */
+  sessionId: string
 }
 
 // ── HTTP plumbing（与 prompt-optimize 同款 loopback 判定）──────────────────
@@ -187,22 +202,15 @@ function splitKey(key: string): { provider: string, model: string } | null {
 }
 
 /**
- * 本地摘要：取开头若干完整句拼到目标长度（零 token、零延迟）。
+ * 本地总结：提取「做完了什么 / 什么原因 / 解决了什么」（零 token、零延迟）。
+ *
+ * 保留导出名 digestSummary 以兼容既有调用；实现委托给
+ * {@link outcomeSummary}——不再是「取开头几句」，而是按结论线索打分挑句。
  * @param text - 已清洗的回复正文。
  * @returns 一句话总结（可能为空串）。
  */
 export function digestSummary(text: string): string {
-  const body = text.trim()
-  if (body === '') return ''
-  const pieces = body.split(/(?<=[。！？!?…])\s*/).map(piece => piece.trim()).filter(piece => piece !== '')
-  if (pieces.length === 0) return clampSpeech(body, SUMMARY_TARGET_CHARS)
-  let out = ''
-  for (const piece of pieces) {
-    if (out !== '' && out.length + piece.length > SUMMARY_TARGET_CHARS) break
-    out += piece
-    if (out.length >= SUMMARY_TARGET_CHARS) break
-  }
-  return out === '' ? clampSpeech(pieces[0] ?? body, SUMMARY_TARGET_CHARS) : out
+  return outcomeSummary(text, SUMMARY_TARGET_CHARS)
 }
 
 /**
@@ -235,6 +243,63 @@ export function applyVoice(ctx: PluginContext): void {
   /** 本次播放用的临时 mp3（模型引擎）；播完即删。 */
   let tempFile: string | null = null
   let tempDir: string | null = null
+
+  // ── 运行期开关与多会话仲裁 ──────────────────────────────────────────────
+  /**
+   * 静音：运行期硬开关（不写 settings）。开着时任何播报（含试听）直接丢弃，
+   * 并立刻掐断正在播的那句——「突然不想听了」一次点击即生效，恢复亦然。
+   */
+  let muted = false
+  /** 当前持话筒的会话（正在出声/待播的那个）；null = 话筒空闲。 */
+  let owner: string | null = null
+  /** 持话筒者最后一次活动时间（用于空闲释放）。 */
+  let ownerTouchedAt = 0
+  /** 正在播的那条属于哪个会话（stop 按会话精确打断用）。 */
+  let speakingSession = ''
+  /** 最近播过的文本指纹 → 时间戳（同一会话多标签页打开时去重）。 */
+  const recent = new Map<string, number>()
+
+  /** 话筒是否已空置（无人在播且过了静默窗口）。 */
+  const ownerFree = (): boolean => {
+    if (owner === null) return true
+    if (busy || queue.length > 0) return false
+    return Date.now() - ownerTouchedAt > OWNER_IDLE_MS
+  }
+
+  /**
+   * 多会话仲裁：决定某会话的这条播报能不能出声。
+   *
+   * 一台机器只有一个音响，多个会话同时播会互相盖住。规则：先出声的会话持话筒，
+   * 其它会话的**实时句直接丢**（交叉朗读毫无可读性），**总结允许排队**（结论值得
+   * 听，且量很小），持话筒者播完并静默 ${OWNER_IDLE_MS}ms 后释放。
+   * @param sessionId - 来源会话 id（空串视为无会话上下文，直接放行）。
+   * @param kind - 播报类型。
+   * @returns 放行时返回 true。
+   */
+  function claimFloor(sessionId: string, kind: QueueItem['kind']): boolean {
+    if (sessionId === '' || kind === 'test') return true
+    if (ownerFree()) {
+      owner = sessionId
+      ownerTouchedAt = Date.now()
+      return true
+    }
+    if (owner === sessionId) {
+      ownerTouchedAt = Date.now()
+      return true
+    }
+    // 别的会话在播：实时句丢弃，总结让它排队（后面会带会话名前缀）。
+    return kind === 'summary'
+  }
+
+  /** 同文本去重（多标签页会把同一句上报多次）。 */
+  function seenRecently(sessionId: string, text: string): boolean {
+    const now = Date.now()
+    for (const [key, at] of recent) if (now - at > DEDUPE_MS) recent.delete(key)
+    const fingerprint = `${sessionId}\u0000${text}`
+    if (recent.has(fingerprint)) return true
+    recent.set(fingerprint, now)
+    return false
+  }
 
   const clearTempFile = (): void => {
     if (tempFile === null) return
@@ -327,13 +392,21 @@ export function applyVoice(ctx: PluginContext): void {
   /** 取队首播一条；worker 未就绪时等 READY。 */
   function pump(): void {
     if (busy) return
+    if (muted) { queue.length = 0; armIdle(); return }
     const item = queue.shift()
-    if (item === undefined) { armIdle(); return }
+    if (item === undefined) {
+      // 队列空 = 持话筒者说完了；记一次活动时间，静默窗口过后自动释放话筒。
+      ownerTouchedAt = Date.now()
+      armIdle()
+      return
+    }
     const child = ensureWorker()
     if (child === null) return
     if (!ready) { queue.unshift(item); return }
     const config = readConfig()
     busy = true
+    speakingSession = item.sessionId
+    if (item.sessionId !== '') { owner = item.sessionId; ownerTouchedAt = Date.now() }
     if (config.engine === 'model') {
       void synthWithModel(item, config).then((file) => {
         if (file === null) { busy = false; pump(); return }
@@ -376,11 +449,20 @@ export function applyVoice(ctx: PluginContext): void {
     speakTimer.unref?.()
   }
 
-  /** 入队一条播报（已按引擎无关的方式清洗过）。 */
-  function enqueue(kind: QueueItem['kind'], text: string): boolean {
+  /**
+   * 入队一条播报（已按引擎无关的方式清洗过）。
+   * @param kind - 播报类型。
+   * @param text - 待播文本。
+   * @param sessionId - 来源会话（多会话仲裁与按会话打断用）。
+   * @returns 是否真的入队（被静音/被仲裁丢弃/重复/空文本都返回 false）。
+   */
+  function enqueue(kind: QueueItem['kind'], text: string, sessionId = ''): boolean {
+    if (muted) return false
     const body = clampSpeech(sanitizeForSpeech(text), SPEECH_MAX_CHARS)
     if (body === '') return false
-    queue.push({ id: nextId++, kind, text: body })
+    if (!claimFloor(sessionId, kind)) return false
+    if (seenRecently(sessionId, body)) return false
+    queue.push({ id: nextId++, kind, text: body, sessionId })
     // 队列过长说明播报追不上生成：丢最旧的实时句，保住最新内容与总结。
     while (queue.length > MAX_QUEUE) {
       const dropIndex = queue.findIndex(item => item.kind === 'live')
@@ -388,6 +470,33 @@ export function applyVoice(ctx: PluginContext): void {
     }
     pump()
     return true
+  }
+
+  /**
+   * 打断播报并清队。
+   * @param sessionId - 只停这个会话（空串 = 全停）。
+   * @returns 是否杀掉了正在播的那一句。
+   */
+  function stopSpeaking(sessionId = ''): boolean {
+    if (sessionId === '') {
+      queue.length = 0
+      owner = null
+      speakingSession = ''
+      stopWorker('stop')
+      return true
+    }
+    for (let index = queue.length - 1; index >= 0; index -= 1) {
+      if (queue[index]?.sessionId === sessionId) queue.splice(index, 1)
+    }
+    if (owner === sessionId) owner = null
+    // 正在播的那句属于该会话才需要杀进程（Speak 阻塞，只能这样打断）。
+    if (busy && speakingSession === sessionId) {
+      speakingSession = ''
+      stopWorker('stop-session')
+      pump()
+      return true
+    }
+    return false
   }
 
   // ── 模型语音合成（OpenAI 兼容 /audio/speech）────────────────────────────
@@ -442,7 +551,15 @@ export function applyVoice(ctx: PluginContext): void {
 
   // ── 总结播报 ────────────────────────────────────────────────────────────
 
-  /** 用所选模型把回复压成一句话（summaryStyle=llm 时）。 */
+  /**
+   * 用所选模型把回复压成一句播报（summaryStyle=llm 时）。
+   *
+   * 提示词刻意只要三件事：做完了什么、原因、解决了什么问题——不要过程复述、
+   * 不要罗列步骤。超长输出在返回后仍会被 {@link clampSpeech} 截断。
+   * @param text - 已清洗的回复正文。
+   * @param config - 当前配置（取 modelKey）。
+   * @returns 一句话总结；失败返回空串（调用方回落本地提取）。
+   */
   async function llmSummary(text: string, config: VoiceConfig): Promise<string> {
     const parts = splitKey(config.modelKey)
     const llm = ctx.get('llm')
@@ -454,14 +571,14 @@ export function applyVoice(ctx: PluginContext): void {
         model: parts.model,
         messages: [{
           role: 'user',
-          content: [{ type: 'text', text: `用一句不超过 40 字的中文口语总结下面这段回复，只输出总结本身：\n\n${text.slice(0, 4000)}` }],
+          content: [{ type: 'text', text: `把下面这段助手回复压成一句不超过 35 字的中文口播，只说「做完了什么／为什么／解决了什么问题」，不要复述过程、不要列步骤、不要客套。只输出这句话：\n\n${text.slice(0, 4000)}` }],
         }],
-        system: '你把助手的回复压缩成一句可以直接朗读的中文口语总结。只输出总结，不要标点堆砌、不要 Markdown。',
-        maxTokens: 200,
+        system: '你为语音播报写一句话结论：只讲结果、原因、解决的问题，不超过 35 字，不要 Markdown、不要引号、不要罗列步骤。',
+        maxTokens: 120,
       })) {
         if (chunk.type === 'text-delta') out += chunk.text
       }
-      return out.trim()
+      return clampSpeech(sanitizeForSpeech(out.trim()), SUMMARY_TARGET_CHARS)
     } catch (error: any) {
       console.warn('[webui-voice] llm summary failed:', String(error?.message ?? error))
       return ''
@@ -539,7 +656,13 @@ export function applyVoice(ctx: PluginContext): void {
     models: await listSpeechModels(),
     speaking: busy || queue.length > 0,
     queued: queue.length,
+    muted,
+    /** 当前持话筒的会话（多会话仲裁的可观测状态；null = 空闲）。 */
+    owner,
   })
+
+  /** 从请求体读会话 id（缺省空串 = 无会话上下文）。 */
+  const sessionOf = (body: any): string => typeof body?.sessionId === 'string' ? body.sessionId : ''
 
   ctx.effect(() => {
     const disposers = [
@@ -567,7 +690,7 @@ export function applyVoice(ctx: PluginContext): void {
                 await scope.update(ConfigSchema({ ...current, ...patch }))
               }
               // 总开关关掉时立刻静音（已在播的也打断）。
-              if (patch.enabled === false) { queue.length = 0; stopWorker('disabled') }
+              if (patch.enabled === false) stopSpeaking()
             }
             json(res, 200, await state())
           } catch (error: any) {
@@ -585,14 +708,18 @@ export function applyVoice(ctx: PluginContext): void {
             const body = await readBody(req)
             const config = readConfig()
             const kind = body?.kind === 'summary' ? 'summary' : body?.kind === 'test' ? 'test' : 'live'
+            // force = 该会话在对话框里明确开了这一项：越过全局开关，只受静音约束。
+            // 没有它的话「对话框开关」在全局关闭时永远是个摆设（本次修复的核心）。
+            const force = body?.force === true
+            if (muted) { json(res, 200, { ok: true, skipped: 'muted' }); return }
             // 试听不看总开关（用户正在设置页调音色）；实时/总结受开关约束。
-            if (kind !== 'test') {
+            if (kind !== 'test' && !force) {
               if (!config.enabled) { json(res, 200, { ok: true, skipped: 'disabled' }); return }
               if (kind === 'live' && !config.live) { json(res, 200, { ok: true, skipped: 'live-off' }); return }
               if (kind === 'summary' && !config.summary) { json(res, 200, { ok: true, skipped: 'summary-off' }); return }
             }
-            const spoken = enqueue(kind, typeof body?.text === 'string' ? body.text : '')
-            json(res, 200, { ok: true, queued: spoken, pending: queue.length })
+            const spoken = enqueue(kind, typeof body?.text === 'string' ? body.text : '', sessionOf(body))
+            json(res, 200, { ok: true, queued: spoken, pending: queue.length, owner })
           } catch (error: any) {
             json(res, 500, { ok: false, error: String(error?.message ?? error) })
           }
@@ -607,13 +734,21 @@ export function applyVoice(ctx: PluginContext): void {
           try {
             const body = await readBody(req)
             const config = readConfig()
-            if (!config.enabled || !config.summary) { json(res, 200, { ok: true, skipped: 'summary-off' }); return }
+            const force = body?.force === true
+            if (muted) { json(res, 200, { ok: true, skipped: 'muted' }); return }
+            if (!force && (!config.enabled || !config.summary)) { json(res, 200, { ok: true, skipped: 'summary-off' }); return }
+            const sessionId = sessionOf(body)
             const clean = sanitizeForSpeech(typeof body?.text === 'string' ? body.text : '')
             if (clean === '') { json(res, 200, { ok: true, skipped: 'empty' }); return }
             let text = config.summaryStyle === 'llm' ? await llmSummary(clean, config) : ''
             if (text === '') text = digestSummary(clean)
-            const spoken = enqueue('summary', text)
-            json(res, 200, { ok: true, queued: spoken, text })
+            // 别的会话正在占着话筒时，总结前面加一句会话名，听者才知道是谁在说。
+            const label = typeof body?.label === 'string' ? body.label.trim().slice(0, 24) : ''
+            const prefixed = label !== '' && owner !== null && owner !== sessionId
+              ? `${label}：${text}`
+              : text
+            const spoken = enqueue('summary', prefixed, sessionId)
+            json(res, 200, { ok: true, queued: spoken, text: prefixed })
           } catch (error: any) {
             json(res, 500, { ok: false, error: String(error?.message ?? error) })
           }
@@ -625,9 +760,24 @@ export function applyVoice(ctx: PluginContext): void {
         handler: async (req: IncomingMessage, res: ServerResponse) => {
           if (!loopbackAllowed(req)) { json(res, 403, { ok: false, error: 'loopback-only' }); return }
           if (req.method !== 'POST') { json(res, 405, { ok: false, error: 'method not allowed' }); return }
-          queue.length = 0
-          stopWorker('stop')
-          json(res, 200, { ok: true })
+          const body = await readBody(req)
+          // mute=true：顺手进入静音（"我突然不想听了" 一次点击既闭嘴又不再开口）。
+          if (body?.mute === true) muted = true
+          const killed = stopSpeaking(sessionOf(body))
+          json(res, 200, { ok: true, killed, muted })
+        },
+      }),
+      ctx.webServer.register({
+        kind: 'exact',
+        path: `${VOICE_API}/mute`,
+        handler: async (req: IncomingMessage, res: ServerResponse) => {
+          if (!loopbackAllowed(req)) { json(res, 403, { ok: false, error: 'loopback-only' }); return }
+          if (req.method !== 'POST') { json(res, 405, { ok: false, error: 'method not allowed' }); return }
+          const body = await readBody(req)
+          // 缺省视为「切换」，显式传 muted 则按传入值。
+          muted = typeof body?.muted === 'boolean' ? body.muted : !muted
+          if (muted) stopSpeaking()
+          json(res, 200, { ok: true, muted })
         },
       }),
     ]
@@ -643,5 +793,5 @@ export function applyVoice(ctx: PluginContext): void {
     }
   }, 'webui: voice routes')
 
-  console.log(`[webui-voice] mounted: ${VOICE_API} (+/speak, /summary, /stop)`)
+  console.log(`[webui-voice] mounted: ${VOICE_API} (+/speak, /summary, /stop, /mute)`)
 }

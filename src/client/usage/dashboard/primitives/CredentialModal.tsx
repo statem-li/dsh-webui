@@ -9,8 +9,25 @@ const overlayStyle: React.CSSProperties = {
 }
 const cardStyle: React.CSSProperties = {
   width: 420, maxWidth: 'calc(100vw - 48px)', borderRadius: 16, overflow: 'hidden',
-  background: 'var(--dsw-alias-bg-layer-2)', boxShadow: '0 24px 64px rgba(0,0,0,.5)',
+  boxShadow: '0 24px 64px rgba(0,0,0,.5)',
   border: '1px solid var(--dsw-alias-border-l1)',
+}
+
+/** 实底样式：玻璃质感开启时凭据弹窗也保持不透明（data-solid 豁免玻璃规则）。 */
+const CRED_STYLE_ID = 'dsh-cred-card-solid-styles'
+const CRED_SHEET = [
+  '.dsh-webui-cred-card{background:var(--dsw-alias-bg-layer-2)}',
+  'html[data-dsh-glass] .dsh-webui-cred-card[data-solid]{background:var(--dsw-static-neutral-bluish-00,#fff);backdrop-filter:none;-webkit-backdrop-filter:none}',
+  'html[data-dsh-glass] body[data-ds-dark-theme] .dsh-webui-cred-card[data-solid]{background:var(--dsw-static-neutral-bluish-850,#2c2c2e)}',
+].join('\n')
+
+function ensureCredSolidStyles(): void {
+  if (typeof document === 'undefined') return
+  if (document.getElementById(CRED_STYLE_ID) !== null) return
+  const tag = document.createElement('style')
+  tag.id = CRED_STYLE_ID
+  tag.textContent = CRED_SHEET
+  document.head.appendChild(tag)
 }
 const headerStyle: React.CSSProperties = {
   display: 'flex', alignItems: 'center', justifyContent: 'space-between',
@@ -34,9 +51,10 @@ export function CredentialModal({ providerName, onClose, onSave }: {
   const [value, setValue] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  ensureCredSolidStyles()
   return (
     <div style={overlayStyle} onClick={onClose}>
-      <div style={cardStyle} onClick={e => e.stopPropagation()}>
+      <div style={cardStyle} className="dsh-webui-cred-card" data-solid="" onClick={e => e.stopPropagation()}>
         <div style={headerStyle}>
           <span>配置 {providerName} 凭据</span>
           <button type="button" aria-label="关闭" onClick={onClose} style={{ border: 'none', background: 'transparent', color: 'var(--dsw-alias-label-secondary)', cursor: 'pointer', fontSize: 15 }}>✕</button>

@@ -1319,9 +1319,9 @@ export interface BrowserSeatProps {
 
 /**
  * 会话内浏览器常驻按钮（conversation.input.left 条目，始终可见）。
- * 悬停按钮时上方滑出「禁止 AI 使用浏览器」权限卡片：开关与设置页
- * 「允许 AI 使用浏览器」同一数据源（/api/dsh-browser/allow），host 在
- * tools/pre-execute 拦截 browser_* 调用；点击按钮本体仍开合预览抽屉。
+ * 悬停按钮时上方滑出「禁止 AI 使用浏览器」权限卡片：「禁止」为会话级开关
+ * （/api/dsh-browser/allow?sessionId=…，host 只拦本会话的 browser_* 调用，
+ * 不写全局配置）；点击按钮本体仍开合预览抽屉。
  */
 export const BrowserSeat = memo(function BrowserSeat({ sessionId, input, inputActions }: BrowserSeatProps) {
   const store = browserActivityStore()
@@ -1332,19 +1332,23 @@ export const BrowserSeat = memo(function BrowserSeat({ sessionId, input, inputAc
   const [open, setOpen] = useState(false)
 
   // ---- 悬停权限卡片：「禁止 AI 使用浏览器」+「提速模式」------------------
-  // allow=true 允许（host 默认）；false=禁止（host 拦截 browser_*）；null=加载中。
+  // allow=true 允许（host 默认）；false=本会话禁止（host 拦截本会话 browser_*）；
+  // null=加载中。会话级：只影响当前对话，不改全局配置。
   const [allow, setAllow] = useState<boolean | null>(null)
   // speed=true 注入网页操作提速策略（host 默认）；false=不注入；null=加载中。
   const [speed, setSpeed] = useState<boolean | null>(null)
   const [gateOpen, setGateOpen] = useState(false)
   const gateHideTimer = useRef<number | null>(null)
 
+  /** 本会话的 allow 接口地址（读写同一端点，带 sessionId 走会话级语义）。 */
+  const allowUrl = `/api/dsh-browser/allow?sessionId=${encodeURIComponent(String(sessionId))}`
+
   const refreshAllow = useCallback((): void => {
-    fetch('/api/dsh-browser/allow', { cache: 'no-store' })
+    fetch(allowUrl, { cache: 'no-store' })
       .then((r) => r.json())
       .then((r: any) => { if (r && typeof r.allow === 'boolean') setAllow(r.allow as boolean) })
       .catch(() => {})
-  }, [])
+  }, [allowUrl])
 
   const refreshSpeed = useCallback((): void => {
     fetch('/api/dsh-browser/speed', { cache: 'no-store' })
@@ -1377,17 +1381,17 @@ export const BrowserSeat = memo(function BrowserSeat({ sessionId, input, inputAc
     if (gateHideTimer.current !== null) window.clearTimeout(gateHideTimer.current)
   }, [])
 
-  /** 切换「禁止」开关：写回 allow 取反值。 */
+  /** 切换「禁止」开关：写回 allow 取反值（仅当前会话生效，不动全局）。 */
   const toggleDeny = useCallback((): void => {
     if (allow === null) return
     const next = !allow
     setAllow(next)
-    fetch('/api/dsh-browser/allow', {
+    fetch(allowUrl, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ allow: next }),
     }).catch(() => {})
-  }, [allow])
+  }, [allow, allowUrl])
 
   /** 切换「提速模式」：写回 enabled 取反值（host 按开关注入系统提示词策略）。 */
   const toggleSpeed = useCallback((): void => {
@@ -1456,7 +1460,7 @@ export const BrowserSeat = memo(function BrowserSeat({ sessionId, input, inputAc
           <div className="dsh-browser-gate__row">
             <div className="dsh-browser-gate__copy">
               <span className="dsh-browser-gate__label">禁止 AI 使用浏览器</span>
-              <span className="dsh-browser-gate__desc">开启后 AI 调用浏览器工具将被拒绝。</span>
+              <span className="dsh-browser-gate__desc">开启后 AI 在当前对话调用浏览器工具将被拒绝，其他对话不受影响。</span>
             </div>
             <button
               type="button"

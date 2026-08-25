@@ -375,7 +375,7 @@ export function AutomationApp({ ctx }: { ctx: ClientContext }): JSX.Element {
       <div data-nav-slot="memory" />
 
       {(open || closing) && createPortal(
-        <PopoverShell closing={closing} onClose={close} anchor={anchor} width={560} ariaLabel={t('title')}>
+        <PopoverShell solid closing={closing} onClose={close} anchor={anchor} width={560} ariaLabel={t('title')}>
           <PshHead title={t('title')} closeLabel={t('close')} onClose={close} />
           <div className="auto-panel">
             <div className="auto-head">

@@ -34,6 +34,18 @@ const SHEET = `
 .psh-card[data-mode='popover'][data-anim='in']{animation:dsh-modal-side-in ${MODAL_ANIM_MS}ms cubic-bezier(.2,.8,.2,1)}
 .psh-card[data-mode='popover'][data-anim='out']{animation:dsh-modal-side-out ${MODAL_ANIM_MS}ms cubic-bezier(.4,0,.2,1) both}
 .psh-card[data-mode='sheet']{left:12px !important;right:12px;bottom:12px;top:auto !important}
+/* 实底卡片（solid 模式）：玻璃质感开启时也保持不透明表面。
+   两条必要条件——
+   1) 底色必须用 static token（bg-layer-* 等 alias 在玻璃模式下被
+      overrideTokens 换成 rgba，用它们仍然透）；
+   2) 选择器需带 html[data-dsh-glass] 前缀以压过 glass.ts 里
+      「插件自绘面板一律 transparent」那条规则（同特异性靠顺序取胜不可靠）。 */
+.psh-card[data-solid],html[data-dsh-glass] .psh-card[data-solid]{
+  background:var(--dsw-static-neutral-bluish-00,#fff);
+  backdrop-filter:none;-webkit-backdrop-filter:none}
+body[data-ds-dark-theme] .psh-card[data-solid],
+html[data-dsh-glass] body[data-ds-dark-theme] .psh-card[data-solid]{
+  background:var(--dsw-static-neutral-bluish-850,#2c2c2e)}
 .psh-card[data-mode='sheet'][data-anim='in']{animation:dsh-modal-slide-in ${MODAL_ANIM_MS}ms cubic-bezier(.2,.8,.2,1)}
 .psh-card[data-mode='sheet'][data-anim='out']{animation:dsh-modal-slide-out ${MODAL_ANIM_MS}ms cubic-bezier(.4,0,.2,1) both}
 /* ── 通用卡片头部：标题 + 关闭（对齐 auto-card-head 规格）── */
@@ -92,12 +104,14 @@ export interface PopoverShellProps {
   onCardMouseLeave?: () => void
   /** 无障碍名（role=dialog 的 aria-label）。 */
   ariaLabel: string
+  /** 实底卡片：玻璃质感开启时也不透明（内容密集的数据面板用，避免背景穿透干扰阅读）。 */
+  solid?: boolean
   children: ReactNode
 }
 
 /** 渲染「右侧滑出」卡片（含遮罩）。内容自带头部时无需再用 PshHead。 */
 export function PopoverShell({
-  closing, onClose, anchor, width = 560, size, onCardMouseEnter, onCardMouseLeave, ariaLabel, children,
+  closing, onClose, anchor, width = 560, size, onCardMouseEnter, onCardMouseLeave, ariaLabel, solid = false, children,
 }: PopoverShellProps): JSX.Element {
   // 视口尺寸走 state：窗口缩放时 fill/夹紧尺寸实时跟随（否则缩小窗口后卡片仍按旧尺寸布局）。
   const [vp, setVp] = useState({ w: window.innerWidth, h: window.innerHeight })
@@ -149,6 +163,7 @@ export function PopoverShell({
         className={`psh-card ${modalSideAnimClass(closing)}`}
         data-anim={anim}
         data-mode={mode}
+        data-solid={solid ? '' : undefined}
         style={style}
         role="dialog"
         aria-modal="true"

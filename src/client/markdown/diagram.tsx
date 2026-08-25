@@ -16,6 +16,7 @@
  * 绝不吞内容。
  */
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { CodeBlockNode } from 'stream-markdown-parser'
 
 /** 被识别为「图」的围栏语言（mermaid 图种关键字也一并接受）。 */
@@ -265,6 +266,16 @@ export const DiagramBlock = memo(function DiagramBlock({ node, isDark = false }:
     else done()
   }, [code])
 
+  // 放大层打开时支持 Esc 关闭（portal 挂在 body 上，键盘焦点不在卡片内也能响应）。
+  useEffect(() => {
+    if (!zoom) return
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') setZoom(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => { window.removeEventListener('keydown', onKey) }
+  }, [zoom])
+
   const download = useCallback(() => {
     if (state.phase !== 'done') return
     const blob = new Blob([state.svg], { type: 'image/svg+xml' })
@@ -326,7 +337,11 @@ export const DiagramBlock = memo(function DiagramBlock({ node, isDark = false }:
         />
       )}
       {!streaming && sourceVisible && <pre className="dsh-diagram__source"><code>{code}</code></pre>}
-      {zoom && state.phase === 'done' && (
+      {/* 放大层必须 createPortal 到 body：消息卡片/玻璃质感容器可能带
+          backdrop-filter / transform / contain，任一都会把 position:fixed 的
+          遮罩钉进局部坐标系并被 overflow:hidden 裁掉——表现为「点放大没反应」。
+          全站弹层惯例同此（见 PerfBenchModal / ModelListEditor 内注释）。 */}
+      {zoom && state.phase === 'done' && createPortal(
         <div
           className="dsh-diagram__zoom"
           role="dialog"
@@ -334,7 +349,8 @@ export const DiagramBlock = memo(function DiagramBlock({ node, isDark = false }:
           onClick={() => { setZoom(false) }}
         >
           <div className="dsh-diagram__zoom-inner" dangerouslySetInnerHTML={{ __html: state.svg }} />
-        </div>
+        </div>,
+        document.body,
       )}
     </figure>
   )

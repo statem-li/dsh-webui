@@ -14,7 +14,7 @@ export const DEFAULT_TEAM_NAME = '小凉全能团'
 /** 角色提示词模板：统一开头（身份 + 协作纪律）+ 各自专责。 */
 function rolePrompt(name: string, tagline: string, duty: string[]): string {
   return [
-    `你是「${name}」，${tagline}。你是一个多智能体团队中的专职角色，由主脑 hanako 调度。`,
+    `你是「${name}」，${tagline}。你是一个多智能体团队中的专职角色，由主脑调度。`,
     '',
     '## 你的职责',
     ...duty.map(line => `- ${line}`),
@@ -30,14 +30,14 @@ function rolePrompt(name: string, tagline: string, duty: string[]): string {
 /** 出厂角色表。 */
 const SEED_ROLES: readonly Role[] = [
   {
-    id: 'hanako',
+    id: 'brain',
     name: '主脑',
-    en: 'hanako',
+    en: 'brain',
     tagline: '协调中枢·总管·通才·兜底',
     group: 'core',
     model: null,
     executor: 'llm',
-    prompt: rolePrompt('主脑 hanako', '团队的协调中枢与最终整合者', [
+    prompt: rolePrompt('主脑', '团队的协调中枢与最终整合者', [
       '整合各角色产出，消解相互矛盾之处（指出冲突点并给出取舍理由）。',
       '形成面向用户的最终交付物：结论、依据、可执行的下一步。',
       '补齐各角色都没覆盖到的空白（兜底），并明确标注哪些是你的补充。',
@@ -253,7 +253,7 @@ const SEED_CHAINS: readonly Chain[] = [
 const SEED_LINKS: readonly DirectLink[] = [
   { from: 'bi', to: 'jian', kind: 'bidirectional', label: '成稿归档' },
   { from: 'jian', to: 'liangsu', kind: 'bidirectional', label: '资料陪伴' },
-  { from: 'mentor', to: 'hanako', kind: 'directed', label: '评审结论' },
+  { from: 'mentor', to: 'brain', kind: 'directed', label: '评审结论' },
 ]
 
 /** 构造出厂默认团队（深拷贝，避免调用方改到常量）。 */
@@ -263,7 +263,7 @@ export function buildDefaultTeam(id = DEFAULT_TEAM_ID, name = DEFAULT_TEAM_NAME)
     schemaVersion: TEAM_SCHEMA_VERSION,
     id,
     name,
-    description: '出厂默认编制：信息与判断（察/驳/策）、落地执行（匠/造/笔/简）、守护支持（凉溯/导师/垣），主脑 hanako 统一整合。',
+    description: '出厂默认编制：信息与判断（察/驳/策）、落地执行（匠/造/笔/简）、守护支持（凉溯/导师/垣），主脑统一整合。',
     model: { provider: '', model: '' },
     roles: JSON.parse(JSON.stringify(SEED_ROLES)) as Role[],
     chains: JSON.parse(JSON.stringify(SEED_CHAINS)) as Chain[],
@@ -276,13 +276,13 @@ export function buildDefaultTeam(id = DEFAULT_TEAM_ID, name = DEFAULT_TEAM_NAME)
 /** 构造一个空白团队（只含主脑 + 一条空链）。 */
 export function buildEmptyTeam(id: string, name: string): Team {
   const now = new Date().toISOString()
-  const hanako = (JSON.parse(JSON.stringify(SEED_ROLES[0])) as Role)
+  const lead = (JSON.parse(JSON.stringify(SEED_ROLES[0])) as Role)
   return {
     schemaVersion: TEAM_SCHEMA_VERSION,
     id,
     name,
     model: { provider: '', model: '' },
-    roles: [hanako],
+    roles: [lead],
     chains: [{ id: 'main', name: '主链', steps: [], finalSynthesize: true }],
     directLinks: [],
     createdAt: now,

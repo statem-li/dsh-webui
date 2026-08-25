@@ -3,7 +3,6 @@
 /** Simplified Chinese dictionary (the key-set source of truth). */
 export const zh = {
   'gig.head': '生图结果 · {n} 张',
-  'gig.headScreenshot': '浏览器截图 · {n} 张',
   'gig.thumbTitle': '单击放大',
   'gig.hint': '点击空白处或按 Esc 关闭 · 右上角按钮可保存图片',
   'gig.broken': '图片链接已失效（生图链接仅 24 小时有效）',
@@ -21,7 +20,6 @@ export type GalleryKey = keyof typeof zh
 /** English dictionary, checked complete against the zh key set. */
 export const en = {
   'gig.head': 'Generated images · {n}',
-  'gig.headScreenshot': 'Browser screenshots · {n}',
   'gig.thumbTitle': 'Click to zoom',
   'gig.hint': 'Click background or press Esc to close · save via the top-right button',
   'gig.broken': 'Image link expired (generated links are valid for 24 hours)',

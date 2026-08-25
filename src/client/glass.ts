@@ -109,9 +109,14 @@ export function getGlassOpacity(): number {
  * -title / -reasoning-* 以及 dts__drawer-call）——它们含 modal/panel/drawer
  * 子串，被命中会各自套上一圈白色内高光描边与多余模糊层（标题行、计数胶囊、
  * 每条思考小卡都描一道白边）。弹窗本体 .dts__modal 仍被命中，模糊照旧。
+ * ⚠ 排除声明了 data-solid 的实底卡片（PopoverShell solid 模式，如记忆面板）：
+ * 实底卡片自带不透明表面，玻璃模糊/内高光/强制透明对它全是负资产——
+ * 不透明底上的 backdrop-filter 是纯 GPU 浪费，transparent 会把实底打穿，
+ * inset 白影会在卡片边框内再画一圈线。卡片本体与其后代一并排除。
  */
 const DTS_INNER = ':not([class*="dts__modal-"]):not([class*="dts__drawer-"])'
-const PANELS_SELECTOR = ':is([class*="panel"], [class*="modal"], [class*="drawer"]):not([class*="mask"]):not([class*="webui-"])' + DTS_INNER
+const SOLID_EXCLUDE = ':not([data-solid]):not([data-solid] *)'
+const PANELS_SELECTOR = ':is([class*="panel"], [class*="modal"], [class*="drawer"]):not([class*="mask"]):not([class*="webui-"])' + DTS_INNER + SOLID_EXCLUDE
 
 function buildGlassCss(): string {
   return `
@@ -201,7 +206,7 @@ html[${GLASS_ATTRIBUTE}] :is(
     [class*="auto-modal"]:not([class*="mask"]),
     [class*="dsh-browser-sites__editor"],
     [class*="dsh-modal-slide-in"],
-    [class*="dsh-modal-side-in"]) {
+    [class*="dsh-modal-side-in"]):not([data-solid]):not([data-solid] *) {
   background-color: transparent;
 }
 /* 降级：不支持 backdrop-filter 的浏览器 —— 以同色系补差叠层抬高表面
@@ -260,10 +265,6 @@ html[${GLASS_ATTRIBUTE}] body[data-ds-dark-theme] .dsh-done-pill {
 }
 html[${GLASS_ATTRIBUTE}] .dsh-done-pill-shell,
 html[${GLASS_ATTRIBUTE}] .dsh-done-pill [role="dialog"] {
-  backdrop-filter: var(--dsh-glass-blur);
-  -webkit-backdrop-filter: var(--dsh-glass-blur);
-}
-html[${GLASS_ATTRIBUTE}] [class*="dsh-peak-card"] {
   backdrop-filter: var(--dsh-glass-blur);
   -webkit-backdrop-filter: var(--dsh-glass-blur);
 }

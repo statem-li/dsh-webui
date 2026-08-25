@@ -7,9 +7,13 @@
  * 左列只放「标题 + 摘要 + 时间 + 重要度迷你条」，空间留给右侧详情做完整 Markdown
  * 渲染；置顶条目排列表最前（📌 标识），时间分组作为列表内小节标题。
  *
+ * 卡片为 PopoverShell solid 模式（不透明实底，玻璃质感豁免）；顶部两层：
+ * head（下划线 Tab + 统计）→ toolbar（搜索 / 作用域下拉 / 标签 / 动作），
+ * 筛选到具体项目时插入上下文条（项目名 + 别名 / 自动记忆开关 / 清空）。
+ *
  * 四个 Tab：
- *  - 全部：主从布局 + 搜索 / 标签 / 项目胶囊筛选 + 添加 / 多选删除 / 一键整理；
- *  - 变更：全宽列表（动作徽标 + 摘要 + 前后对比），可切「今天 / 全部」；
+ *  - 全部：主从布局 + 搜索 / 作用域 / 标签筛选 + 添加 / 多选删除 / 一键整理；
+ *  - 变更：作用域 + 今天/全部 段控，全宽列表（动作徽标 + 摘要 + 前后对比）；
  *  - 修订：整理前快照，可一键回滚；
  *  - 设置：引擎运行时配置（分组行卡片，见 SettingsTab）。
  *
@@ -959,6 +963,25 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
     ? projects.find(candidate => candidate.hash === scope.slice('project:'.length))
     : undefined
 
+  /* 作用域下拉（全部 / 全局 / 各项目）：「全部」工具栏与「变更」工具行共用，
+     受控同一个 scope 状态——两处切换保持同步。 */
+  const scopeSelectEl = (
+    <select
+      className={`${css.tagSelect} ${css.scopeSelect}`}
+      value={scope}
+      aria-label={t('scopeFilterLabel')}
+      onChange={(event) => { setScope(event.currentTarget.value as ScopeFilter) }}
+    >
+      <option value="all">{t('scopeAllOption', { n: summary?.entryCount ?? 0 })}</option>
+      <option value="global">{t('scopeGlobalOption', { n: summary?.globalCount ?? 0 })}</option>
+      {projects.map(project => (
+        <option key={project.hash} value={`project:${project.hash}`}>
+          {project.alias ?? project.path.split(/[\\/]/).filter(Boolean).at(-1) ?? project.hash} ({project.entryCount})
+        </option>
+      ))}
+    </select>
+  )
+
   return (
     <PopoverShell
       closing={closing}
@@ -968,6 +991,7 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
       onCardMouseLeave={onCardMouseLeave}
       width={1200}
       ariaLabel={t('panelTitle')}
+      solid
     >
       <PshHead title={t('panelTitle')} closeLabel={t('close')} onClose={onClose} />
       <PshBody className={css.modalBody}>
@@ -995,16 +1019,16 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
           </div>
           {summary !== null && (
             <div className={css.statBar}>
-              <span className={css.stat}>
+              <span className={`${css.stat} ${css.statLong}`}>
                 <span className={css.statValue}>{summary.entryCount}</span>
                 {t('statEntries')}
               </span>
-              <span className={css.statDot} aria-hidden="true" />
-              <span className={css.stat}>
+              <span className={`${css.statDot} ${css.statLong}`} aria-hidden="true" />
+              <span className={`${css.stat} ${css.statLong}`}>
                 <span className={css.statValue}>{summary.projectCount}</span>
                 {t('statProjects')}
               </span>
-              <span className={css.statDot} aria-hidden="true" />
+              <span className={`${css.statDot} ${css.statLong}`} aria-hidden="true" />
               {summary.pinnedCount !== undefined && (
                 <span className={css.stat} title={t('tabPinned')}>
                   <PinIcon size={11} filled />
@@ -1027,80 +1051,51 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
           )}
         </div>
 
-        {/* 项目切换 + 该项目的自动记忆开关 / 别名 / 清空（设置 Tab 不需要） */}
-        {tab !== 'settings' && (
+        {/* 项目上下文条：只在筛选到具体项目时出现（项目名 + 别名 / 自动记忆 / 清空）。
+            作用域切换本身已收进工具栏的下拉，这里不再铺一排项目胶囊。 */}
+        {tab !== 'settings' && selectedProject !== undefined && (
           <div className={css.topRow}>
-            <div className={css.projectChips} role="group" aria-label={t('scopeGlobal')}>
-              <button
-                type="button"
-                className={scope === 'all' ? `${css.projectChip} ${css.projectChipActive}` : css.projectChip}
-                onClick={() => { setScope('all') }}
-              >
-                <span>{t('tabAll')}</span>
-                {summary !== null && <span className={css.projectChipCount}>{summary.entryCount}</span>}
-              </button>
-              <button
-                type="button"
-                className={scope === 'global' ? `${css.projectChip} ${css.projectChipActive}` : css.projectChip}
-                onClick={() => { setScope('global') }}
-              >
-                <span>{t('scopeGlobal')}</span>
-                {summary?.globalCount !== undefined && (
-                  <span className={css.projectChipCount}>{summary.globalCount}</span>
-                )}
-              </button>
-              {projects.map(project => (
+            <span className={css.projectName} title={selectedProject.path}>
+              <FolderIcon size={12} />
+              {selectedProject.alias ?? selectedProject.path.split(/[\\/]/).filter(Boolean).at(-1) ?? selectedProject.hash}
+            </span>
+            <div className={css.projectTools}>
+              <input
+                className={css.inlineInput}
+                style={{ width: 160 }}
+                value={aliasDraft ?? selectedProject.alias ?? ''}
+                placeholder={t('aliasPlaceholder')}
+                aria-label={t('projectAlias')}
+                title={t('projectAlias')}
+                disabled={busy}
+                onChange={event => { setAliasDraft(event.currentTarget.value) }}
+                onBlur={() => { saveAlias(selectedProject.hash, selectedProject.alias) }}
+                onKeyDown={event => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault()
+                    saveAlias(selectedProject.hash, selectedProject.alias)
+                  }
+                  if (event.key === 'Escape') setAliasDraft(null)
+                }}
+              />
+              <span className={css.switchLine}>
                 <button
-                  key={project.hash}
                   type="button"
-                  title={project.path}
-                  className={scope === `project:${project.hash}` ? `${css.projectChip} ${css.projectChipActive}` : css.projectChip}
-                  onClick={() => { setScope(scope === `project:${project.hash}` ? 'all' : `project:${project.hash}`) }}
-                >
-                  <span>{project.alias ?? project.path.split(/[\\/]/).filter(Boolean).at(-1) ?? project.hash}</span>
-                  <span className={css.projectChipCount}>{project.entryCount}</span>
-                </button>
-              ))}
-            </div>
-            {selectedProject !== undefined && (
-              <div className={css.projectTools}>
-                <input
-                  className={css.inlineInput}
-                  style={{ width: 150 }}
-                  value={aliasDraft ?? selectedProject.alias ?? ''}
-                  placeholder={t('aliasPlaceholder')}
-                  aria-label={t('projectAlias')}
-                  title={t('projectAlias')}
+                  className={css.switch}
+                  role="switch"
+                  aria-checked={selectedProject.autoMemory}
+                  aria-label={t('autoMemory')}
                   disabled={busy}
-                  onChange={event => { setAliasDraft(event.currentTarget.value) }}
-                  onBlur={() => { saveAlias(selectedProject.hash, selectedProject.alias) }}
-                  onKeyDown={event => {
-                    if (event.key === 'Enter') {
-                      event.preventDefault()
-                      saveAlias(selectedProject.hash, selectedProject.alias)
-                    }
-                    if (event.key === 'Escape') setAliasDraft(null)
-                  }}
+                  onClick={() => { void run(() => apiRef.current.meta(selectedProject.hash, { autoMemory: !selectedProject.autoMemory })) }}
                 />
-                <span className={css.switchLine}>
-                  <button
-                    type="button"
-                    className={css.switch}
-                    role="switch"
-                    aria-checked={selectedProject.autoMemory}
-                    aria-label={t('autoMemory')}
-                    disabled={busy}
-                    onClick={() => { void run(() => apiRef.current.meta(selectedProject.hash, { autoMemory: !selectedProject.autoMemory })) }}
-                  />
-                  <span className={css.switchText}>{t('autoMemory')}</span>
-                </span>
-                <Tooltip label={t('clearProject')} side="top" delayMs={500}>
-                  <button type="button" className={`${css.iconAction} ${css.iconActionDanger}`} aria-label={t('clearProject')} disabled={busy} onClick={handleClearProject}>
-                    <IconTrashOutline16 size={14} />
-                  </button>
-                </Tooltip>
-              </div>
-            )}
+                <span className={css.switchText}>{t('autoMemory')}</span>
+              </span>
+              <Tooltip label={t('clearProject')} side="top" delayMs={500}>
+                <button type="button" className={`${css.iconAction} ${css.iconActionDanger}`} aria-label={t('clearProject')} disabled={busy} onClick={handleClearProject}>
+                  <IconTrashOutline16 size={14} />
+                </button>
+              </Tooltip>
+            </div>
           </div>
         )}
 
@@ -1108,7 +1103,8 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
         {tab === 'all' && (selecting ? (
           <div className={css.searchRow}>
             <span className={css.batchCount}>{t('selectedCount', { n: checkedIds.size })}</span>
-            <button type="button" className={css.chip} onClick={toggleAllChecked}>{allChecked ? t('collapse') : t('selectAll')}</button>
+            <span className={css.barSep} aria-hidden="true" />
+            <Button variant="outline" size="sm" onClick={toggleAllChecked}>{allChecked ? t('collapse') : t('selectAll')}</Button>
             <span className={css.spacer} />
             <Button variant="outline" size="sm" disabled={busy} onClick={exitSelecting}>{t('cancel')}</Button>
             <Button variant="primary" size="sm" disabled={busy || checkedIds.size === 0} onClick={deleteChecked}>
@@ -1133,6 +1129,7 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
                 </button>
               )}
             </span>
+            {scopeSelectEl}
             <select
               className={css.tagSelect}
               value={tag}
@@ -1144,6 +1141,8 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
                 <option key={item.tag} value={item.tag}>{item.tag} ({item.count})</option>
               ))}
             </select>
+            <span className={css.spacer} />
+            <span className={css.barSep} aria-hidden="true" />
             <Tooltip label={t('retry')} side="top" delayMs={500}>
               <button type="button" className={css.iconAction} aria-label={t('retry')} disabled={busy} onClick={() => { void refresh() }}>
                 <IconRefreshOutline14 />
@@ -1160,9 +1159,8 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
                 <IconSparkle16 size={14} />
               </button>
             </Tooltip>
-            <span className={css.spacer} />
             <Button
-              variant="ghost"
+              variant="primary"
               size="sm"
               icon={<IconPlusOutline16 size={14} />}
               aria-expanded={adding}
@@ -1178,26 +1176,34 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
             >
               {t('add')}
             </Button>
-            <Button variant="ghost" size="sm" disabled={filtered.length === 0} onClick={enterSelecting}>
+            <Button variant="outline" size="sm" disabled={filtered.length === 0} onClick={enterSelecting}>
               {t('multiSelect')}
             </Button>
           </div>
         ))}
 
-        {/* 变更 Tab 的时间范围切换 */}
+        {/* 变更 Tab：作用域 + 时间范围段控（今天 / 全部）+ 刷新 */}
         {tab === 'changes' && (
           <div className={css.searchRow}>
-            {(['today', 'all'] as const).map(range => (
-              <button
-                key={range}
-                type="button"
-                className={changeRange === range ? `${css.projectChip} ${css.projectChipActive}` : css.projectChip}
-                onClick={() => { setChangeRange(range) }}
-              >
-                <span>{range === 'today' ? t('changesToday') : t('changesAll')}</span>
-                {changeRange === range && <span className={css.projectChipCount}>{visibleChanges.length}</span>}
-              </button>
-            ))}
+            {scopeSelectEl}
+            <span className={css.barSep} aria-hidden="true" />
+            <div className={css.segment} role="group" aria-label={t('tabChanges')}>
+              {(['today', 'all'] as const).map(range => (
+                <button
+                  key={range}
+                  type="button"
+                  aria-pressed={changeRange === range}
+                  className={changeRange === range ? `${css.segmentItem} ${css.segmentItemActive}` : css.segmentItem}
+                  onClick={() => { setChangeRange(range) }}
+                >
+                  {range === 'today' ? t('changesToday') : t('changesAll')}
+                </button>
+              ))}
+            </div>
+            <span className={css.stat}>
+              <span className={css.statValue}>{visibleChanges.length}</span>
+              {t('statChanges')}
+            </span>
             <span className={css.spacer} />
             <Tooltip label={t('retry')} side="top" delayMs={500}>
               <button type="button" className={css.iconAction} aria-label={t('retry')} disabled={busy} onClick={() => { void loadChanges(changeRange) }}>

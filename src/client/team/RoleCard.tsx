@@ -1,37 +1,31 @@
 /**
- * team — 角色卡片（网格卡片形态，占满编制面板）。
+ * team — 角色卡片（纯展示，编辑走 RoleEditorModal 弹窗）。
  *
- * 卡片自上而下：
- *  - 头部：圆形头像（emoji/首字，分组色底）+ 名称/en + 分组标签 + 操作（编辑/关联/删除）
- *  - 定位语
- *  - 供应商-模型行（实际生效模型 + 来源徽标：角色覆盖/继承团队）
- *  - 装配折叠：插件工具 + 技能/技能包（默认收起显示摘要，展开看清单）
- *  - 关联标签行：已有关联的角色（点 × 删除）
- *  - 编辑折叠：名称/头像/定位语/分组/通道/模型/能力装配/提示词
+ * 同一个组件同时用于两处，靠 CSS 控制尺寸：
+ *  - 编制页的卡片网格（`.team-role-grid` 下自适应宽度）；
+ *  - 全屏画布的节点（`.team-board-node` 下固定宽高，保证连线锚点稳定）。
  *
- * 关联用**左键**完成：点「关联」进入连线模式（本卡高亮），再左键点目标卡片即建立关联。
+ * 卡片自上而下：头像 + 名称/分组 → 定位语 → 生效模型 → 装配摘要 → 关联 chips。
+ * 卡片本体点击 = 打开编辑弹窗；连线模式下点击 = 完成关联。
+ * 卡片内不再内联编辑面 —— 内联展开会把画布节点撑高、盖住邻居节点导致点不到控件。
  */
 
-import { useEffect, useState } from 'react'
-import { ModelSelect } from './ModelSelect.tsx'
-import { CapabilityEditor, capabilitySummary } from './CapabilityEditor.tsx'
+import { capabilitySummary } from './CapabilityEditor.tsx'
 import {
   DEFAULT_CAPABILITIES, GROUP_META, SOURCE_LABEL,
-  type CapabilityCatalog, type ExecutorPref, type ModelBinding, type ProviderView,
-  type Role, type RoleCapabilities, type RoleGroup,
+  type ModelBinding, type Role,
 } from './types.ts'
 import { bindingValue } from './util.ts'
 
-const GROUPS: RoleGroup[] = ['core', 'judge', 'act', 'guard']
-const EXECUTORS: Array<{ value: ExecutorPref, label: string, hint: string }> = [
-  { value: 'auto', label: '自动', hint: '对话内触发用 subagent（有工具），面板触发用 llm 直跑' },
-  { value: 'llm', label: 'llm 直跑', hint: '精确使用设定的模型，但无工具能力' },
-  { value: 'subagent', label: 'subagent', hint: '完整 agent（可读写文件、跑命令），模型继承会话' },
-]
+/** 执行通道显示名。 */
+const CHANNEL_LABEL: Readonly<Record<Role['executor'], string>> = {
+  auto: '自动',
+  llm: 'llm 直跑',
+  subagent: 'subagent',
+}
 
-/** 一条关联的视图（含对方角色名与来源索引）。 */
+/** 一条关联的视图（含对方角色名与 directLinks 原始索引）。 */
 export interface RoleLinkRef {
-  /** directLinks 里的原始索引（删除时回传）。 */
   index: number
   peerId: string
   peerName: string
@@ -41,52 +35,30 @@ export interface RoleLinkRef {
 export interface RoleCardProps {
   role: Role
   teamModel: ModelBinding
-  providers: readonly ProviderView[]
-  /** 可装配的工具/技能/技能包目录（null = 尚未加载）。 */
-  catalog: CapabilityCatalog | null
-  open: boolean
   /** 图上被选中（描边高亮）。 */
   selected?: boolean
   /** 连线模式：本卡是起点。 */
   linking?: boolean
-  /** 连线模式进行中（此时左键点卡片 = 完成关联）。 */
+  /** 连线模式进行中（此时点卡片 = 完成关联）。 */
   linkMode?: boolean
   /** 选中链时本角色的步序号（1-based；不在链中为 null）。 */
   chainIndex?: number | null
-  /** 本角色参与的所有关联。 */
   links: RoleLinkRef[]
-  onToggleOpen: () => void
-  onSave: (next: Role) => Promise<void> | void
+  /** 打开编辑弹窗。 */
+  onOpen: () => void
   onRemove: () => void
   onStartLink: () => void
   onFinishLink: () => void
   onRemoveLink: (index: number) => void
-  /** 头像区的拖拽手柄 pointerdown（关系图画板里拖动节点用；卡片视图可不传）。 */
+  /** 拖拽手柄 pointerdown（画布节点用；网格卡片不传）。 */
   onDragPointerDown?: (event: React.PointerEvent) => void
 }
 
-/** 角色卡片。 */
+/** 角色卡片（展示态）。 */
 export function RoleCard({
-  role, teamModel, providers, catalog, open, selected, linking, linkMode, chainIndex, links,
-  onToggleOpen, onSave, onRemove, onStartLink, onFinishLink, onRemoveLink, onDragPointerDown,
+  role, teamModel, selected, linking, linkMode, chainIndex, links,
+  onOpen, onRemove, onStartLink, onFinishLink, onRemoveLink, onDragPointerDown,
 }: RoleCardProps): JSX.Element {
-  const [draft, setDraft] = useState<Role>(role)
-  const [saving, setSaving] = useState(false)
-  /** 装配清单展示折叠态（只读）。 */
-  const [capsListOpen, setCapsListOpen] = useState(false)
-  /** 能力装配编辑折叠态。 */
-  const [capsEditOpen, setCapsEditOpen] = useState(role.capabilities !== undefined)
-
-  useEffect(() => {
-    if (!open) setDraft(role)
-  }, [role, open])
-
-  const patch = (fields: Partial<Role>): void => { setDraft(previous => ({ ...previous, ...fields })) }
-
-  const inheritLabel = teamModel.provider !== '' && teamModel.model !== ''
-    ? `继承团队默认（${teamModel.model}）`
-    : '继承团队默认（团队未设置 → 用全局默认）'
-
   /** 实际生效模型：角色覆盖 > 团队默认。 */
   const resolvedModel = role.model !== null ? role.model : teamModel
   const modelText = bindingValue(resolvedModel)
@@ -95,56 +67,37 @@ export function RoleCard({
   const avatar = role.avatar !== undefined && role.avatar !== '' ? role.avatar : role.name.slice(0, 1)
   const caps = role.capabilities ?? DEFAULT_CAPABILITIES
   const capsText = capabilitySummary(role.capabilities)
-
-  const applyCaps = (next: RoleCapabilities): void => {
-    const isDefault = next.toolMode === 'inherit' && next.skillMode === 'inherit'
-      && next.tools.length === 0 && next.skills.length === 0 && next.skillBundles.length === 0
-    if (isDefault) {
-      setDraft((previous) => {
-        const copy = { ...previous }
-        delete copy.capabilities
-        return copy
-      })
-      return
-    }
-    patch({ capabilities: next })
-  }
-
-  const save = async (): Promise<void> => {
-    setSaving(true)
-    try {
-      await onSave(draft)
-      onToggleOpen()
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const bundleName = (id: string): string => catalog?.bundles.find(b => b.id === id)?.name ?? id
+  const capsPlain = capsText === '' && caps.toolMode === 'inherit' && caps.skillMode === 'inherit'
 
   const handleCardClick = (): void => {
-    // 连线模式中：左键点卡片 = 完成关联（本卡是起点时忽略）。
-    if (linkMode && !linking) { onFinishLink(); return }
-    // 普通：选中 + 展开编辑。
-    onToggleOpen()
+    // 连线模式中：点卡片 = 完成关联（本卡是起点时点击视为取消）。
+    if (linkMode === true) { onFinishLink(); return }
+    onOpen()
   }
 
   return (
     <div
-      className="team-role-card team-role-card-grid"
-      data-selected={selected || undefined}
-      data-linking={linking || undefined}
-      data-link-mode={linkMode || undefined}
+      className="team-role-card-grid"
+      data-selected={selected === true || undefined}
+      data-linking={linking === true || undefined}
+      data-link-mode={linkMode === true || undefined}
+      data-group={role.group}
+      onClick={handleCardClick}
+      role="button"
+      tabIndex={0}
+      aria-label={`角色 ${role.name}`}
+      onKeyDown={(event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return
+        event.preventDefault()
+        handleCardClick()
+      }}
     >
-      {/* ── 头部 ── */}
-      <div className="team-grid-head" onClick={handleCardClick} role="button">
+      {/* ── 头部（画布里整块是拖拽手柄；操作按钮区自行 stopPropagation）── */}
+      <div className="team-grid-head" onPointerDown={onDragPointerDown}>
         <span
           className="team-avatar"
           style={{ background: GROUP_META[role.group].color }}
-          data-drag-handle={onDragPointerDown !== undefined || undefined}
           aria-hidden="true"
-          onPointerDown={onDragPointerDown}
-          onClick={event => event.stopPropagation()}
         >
           {avatar}
         </span>
@@ -156,24 +109,39 @@ export function RoleCard({
             ) : null}
           </span>
           <span className="team-role-sub">
-            <span className="team-tag">{GROUP_META[role.group].label}</span>
-            <span style={{ opacity: 0.6 }}>{role.en}</span>
+            <span className="team-tag" style={{ borderColor: GROUP_META[role.group].color, color: GROUP_META[role.group].color }}>
+              {GROUP_META[role.group].label}
+            </span>
+            <span className="team-grid-en">{role.en}</span>
           </span>
         </span>
-        <span className="team-grid-actions" onClick={event => event.stopPropagation()}>
+        <span className="team-grid-actions" onPointerDown={event => event.stopPropagation()} onClick={event => event.stopPropagation()}>
           <button
             type="button"
-            className={linking ? 'team-icon-btn team-icon-btn-on' : 'team-icon-btn'}
-            title="关联：进入连线模式，再点另一张卡片"
-            aria-label="关联"
+            className={linking === true ? 'team-icon-btn team-icon-btn-on' : 'team-icon-btn'}
+            title="关联：点这里再点另一张卡片"
+            aria-label="建立关联"
             onClick={onStartLink}
-          >🔗</button>
-          <button type="button" className="team-icon-btn" title="编辑" aria-label="编辑" onClick={onToggleOpen}>✎</button>
-          <button type="button" className="team-icon-btn" title="删除" aria-label="删除" onClick={onRemove}>🗑</button>
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M6.5 9.5l3-3M6 4.5l.8-.8a2.4 2.4 0 013.4 3.4l-.8.8M10 11.5l-.8.8a2.4 2.4 0 01-3.4-3.4l.8-.8" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+            </svg>
+          </button>
+          <button type="button" className="team-icon-btn" title="编辑角色" aria-label="编辑角色" onClick={onOpen}>
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M10.6 2.9l2.5 2.5M3 13h2.6l7-7a1.4 1.4 0 000-2L11.9 3a1.4 1.4 0 00-2 0l-7 7V13z" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+          <button type="button" className="team-icon-btn" title="删除角色" aria-label="删除角色" onClick={onRemove}>
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M3.5 5h9M6.5 5V3.6h3V5M5 5l.5 7.4h5L11 5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
         </span>
       </div>
 
-      {role.tagline !== '' ? <div className="team-grid-tagline">{role.tagline}</div> : null}
+      {/* ── 定位语（固定两行高度，保证卡片等高）── */}
+      <div className="team-grid-tagline">{role.tagline !== '' ? role.tagline : '—'}</div>
 
       {/* ── 模型行 ── */}
       <div className="team-grid-model">
@@ -184,52 +152,21 @@ export function RoleCard({
             <span className="team-card-src" data-src={modelSource}>{SOURCE_LABEL[modelSource]}</span>
           </>
         ) : (
-          <span className="team-card-inherit">未设置（继承团队/全局默认）</span>
+          <span className="team-card-inherit">未设置（继承全局）</span>
         )}
-        <span className="team-grid-model-channel">{EXECUTORS.find(o => o.value === role.executor)?.label}</span>
+        <span className="team-grid-model-channel">{CHANNEL_LABEL[role.executor]}</span>
       </div>
 
-      {/* ── 装配折叠（只读清单）── */}
-      {capsText !== '' || caps.toolMode !== 'inherit' || caps.skillMode !== 'inherit' ? (
-        <div className="team-grid-caps">
-          <button type="button" className="team-grid-caps-toggle" onClick={() => setCapsListOpen(v => !v)} aria-expanded={capsListOpen}>
-            <span>{capsText !== '' ? capsText : '装配'}</span>
-            <span className="team-chevron" data-open={capsListOpen}>
-              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                <path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            </span>
-          </button>
-          {capsListOpen ? (
-            <div className="team-grid-caps-body">
-              <div className="team-grid-caps-row">
-                <span className="team-grid-caps-key">插件工具</span>
-                <span className="team-grid-caps-val">
-                  {caps.toolMode === 'inherit' ? '继承全部'
-                    : caps.toolMode === 'allow' ? `白名单：${caps.tools.length ? caps.tools.join('、') : '（空）'}`
-                      : `禁用：${caps.tools.length ? caps.tools.join('、') : '（空）'}`}
-                </span>
-              </div>
-              <div className="team-grid-caps-row">
-                <span className="team-grid-caps-key">技能</span>
-                <span className="team-grid-caps-val">
-                  {caps.skillMode === 'inherit' ? '不限制'
-                    : caps.skillMode === 'none' ? '不使用技能'
-                      : `${caps.skills.length ? caps.skills.join('、') : '（无）'}${caps.skillBundles.length ? ` + 包[${caps.skillBundles.map(bundleName).join('、')}]` : ''}`}
-                </span>
-              </div>
-            </div>
-          ) : null}
-        </div>
-      ) : (
-        <div className="team-grid-caps team-grid-caps-plain">继承会话全部工具与技能</div>
-      )}
+      {/* ── 装配摘要（单行；详情在编辑弹窗里）── */}
+      <div className="team-grid-caps-plain" title={capsPlain ? '继承会话全部工具与技能' : capsText}>
+        {capsPlain ? '继承会话全部工具与技能' : (capsText !== '' ? capsText : '已自定义装配')}
+      </div>
 
-      {/* ── 关联标签行 ── */}
+      {/* ── 关联 chips ── */}
       {links.length > 0 ? (
-        <div className="team-grid-links">
+        <div className="team-grid-links" onPointerDown={event => event.stopPropagation()} onClick={event => event.stopPropagation()}>
           {links.map(link => (
-            <span className="team-chip team-chip-link" key={`${link.index}`} title="点击删除关联">
+            <span className="team-chip team-chip-link" key={link.index} title={`与「${link.peerName}」的关联`}>
               {link.kind === 'directed' ? '→' : '↔'} {link.peerName}
               <button
                 type="button"
@@ -239,107 +176,7 @@ export function RoleCard({
             </span>
           ))}
         </div>
-      ) : null}
-
-      {/* ── 编辑折叠 ── */}
-      {open ? (
-        <div className="team-role-editor" onClick={event => event.stopPropagation()}>
-          <div className="team-inline">
-            <label className="team-field" style={{ flex: '0 0 96px' }}>
-              <span>头像</span>
-              <input
-                className="team-input"
-                value={draft.avatar ?? ''}
-                placeholder={role.name.slice(0, 1)}
-                maxLength={4}
-                onChange={e => patch({ avatar: e.target.value })}
-              />
-            </label>
-            <label className="team-field">
-              <span>名称</span>
-              <input className="team-input" value={draft.name} onChange={e => patch({ name: e.target.value })} />
-            </label>
-            <label className="team-field">
-              <span>英文名</span>
-              <input className="team-input" value={draft.en} onChange={e => patch({ en: e.target.value })} />
-            </label>
-          </div>
-
-          <label className="team-field">
-            <span>定位语</span>
-            <input
-              className="team-input"
-              value={draft.tagline}
-              placeholder="如：深度调研·多源取证"
-              onChange={e => patch({ tagline: e.target.value })}
-            />
-          </label>
-
-          <div className="team-inline">
-            <label className="team-field">
-              <span>分组</span>
-              <select className="team-select team-select-grow" value={draft.group} onChange={e => patch({ group: e.target.value as RoleGroup })}>
-                {GROUPS.map(group => (
-                  <option key={group} value={group}>{GROUP_META[group].label}</option>
-                ))}
-              </select>
-            </label>
-            <label className="team-field">
-              <span>执行通道</span>
-              <select className="team-select team-select-grow" value={draft.executor} onChange={e => patch({ executor: e.target.value as ExecutorPref })}>
-                {EXECUTORS.map(option => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
-              </select>
-            </label>
-          </div>
-          <div className="team-pop-hint">{EXECUTORS.find(o => o.value === draft.executor)?.hint}</div>
-
-          <label className="team-field">
-            <span>模型</span>
-            <ModelSelect
-              value={draft.model}
-              providers={providers}
-              inheritLabel={inheritLabel}
-              grow
-              ariaLabel={`${draft.name} 的模型`}
-              onChange={next => patch({ model: next })}
-            />
-          </label>
-
-          <div className="team-caps-toggle">
-            <button type="button" className="team-btn" onClick={() => setCapsEditOpen(v => !v)} aria-expanded={capsEditOpen}>
-              {capsEditOpen ? '收起能力装配' : '能力装配（插件工具 + 技能）'}
-            </button>
-          </div>
-          {capsEditOpen ? (
-            <CapabilityEditor
-              value={draft.capabilities}
-              catalog={catalog}
-              executor={draft.executor}
-              onChange={applyCaps}
-            />
-          ) : null}
-
-          <label className="team-field">
-            <span>角色提示词</span>
-            <textarea
-              className="team-textarea"
-              style={{ minHeight: 120 }}
-              value={draft.prompt}
-              placeholder="定义这个角色的身份、职责与输出要求"
-              onChange={e => patch({ prompt: e.target.value })}
-            />
-          </label>
-
-          <div className="team-actions">
-            <button type="button" className="team-btn team-btn-primary" disabled={saving} onClick={() => void save()}>
-              {saving ? '保存中…' : '保存'}
-            </button>
-            <button type="button" className="team-btn" disabled={saving} onClick={() => { setDraft(role); onToggleOpen() }}>取消</button>
-          </div>
-        </div>
-      ) : null}
+      ) : <div className="team-grid-links team-grid-links-empty">无关联</div>}
     </div>
   )
 }

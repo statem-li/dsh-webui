@@ -40,7 +40,11 @@ export function FileExplorerEntry({ t, useSessions }: FileExplorerEntryProps): J
   useEffect(() => {
     const onToggle = (): void => { setOpen(value => !value) }
     const onPreview = (event: Event): void => {
-      const path = (event as CustomEvent).detail
+      // preview-bus 派发对象 detail（{ path }）；兼容裸字符串 detail 以防
+      // 旧调用方约定（与下方 onOpenPath 同一套宽容解析）。此前只认字符串，
+      // 导致 requestFilePreview 的应用内预览永远无法弹出。
+      const detail = (event as CustomEvent).detail
+      const path = typeof detail === 'string' ? detail : (detail as { path?: unknown } | null)?.path
       if (typeof path === 'string' && path !== '') setPreviewPath(path)
     }
     const onOpenPath = (event: Event): void => {

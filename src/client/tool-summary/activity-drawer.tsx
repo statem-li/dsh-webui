@@ -8,7 +8,7 @@
  * the bus is created lazily by whichever plugin touches it first.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { IconApiOutline14, IconThinkOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ChatNode } from '@deepseek-ai/dsh-client-ui-conversation/client'
@@ -211,10 +211,23 @@ function DrawerPanel({ turn, data, store, openFile, inspectCall }: {
     return earliest !== undefined ? Math.max(0, now - earliest) : undefined
   }, [toolNodes, now])
   const scrollRef = useRef<HTMLDivElement | null>(null)
+  // 打开的卡片不强制压着读者走：仅在读者钉在底部时跟随新内容滚到底；
+  // 向上翻阅即停止自动滚动（想看哪里自己滚），滚回底部（≤24px）自动恢复。
+  // 阈值与 ChatView 的 FOLLOW_THRESHOLD 一致；滚动事件记录「是否钉底」，
+  // 纯几何判断无法区分「内容自己长高」和「读者上翻」，必须有这面旗子。
+  const pinnedRef = useRef(true)
+  const onScrollPin = useCallback((event: React.UIEvent<HTMLDivElement>): void => {
+    const el = event.currentTarget
+    pinnedRef.current = el.scrollHeight - el.scrollTop - el.clientHeight <= 24
+  }, [])
   useEffect(() => {
     if (!anyRunning) return
     const el = scrollRef.current
-    if (el !== null) el.scrollTop = el.scrollHeight
+    if (el === null) return
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight
+    // 双保险：滚动事件尚未派发的一帧内，几何距离也能拦住一次误跟随。
+    if (!pinnedRef.current && distance > 24) return
+    el.scrollTop = el.scrollHeight
   }, [anyRunning, now, reasoning, toolNodes])
 
   // Jump navigation over reasoning items (querySelector over refs: refs get
@@ -242,7 +255,7 @@ function DrawerPanel({ turn, data, store, openFile, inspectCall }: {
           </span>
           <button type="button" className="dts__modal-close" onClick={close} aria-label="关闭">✕</button>
         </header>
-        <div className="dts__modal-scroll" ref={scrollRef}>
+        <div className="dts__modal-scroll" ref={scrollRef} onScroll={onScrollPin}>
           {mode !== 'tools' && reasoning.length > 0 && (
             <div className="dts__modal-panel">
               <header className="dts__modal-panel-head">
@@ -304,6 +317,7 @@ function DrawerApp() {
   const handlers = store.handlers()
   return (
     <DrawerPanel
+      key={openTurn}
       turn={openTurn}
       data={data}
       store={store}

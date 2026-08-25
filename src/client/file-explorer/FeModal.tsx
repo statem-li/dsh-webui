@@ -100,7 +100,8 @@ export function FeModal({ open, onClose, title, closeLabel = 'Close', width, foo
 
   // ⚠ 类名避开 "modal"/"panel"/"drawer" 子串：玻璃主题的浮层总选择器按子串
   // 匹配会给每个命中元素加 backdrop-filter+高光投影，root/mask/header 等
-  // 结构层被误伤会叠出「多层卡片」；只有 dialog 本体保留 modal 词以获得毛玻璃。
+  // 结构层被误伤会叠出「多层卡片」；dialog 本体虽保留 modal 词，但同时声明
+  // data-solid 实底豁免——文件浏览器全程禁用玻璃/模糊（见 styles.ts 末段）。
   return createPortal(
     <div className={closing ? 'fe-pop-root fe-pop-closing' : 'fe-pop-root'}>
       <div className="fe-pop-mask" aria-hidden="true" onClick={onClose} />
@@ -109,6 +110,7 @@ export function FeModal({ open, onClose, title, closeLabel = 'Close', width, foo
         role="dialog"
         aria-modal="true"
         aria-label={title}
+        data-solid=""
         data-maximized={isMax || undefined}
         style={sizeStyle}
       >

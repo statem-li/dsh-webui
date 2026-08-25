@@ -137,6 +137,10 @@ export const zh = {
   searchEmpty: '没有匹配的记忆',
   searchEmptyHint: '换个关键词，或清空标签 / 项目筛选',
   clearFilters: '清空筛选',
+  scopeFilterLabel: '范围筛选',
+  scopeAllOption: '全部范围（{n}）',
+  scopeGlobalOption: '全局（{n}）',
+  statChanges: '条变更',
 } satisfies Record<string, string>
 
 /** dsh-memory locale key union. */
@@ -281,6 +285,10 @@ export const en = {
   searchEmpty: 'No matching memories',
   searchEmptyHint: 'Try another keyword, or clear the tag / project filter',
   clearFilters: 'Clear filters',
+  scopeFilterLabel: 'Scope filter',
+  scopeAllOption: 'All scopes ({n})',
+  scopeGlobalOption: 'Global ({n})',
+  statChanges: 'changes',
 } satisfies Record<MemoryLocaleKey, string>
 
 /** 轻量翻译函数类型（面板/入口组件共用）。 */

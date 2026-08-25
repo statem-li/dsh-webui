@@ -4,9 +4,13 @@
  * 输入一条或多条消息（user / assistant），输出可直接喂给无头浏览器的完整
  * HTML 文档：顶部导轨 + 徽标页头 + 标题 + 正文（assistant 走 Markdown 管线、
  * user 走纯文本）+ 页脚署名。多条消息按段落堆叠，段间有角色标签与细线。
+ *
+ * 正文里的 mermaid 围栏会真的画成图：命中图表围栏时在文档末尾追加
+ * `<script src="mermaid.min.js">` + 引导脚本（引擎文件由 renderer.ts 投放到同
+ * 目录），并把「渲染完成」暴露成 window.__shotMermaid 供渲染器等待。
  */
-import { escapeHtml, renderMarkdown } from './markdown.js'
-import { buildCardCss, type ShotTheme } from './theme.js'
+import { escapeHtml, hasDiagramFence, renderMarkdown } from './markdown.js'
+import { buildCardCss, mermaidConfigJson, type ShotTheme } from './theme.js'
 
 /** 单条待渲染消息。 */
 export interface ShotMessage {
@@ -88,6 +92,49 @@ function clamp(text: string): string {
   return text.length <= MAX_TEXT_LEN ? text : `${text.slice(0, MAX_TEXT_LEN)}\n\n…（内容过长已截断）`
 }
 
+/**
+ * mermaid 引擎文件名（renderer.ts 把解压后的引擎投放到临时页面同目录，
+ * 页面用相对路径加载 —— file:// 页面无网络，必须同目录）。
+ */
+export const MERMAID_FILE = 'mermaid.min.js'
+
+/**
+ * 页面里「图表是否已渲染完」的全局钩子名。renderer.ts 用它决定要不要等图，
+ * 也用它判断本次渲染需不需要投放引擎文件。
+ */
+export const MERMAID_HOOK = '__shotMermaid'
+
+/**
+ * 图表引导脚本：加载引擎 → 逐个围栏渲染 → 失败的围栏回退成源码文本。
+ *
+ * 逐个 run 而非一次性 run 全部：mermaid 的 runThrowsErrors 在循环末尾抛出第一个
+ * 错误，但已 setAttribute('data-processed') 的节点不会重试 —— 一个语法错误会让
+ * 后面的好图一起变成裸源码。逐个跑则互不影响。
+ */
+function mermaidBoot(theme: ShotTheme): string {
+  return `<script src="${MERMAID_FILE}"></script>
+<script>
+window.${MERMAID_HOOK} = (async () => {
+  var nodes = Array.prototype.slice.call(document.querySelectorAll('pre.mermaid'));
+  if (nodes.length === 0) return 'empty';
+  if (!window.mermaid || typeof window.mermaid.run !== 'function') return 'engine-missing';
+  try { window.mermaid.initialize(${mermaidConfigJson(theme)}); } catch (error) { return 'init-failed'; }
+  for (var i = 0; i < nodes.length; i += 1) {
+    var node = nodes[i];
+    // mermaidAPI.render 会先清空容器再解析（r.innerHTML=""），语法错误抛出时
+    // 源码已经没了 —— 必须先存原文，失败时还原成源码块，绝不吞内容。
+    var source = node.textContent;
+    try { await window.mermaid.run({ nodes: [node], suppressErrors: true }); } catch (error) { /* 单张失败不影响其它 */ }
+    if (node.querySelector('svg') === null) {
+      node.removeAttribute('data-processed');
+      node.textContent = source;
+    }
+  }
+  return 'done';
+})();
+</script>`
+}
+
 /** 渲染单条消息的正文 HTML（assistant 走 Markdown，user 保留换行的纯文本）。 */
 async function bodyOf(message: ShotMessage, theme: ShotTheme): Promise<string> {
   const source = clamp(message.text)
@@ -97,12 +144,20 @@ async function bodyOf(message: ShotMessage, theme: ShotTheme): Promise<string> {
   return `<div class="content">${await renderMarkdown(source, theme)}</div>`
 }
 
+/** 卡片组装结果。 */
+export interface ShotCardOutput {
+  /** 可直接写入临时 file:// 页面的完整 HTML。 */
+  html: string
+  /** 正文含图表围栏：渲染器需要投放 mermaid 引擎并等待图画完。 */
+  needsMermaid: boolean
+}
+
 /**
  * 组装完整截图 HTML 文档。
  * @param input - 消息、主题、尺寸与文案。
- * @returns 可直接写入临时 file:// 页面的 HTML 字符串。
+ * @returns HTML 文本与「是否需要 mermaid 引擎」标记。
  */
-export async function buildCardHtml(input: ShotCardInput): Promise<string> {
+export async function buildCardHtml(input: ShotCardInput): Promise<ShotCardOutput> {
   const { messages, theme, width, minHeight } = input
   const first = messages[0]
   if (first === undefined) throw new Error('没有可渲染的消息')
@@ -122,6 +177,8 @@ export async function buildCardHtml(input: ShotCardInput): Promise<string> {
       : body)
   }
   const note = `${multi ? `${messages.length} 条消息 · ` : ''}${chars.toLocaleString('zh-CN')} 字`
+  // 只有 assistant 正文走 Markdown 管线，user 是纯文本（围栏不会成图）。
+  const needsMermaid = messages.some(m => m.role === 'assistant' && hasDiagramFence(clamp(m.text)))
   // 多条消息时段与段之间加细线与角色标签（单条不需要额外分隔）。
   const segCss = multi
     ? `.seg{border-top:1px solid var(--border2)}
@@ -129,7 +186,7 @@ export async function buildCardHtml(input: ShotCardInput): Promise<string> {
 .seg-role{padding:calc(var(--pad) * .5) var(--pad) 0;font-size:12px;font-weight:600;letter-spacing:.06em;color:var(--fg3)}
 .seg .content{padding-top:calc(var(--pad) * .3)}`
     : ''
-  return `<!DOCTYPE html>
+  const html = `<!DOCTYPE html>
 <html lang="zh-CN" data-theme="${theme}"><head><meta charset="utf-8"><meta name="viewport" content="width=${width}">
 <style>${buildCardCss(theme, width, minHeight)}
 ${segCss}</style></head>
@@ -148,5 +205,6 @@ ${sections.join('\n')}
   <span class="sign">DeepSeek Harness</span>
   <span class="right">${note}</span>
 </footer>
-</div></body></html>`
+</div>${needsMermaid ? `\n${mermaidBoot(theme)}` : ''}</body></html>`
+  return { html, needsMermaid }
 }

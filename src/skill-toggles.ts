@@ -1,19 +1,42 @@
 /**
- * 技能开关(skill-toggles):挂 /api/skill-toggles 路由,读写技能 SKILL.md 的
- * frontmatter 开关字段,实现「每个技能禁用/开启 + 每个技能包一键开关」。
+ * 技能开关(skill-toggles):挂 /api/skill-toggles 路由,提供两级开关——
  *
- * 开关真正生效的机制:DSH 内核 skill-filesystem 解析每个技能目录 SKILL.md 的
- * frontmatter —— `user-invocable: false` 使技能对用户侧(/ 菜单、/name 手势)
- * 不可调用,`disable-model-invocation: true` 使技能对模型侧(模型目录、skill
- * 工具)不可调用。修改文件后内核 watcher 会自动重扫,无需重启。
+ *  1. **全局层**:读写技能 SKILL.md 的 frontmatter 开关字段
+ *     (`user-invocable: false` + `disable-model-invocation: true`),
+ *     对所有 Agent 预设生效。DSH 内核 skill-filesystem 解析这两个字段,
+ *     改完文件后内核 watcher 自动重扫,无需重启。
  *
- * 本模块只读写技能文件本身,不动 DSH 源码;数据面与技能管理面板
+ *  2. **Agent 预设层**:同一个技能可以「对 standard 开、对 code 关」。
+ *     账本存 `<agentsHome>/skills/.preset-skills.json`
+ *     (`{ version: 1, presets: { <presetId>: { <skillName>: false } } }`;
+ *     缺省 = 继承全局层,只有显式 false 才在该预设下关闭)。
+ *
+ * 预设层的生效机制(零 DSH 源码改动、运行时零 I/O):
+ *   `ctx.skills` 是**分层**注册表——global 层 + scope 链(preset 常驻层 →
+ *   agent 层),读取时按层合并,**最近层的同名条目直接覆盖更远层**。而每个
+ *   agent 自身就是它那一层的 scope key,`agent.ctx.skills.registerProvider()`
+ *   正好注册进该 agent 的层(注册表按调用方 ctx 的 scope 归层)。
+ *   于是本模块在 `agent/created` 时给每个 agent 装一个「闸门 provider」:
+ *   它只为「该 agent 所属预设里被关掉的技能名」返回同名候选,且候选的
+ *   invocation 两个开关都是 false。合并后这些名字在该 agent 眼里就是
+ *   不可调用的 —— 模型目录(catalog)不列、`skill` 工具拒绝加载、
+ *   `/name` 手势也不认。其它 agent / 其它预设完全不受影响。
+ *
+ *   闸门 provider 的 list() 只读内存里的账本(无文件 I/O),注册表本身还有
+ *   按 (cwd, scope 链, revision) 的缓存,所以每回合额外开销可忽略。
+ *   写账本后调用各闸门的 invalidate() 使缓存失效,下一步即生效。
+ *
+ * 本模块只读写技能文件与自己的账本,不动 DSH 源码;数据面与技能管理面板
  * (/api/skill-manager)同一批技能目录(managedRoot + dshRoot)。
  *
  * Routes (all under /api/skill-toggles):
- *   PUT  /skills/:name      { enabled } → 开/关单个技能
- *   PUT  /bundles/:id       { enabled } → 开/关一个技能包(内全部技能)
- *   GET  /status            → { skills: {name: enabled}, bundles: {id: enabled} }
+ *   GET  /status                          → { skills: {name: enabled}, bundles: {id: enabled} }
+ *   PUT  /skills/:name        { enabled } → 全局开/关单个技能
+ *   PUT  /bundles/:id         { enabled } → 全局开/关一个技能包(内全部技能)
+ *   GET  /presets                         → { presets: [...roster], overrides, skills, bundles }
+ *   PUT  /presets/:preset/skills/:name    { enabled } → 该预设下开/关单个技能
+ *   PUT  /presets/:preset/bundles/:id     { enabled } → 该预设下开/关一个技能包
+ *   POST /presets/:preset/reset           → 清空该预设的全部覆盖(回落全局)
  */
 
 import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises'
@@ -42,10 +65,19 @@ declare module '@deepseek-ai/cordis' {
 /** Services required before this plugin activates. */
 export const inject = ['webServer']
 
+/** 运行时才存在的服务(skills / agents / agentPresets)在类型上放宽为 any。 */
+type PluginContext = any
+
 const SKILL_FILE = 'SKILL.md'
 const BUNDLES_FILE = '.bundles.json'
+/** 预设级开关账本(与 .bundles.json 同目录)。 */
+const PRESET_FILE = '.preset-skills.json'
 const ROUTE_PREFIX = '/api/skill-toggles'
 const MAX_BODY_BYTES = 256 * 1024
+/** 闸门 provider 在每个 agent 层里的名字(同层唯一即可)。 */
+const MASK_PROVIDER = 'webui-preset-mask'
+/** 账本里 preset 条目上限(preset 名单本身十几条量级)。 */
+const MAX_PRESET_ENTRIES = 50
 
 /** The writable user-agents skill root (honors $DSH_AGENTS_HOME). */
 function managedRoot(): string {
@@ -86,6 +118,125 @@ async function readBundles(root: string): Promise<BundlesFile> {
     // Missing or unreadable ledger: treat as empty.
   }
   return { version: 1, bundles: [] }
+}
+
+/** ── 预设级开关账本 ───────────────────────────────────────────────────────── */
+
+/**
+ * 账本形状:`{ version: 1, presets: { <presetId>: { <skillName>: boolean } } }`。
+ * 只有显式 `false` 才在该预设下关闭;`true` 或缺省都表示「继承全局层」。
+ */
+export interface PresetSkillsFile {
+  version: 1
+  presets: Record<string, Record<string, boolean>>
+}
+
+/** preset id 形状(与 dsh-agent-presets 的目录名规则一致)。 */
+function isPresetId(value: string): boolean {
+  return /^[a-z0-9][a-z0-9-]*$/.test(value)
+}
+
+/** 技能名形状(与内核 SKILL_NAME 一致)。 */
+function isSkillName(value: string): boolean {
+  return /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value)
+}
+
+/** 账本路径(与 .bundles.json 同目录:managedRoot)。 */
+function presetLedgerPath(): string {
+  return join(managedRoot(), PRESET_FILE)
+}
+
+/** 归一化任意输入为合法账本(脏字段直接丢弃)。 */
+function normalizeLedger(input: unknown): PresetSkillsFile {
+  const presets: Record<string, Record<string, boolean>> = {}
+  const raw = (input !== null && typeof input === 'object'
+    ? (input as Record<string, unknown>).presets
+    : undefined)
+  if (raw !== null && typeof raw === 'object') {
+    for (const [presetId, table] of Object.entries(raw as Record<string, unknown>)) {
+      if (!isPresetId(presetId)) continue
+      if (table === null || typeof table !== 'object') continue
+      if (Object.keys(presets).length >= MAX_PRESET_ENTRIES) break
+      const entries: Record<string, boolean> = {}
+      for (const [skillName, state] of Object.entries(table as Record<string, unknown>)) {
+        if (!isSkillName(skillName) || typeof state !== 'boolean') continue
+        entries[skillName] = state
+      }
+      presets[presetId] = entries
+    }
+  }
+  return { version: 1, presets }
+}
+
+/**
+ * 进程内账本单例:HTTP 写入后立即刷新,闸门 provider 的 list() 只读它,
+ * 因此每回合的额外开销是一次 Map 命中,零文件 I/O。
+ */
+let ledgerCache: PresetSkillsFile | undefined
+/** 账本变更后需要失效的技能注册表缓存(每个 agent 一个闸门的 invalidate)。 */
+const maskInvalidators = new Set<() => void>()
+
+/** 读账本(首次读盘,之后走内存;文件缺失/损坏视为空账本)。 */
+async function readLedger(): Promise<PresetSkillsFile> {
+  if (ledgerCache !== undefined) return ledgerCache
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(await readFile(presetLedgerPath(), 'utf8')) as unknown
+  } catch {
+    parsed = undefined
+  }
+  ledgerCache = normalizeLedger(parsed)
+  return ledgerCache
+}
+
+/** 原子写账本 + 刷新内存副本 + 让所有闸门缓存失效。 */
+async function writeLedger(next: PresetSkillsFile): Promise<void> {
+  const target = presetLedgerPath()
+  const temp = `${target}.tmp`
+  await mkdir(managedRoot(), { recursive: true })
+  await writeFile(temp, `${JSON.stringify(next, null, 2)}\n`, 'utf8')
+  await rename(temp, target)
+  ledgerCache = next
+  for (const invalidate of maskInvalidators) {
+    try { invalidate() } catch { /* 单个 agent 的失效失败不影响其它 */ }
+  }
+}
+
+/** 该预设下被显式关闭的技能名集合(空集 = 完全继承全局层)。 */
+function disabledNames(ledger: PresetSkillsFile, presetId: string): Set<string> {
+  const table = ledger.presets[presetId]
+  if (table === undefined) return new Set()
+  const disabled = new Set<string>()
+  for (const [skillName, state] of Object.entries(table)) {
+    if (state === false) disabled.add(skillName)
+  }
+  return disabled
+}
+
+/** 写入一批「预设 → 技能 → 开关」;enabled=true 时删除覆盖(回落全局)。 */
+async function setPresetSkills(
+  presetId: string,
+  names: readonly string[],
+  enabled: boolean,
+): Promise<number> {
+  const current = await readLedger()
+  const table = { ...(current.presets[presetId] ?? {}) }
+  let changed = 0
+  for (const skillName of names) {
+    if (!isSkillName(skillName)) continue
+    if (enabled) {
+      if (table[skillName] !== undefined) { delete table[skillName]; changed += 1 }
+    } else if (table[skillName] !== false) {
+      table[skillName] = false
+      changed += 1
+    }
+  }
+  if (changed === 0) return 0
+  const presets = { ...current.presets }
+  if (Object.keys(table).length === 0) delete presets[presetId]
+  else presets[presetId] = table
+  await writeLedger({ version: 1, presets })
+  return changed
 }
 
 /** Locate a skill directory under a root; undefined when absent. */
@@ -234,6 +385,81 @@ async function status(): Promise<{ skills: Record<string, boolean>; bundles: Rec
   return { skills, bundles }
 }
 
+/** ── 预设闸门:把「该预设下被关掉的技能」在 agent 层遮成不可调用 ─────────── */
+
+/**
+ * 给一个 agent 装闸门 provider。
+ *
+ * `skills.registerProvider()` 按调用方 ctx 的 scope 归层,而 `agent.ctx` 正好
+ * 携带该 agent 的 scope,所以这个 provider 只属于这一个 agent;读取时 agent 层
+ * 是最近层,同名条目直接盖住 global 层的真实技能 —— 不必碰 SKILL.md,
+ * 也不影响其它预设/其它 agent。
+ *
+ * list() 只查内存账本(无 I/O);get() 一律返回 undefined,于是 `skill` 工具
+ * 即使被硬点名也加载不到内容。
+ * @param ctx - host 上下文(仅用于日志)。
+ * @param agent - 目标 agent(需带 ctx 与 scope)。
+ * @returns 该 agent 的闸门 fiber,agent 销毁时由调用方 dispose。
+ */
+function installMask(ctx: PluginContext, agent: any): any {
+  const presetOf = (): string => {
+    const presets = ctx.get?.('agentPresets')
+    if (presets?.composedPreset === undefined) return ''
+    try { return presets.composedPreset(agent.ctx) ?? '' } catch { return '' }
+  }
+  return agent.ctx.inject(['skills'], (scope: any) => {
+    scope.skills.registerProvider((control: any) => {
+      maskInvalidators.add(control.invalidate)
+      control.signal.addEventListener('abort', () => {
+        maskInvalidators.delete(control.invalidate)
+      }, { once: true })
+      return {
+        name: MASK_PROVIDER,
+        list: async () => {
+          const presetId = presetOf()
+          if (presetId === '') return []
+          const disabled = disabledNames(await readLedger(), presetId)
+          if (disabled.size === 0) return []
+          return [...disabled].map(skillName => ({
+            name: skillName,
+            description: `disabled for agent preset "${presetId}"`,
+            invocation: { modelInvocable: false, userInvocable: false },
+            source: 'custom',
+            provider: MASK_PROVIDER,
+            rank: 0,
+            locator: null,
+          }))
+        },
+        // 被遮住的名字没有可加载的正文:调用方拿到 undefined 即等于「不存在」。
+        get: async () => undefined,
+      }
+    })
+  })
+}
+
+/** 当前 preset 名单(设置页据此列圆球;服务缺失时返回空数组)。 */
+async function readRoster(ctx: PluginContext): Promise<Array<Record<string, unknown>>> {
+  const presets = ctx.get?.('agentPresets')
+  if (presets?.list === undefined) return []
+  try {
+    const rows = await presets.list()
+    const defaultId = presets.defaultId
+    return (Array.isArray(rows) ? rows : [])
+      .map((row: any) => ({
+        id: String(row?.id ?? ''),
+        trust: row?.trust === 'system' ? 'system' : 'user',
+        isDefault: row?.id === defaultId,
+        ...typeof row?.name === 'string' ? { name: row.name } : {},
+        ...typeof row?.description === 'string' ? { description: row.description } : {},
+        ...typeof row?.order === 'number' ? { order: row.order } : {},
+      }))
+      .filter((row: any) => row.id !== '')
+  } catch (error: any) {
+    console.log('[skill-toggles] agentPresets.list failed:', error?.message ?? error)
+    return []
+  }
+}
+
 /** ── HTTP plumbing (same contract as skill-manager) ─────────────────────── */
 
 function isLoopbackAddress(address: string | undefined): boolean {
@@ -307,7 +533,7 @@ function readBody(req: IncomingMessage): Promise<unknown> {
 }
 
 /** Route dispatch for one /api/skill-toggles request. */
-async function handle(ctx: Context, req: IncomingMessage, res: ServerResponse): Promise<void> {
+async function handle(ctx: PluginContext, req: IncomingMessage, res: ServerResponse): Promise<void> {
   if (!loopbackAllowed(req)) {
     json(res, 403, { error: 'loopback-only' })
     return
@@ -342,19 +568,104 @@ async function handle(ctx: Context, req: IncomingMessage, res: ServerResponse): 
       json(res, 200, { ok: true, id, enabled, handled })
       return
     }
+
+    // ── 预设层 ────────────────────────────────────────────────────────────
+    if (method === 'GET' && rest === '/presets') {
+      const [roster, global, ledger] = await Promise.all([
+        readRoster(ctx), status(), readLedger(),
+      ])
+      json(res, 200, {
+        presets: roster,
+        overrides: ledger.presets,
+        skills: global.skills,
+        bundles: global.bundles,
+      })
+      return
+    }
+    const matchPresetSkill = /^\/presets\/([^/]+)\/skills\/([^/]+)$/.exec(rest)
+    if (method === 'PUT' && matchPresetSkill !== null) {
+      const body = (await readBody(req)) as Record<string, unknown>
+      const enabled = body.enabled
+      if (typeof enabled !== 'boolean') throw new Error('enabled must be a boolean')
+      const presetId = decodeURIComponent(matchPresetSkill[1]!)
+      if (!isPresetId(presetId)) throw new Error(`invalid preset id ${JSON.stringify(presetId)}`)
+      const skillName = decodeURIComponent(matchPresetSkill[2]!)
+      if (!isSkillName(skillName)) throw new Error(`invalid skill name ${JSON.stringify(skillName)}`)
+      const changed = await setPresetSkills(presetId, [skillName], enabled)
+      json(res, 200, { ok: true, preset: presetId, name: skillName, enabled, changed })
+      return
+    }
+    const matchPresetBundle = /^\/presets\/([^/]+)\/bundles\/([^/]+)$/.exec(rest)
+    if (method === 'PUT' && matchPresetBundle !== null) {
+      const body = (await readBody(req)) as Record<string, unknown>
+      const enabled = body.enabled
+      if (typeof enabled !== 'boolean') throw new Error('enabled must be a boolean')
+      const presetId = decodeURIComponent(matchPresetBundle[1]!)
+      if (!isPresetId(presetId)) throw new Error(`invalid preset id ${JSON.stringify(presetId)}`)
+      const bundleId = decodeURIComponent(matchPresetBundle[2]!)
+      const ledger = await readBundles(managedRoot())
+      const record = ledger.bundles.find(bundle => bundle.id === bundleId)
+      if (record === undefined) throw new Error(`bundle ${JSON.stringify(bundleId)} not found`)
+      const changed = await setPresetSkills(presetId, record.skills, enabled)
+      json(res, 200, { ok: true, preset: presetId, id: bundleId, enabled, changed })
+      return
+    }
+    const matchPresetReset = /^\/presets\/([^/]+)\/reset$/.exec(rest)
+    if (method === 'POST' && matchPresetReset !== null) {
+      const presetId = decodeURIComponent(matchPresetReset[1]!)
+      if (!isPresetId(presetId)) throw new Error(`invalid preset id ${JSON.stringify(presetId)}`)
+      const current = await readLedger()
+      if (current.presets[presetId] !== undefined) {
+        const presets = { ...current.presets }
+        delete presets[presetId]
+        await writeLedger({ version: 1, presets })
+      }
+      json(res, 200, { ok: true, preset: presetId })
+      return
+    }
     json(res, 404, { error: `no route for ${method} ${rest}` })
   } catch (error) {
     json(res, 400, { error: error instanceof Error ? error.message : String(error) })
   }
 }
 
-/** Mount the routes. */
-export async function apply(ctx: Context): Promise<void> {
+/** Mount the routes and install the per-agent preset masks. */
+export async function apply(ctx: PluginContext): Promise<void> {
   ctx.effect(() => ctx.webServer.register({
     kind: 'prefix',
     path: ROUTE_PREFIX,
-    handler: (req, res) => {
+    handler: (req: IncomingMessage, res: ServerResponse) => {
       void handle(ctx, req, res)
     },
   }), 'webui: skill-toggles routes')
+
+  // 闸门:每个 agent 一个,注册进它自己的 scope 层。agents 服务缺失(裸组装)
+  // 时降级为「只有全局层开关」,不影响路由。
+  ctx.effect(() => {
+    const fibers = new Map<any, any>()
+    const install = (agent: any): void => {
+      if (agent === undefined || fibers.has(agent)) return
+      try {
+        fibers.set(agent, installMask(ctx, agent))
+      } catch (error: any) {
+        console.log('[skill-toggles] preset mask install failed:', error?.message ?? error)
+      }
+    }
+    const remove = (agent: any): void => {
+      const fiber = fibers.get(agent)
+      if (fiber === undefined) return
+      fibers.delete(agent)
+      void Promise.resolve(fiber.dispose?.()).catch(() => {})
+    }
+    const agents = ctx.get?.('agents')
+    if (agents?.list !== undefined) for (const agent of agents.list()) install(agent)
+    const offCreated = ctx.on('agent/created', ({ agent }: any) => { install(agent) })
+    const offDisposed = ctx.on('agent/disposed', ({ agent }: any) => { remove(agent) })
+    return () => {
+      offCreated()
+      offDisposed()
+      for (const agent of [...fibers.keys()]) remove(agent)
+      maskInvalidators.clear()
+    }
+  }, 'webui: skill-toggles preset masks')
 }

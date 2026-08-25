@@ -162,9 +162,9 @@ export interface PlannedStep {
   taskNote?: string
 }
 
-/** 找主脑角色（core 分组第一个，或 id 为 hanako 的角色）。 */
+/** 找主脑角色（core 分组第一个，或 id 为 brain / 旧 id hanako 的角色）。 */
 export function findCoreRole(team: Team): Role | null {
-  return team.roles.find(role => role.id === 'hanako')
+  return team.roles.find(role => role.id === 'brain' || role.id === 'hanako')
     ?? team.roles.find(role => role.group === 'core')
     ?? null
 }

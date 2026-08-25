@@ -37,7 +37,10 @@ export interface VoiceOption {
     gender: string;
 }
 /**
- * 本地摘要：取开头若干完整句拼到目标长度（零 token、零延迟）。
+ * 本地总结：提取「做完了什么 / 什么原因 / 解决了什么」（零 token、零延迟）。
+ *
+ * 保留导出名 digestSummary 以兼容既有调用；实现委托给
+ * {@link outcomeSummary}——不再是「取开头几句」，而是按结论线索打分挑句。
  * @param text - 已清洗的回复正文。
  * @returns 一句话总结（可能为空串）。
  */

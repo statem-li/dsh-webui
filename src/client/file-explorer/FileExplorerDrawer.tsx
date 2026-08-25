@@ -127,6 +127,7 @@ export function FileExplorerDrawer({ open, onClose, currentCwd, sessionId, openS
         className={closing ? `${css.drawer} ${css.drawerClosing}` : css.drawer}
         role="dialog"
         aria-label={t('drawerTitle')}
+        data-solid=""
       >
         <div className={css.drawerHeader}>
           <span className={css.drawerTitle}>{t('drawerTitle')}</span>

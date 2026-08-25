@@ -8,8 +8,8 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
-  Button, IconChevronDownOutline14, IconCloseOutline16, IconEditOutline16, IconFolderOpenOutline16,
-  IconPlusOutline16, IconRefreshOutline14, IconTrashOutline16, Modal, Tooltip,
+  Button, IconAgentPresetOutline16, IconChevronDownOutline14, IconCloseOutline16, IconEditOutline16,
+  IconFolderOpenOutline16, IconPlusOutline16, IconRefreshOutline14, IconTrashOutline16, Modal, Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { modalStaggerClass } from '../../modal-animation'
 import { PshBody, PshHead, PopoverShell, type PopoverAnchor } from '../../popover-shell'
@@ -63,6 +63,15 @@ const SKILL_ZH: Record<string, string> = {
   enableSkill: '启用', disableSkill: '禁用',
   enableBundle: '启用全部', disableBundle: '禁用全部',
   toggleFailed: '切换失败：{message}',
+  presetAll: '全部',
+  presetAllName: '全部 Agent',
+  presetStripLabel: 'Agent 预设',
+  presetHintAll: '当前编辑「全部 Agent」：开关直接改技能文件，对所有预设生效。',
+  presetHintScoped: '当前编辑「{name}」：只对该 Agent 预设生效，其它预设不受影响。',
+  presetReset: '清空该预设的单独设置',
+  presetDefaultTag: '默认',
+  presetOverrideCount: '{n} 项单独设置',
+  presetLockedByGlobal: '「全部 Agent」层已禁用，预设层无法打开',
 }
 
 function skillT(key: string, params?: Record<string, string | number>): string {
@@ -94,6 +103,23 @@ interface ToggleStatus {
   bundles: Record<string, boolean>
 }
 
+/** 一个 Agent 预设(host 从 ctx.agentPresets.list() 投影而来)。 */
+interface PresetRow {
+  id: string
+  trust: 'system' | 'user'
+  isDefault?: boolean
+  name?: string
+  description?: string
+  order?: number
+}
+
+/** /api/skill-toggles/presets 响应:名单 + 各预设覆盖 + 全局层状态。 */
+interface PresetStatus extends ToggleStatus {
+  presets: PresetRow[]
+  /** presetId → { skillName: false } —— 只有显式 false 才是「该预设下关闭」。 */
+  overrides: Record<string, Record<string, boolean>>
+}
+
 const skillApi = {
   list: (): Promise<SkillSnapshot> => skillRequest<SkillSnapshot>('/list', { headers: { accept: 'application/json' } }),
   toggleStatus: (): Promise<ToggleStatus> =>
@@ -123,6 +149,45 @@ const skillApi = {
     }).then((response) => response.json() as Promise<{ ok: boolean; error?: string; handled?: number }>)
       .then((body) => {
         if (!body.ok) throw new Error(body.error || 'toggle failed')
+        return body
+      }),
+  /** 预设名单 + 各预设覆盖 + 全局层状态(一次拉齐)。 */
+  presetStatus: (): Promise<PresetStatus> =>
+    fetch('/api/skill-toggles/presets', { headers: { accept: 'application/json' } })
+      .then((response) => response.json() as Promise<PresetStatus & { error?: string }>)
+      .then((body) => {
+        if (typeof body !== 'object' || body === null || !Array.isArray(body.presets)) {
+          throw new Error('preset status unavailable')
+        }
+        return body as PresetStatus
+      }),
+  setPresetSkillEnabled: (presetId: string, name: string, enabled: boolean): Promise<{ ok: boolean }> =>
+    fetch(`/api/skill-toggles/presets/${encodeURIComponent(presetId)}/skills/${encodeURIComponent(name)}`, {
+      method: 'PUT',
+      headers: { accept: 'application/json', 'content-type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+    }).then((response) => response.json() as Promise<{ ok: boolean; error?: string }>)
+      .then((body) => {
+        if (!body.ok) throw new Error(body.error || 'toggle failed')
+        return body
+      }),
+  setPresetBundleEnabled: (presetId: string, bundleId: string, enabled: boolean): Promise<{ ok: boolean }> =>
+    fetch(`/api/skill-toggles/presets/${encodeURIComponent(presetId)}/bundles/${encodeURIComponent(bundleId)}`, {
+      method: 'PUT',
+      headers: { accept: 'application/json', 'content-type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+    }).then((response) => response.json() as Promise<{ ok: boolean; error?: string }>)
+      .then((body) => {
+        if (!body.ok) throw new Error(body.error || 'toggle failed')
+        return body
+      }),
+  resetPreset: (presetId: string): Promise<{ ok: boolean }> =>
+    fetch(`/api/skill-toggles/presets/${encodeURIComponent(presetId)}/reset`, {
+      method: 'POST',
+      headers: { accept: 'application/json' },
+    }).then((response) => response.json() as Promise<{ ok: boolean; error?: string }>)
+      .then((body) => {
+        if (!body.ok) throw new Error(body.error || 'reset failed')
         return body
       }),
   createBundle: (name: string): Promise<Record<string, never>> =>
@@ -198,6 +263,14 @@ const css = {
   toggleOff: 'skm-toggle-off',
   toggleKnob: 'skm-toggle-knob',
   bundleToggle: 'skm-bundle-toggle',
+  // Agent 预设分类（圆球）
+  presetStrip: 'skm-preset-strip',
+  presetBallWrap: 'skm-preset-ball-wrap',
+  presetBall: 'skm-preset-ball',
+  presetBallLabel: 'skm-preset-ball-label',
+  presetHint: 'skm-preset-hint',
+  presetHintText: 'skm-preset-hint-text',
+  presetReset: 'skm-preset-reset',
 }
 
 const STYLE_ID = 'dsh-skill-manager-styles'
@@ -302,6 +375,21 @@ const SHEET = `
 .skm-toggle-on .skm-toggle-knob{transform:translateX(12px);background:var(--dsw-alias-label-primary,#fff)}
 .skm-toggle-off .skm-toggle-knob{transform:translateX(0);background:var(--dsw-alias-label-tertiary,#888)}
 .skm-bundle-toggle{flex:none;display:inline-flex;align-items:center;gap:4px;margin-right:6px}
+
+/* ── Agent 预设分类圆球条 ─────────────────────────────────────── */
+.skm-preset-strip{flex:none;display:flex;align-items:flex-start;gap:14px;padding:2px 2px 6px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}
+.skm-preset-strip::-webkit-scrollbar{display:none}
+.skm-preset-ball-wrap{flex:none;display:flex;flex-direction:column;align-items:center;gap:6px;width:56px;border:none;background:transparent;padding:0;cursor:pointer;font-family:inherit}
+.skm-preset-ball{position:relative;display:flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:50%;box-sizing:border-box;font-size:17px;font-weight:600;line-height:1;color:var(--dsw-alias-label-primary,#eee);text-transform:uppercase;background:var(--dsw-alias-bg-layer-2,#262b36);border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.14));transition:border-color 140ms,filter 140ms}
+.skm-preset-ball-wrap:hover .skm-preset-ball{filter:brightness(1.15)}
+.skm-preset-ball-wrap[data-active='true'] .skm-preset-ball{border-color:var(--dsw-alias-state-business-primary,#4a9eff);box-shadow:inset 0 0 0 1px var(--dsw-alias-state-business-primary,#4a9eff)}
+.skm-preset-ball[data-dot='true']::after{content:'';position:absolute;right:-1px;bottom:-1px;width:12px;height:12px;border-radius:50%;background:var(--dsw-alias-state-business-primary,#4a9eff);border:2px solid var(--dsw-alias-bg-layer-1,#1c1f26);box-sizing:border-box}
+.skm-preset-ball-label{max-width:56px;font-size:11px;line-height:15px;color:var(--dsw-alias-label-tertiary,#888);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center}
+.skm-preset-ball-wrap[data-active='true'] .skm-preset-ball-label{color:var(--dsw-alias-label-primary,#eee)}
+.skm-preset-hint{flex:none;display:flex;align-items:center;gap:8px;padding:0 2px 2px}
+.skm-preset-hint-text{flex:1;min-width:0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,#888)}
+.skm-preset-reset{flex:none;appearance:none;border:none;border-radius:12px;padding:2px 10px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#999);background:transparent;cursor:pointer;font-family:inherit}
+.skm-preset-reset:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.06));color:var(--dsw-alias-label-primary,#eee)}
 
 /* ── 移动端：面板加高、文件查看器左右分栏改上下堆叠 ───────────── */
 @media (max-width: 767.98px) {
@@ -441,6 +529,44 @@ function renderSkillMarkdown(text: string): string {
   return html
 }
 
+/** ---------------------------------------------------------------- 预设圆球 */
+
+/** 「全部 Agent」虚拟预设的哨兵 id（不会与真实 preset id 冲突：真实 id 不含 *）。 */
+const ALL_PRESETS = '*'
+
+/** 球内文字：中文取首字，拉丁取首字母。 */
+function ballInitial(label: string): string {
+  const trimmed = label.trim()
+  if (trimmed === '') return '?'
+  return [...trimmed][0] ?? '?'
+}
+
+/** 一个预设圆球（无底色，仅描边轮廓；有单独设置时右下角点亮小圆点）。 */
+function PresetBall({ id, label, active, dot, title, onSelect }: {
+  id: string
+  label: string
+  active: boolean
+  dot: boolean
+  title: string
+  onSelect: () => void
+}): JSX.Element {
+  return (
+    <button
+      type="button"
+      className={css.presetBallWrap}
+      data-active={active ? 'true' : undefined}
+      aria-pressed={active}
+      title={title}
+      onClick={onSelect}
+    >
+      <span className={css.presetBall} data-dot={dot ? 'true' : undefined}>
+        {id === ALL_PRESETS ? <IconAgentPresetOutline16 size={18} aria-hidden="true" /> : ballInitial(label)}
+      </span>
+      <span className={css.presetBallLabel}>{label}</span>
+    </button>
+  )
+}
+
 /** ---------------------------------------------------------------- 技能行 */
 
 interface ViewRow { kind: 'dir' | 'file'; path: string; depth: number; main: boolean }
@@ -464,10 +590,12 @@ function skillFileRows(files: string[]): ViewRow[] {
 }
 
 /** 技能行：开关 + 查看按钮 + 名称/描述 + 文件数 + compatibility + （可选）移除/归入按钮。 */
-function SkillRowItem({ skill, bundleId, enabled, onToggle, onView, onAssign, onRemove, onDelete }: {
+function SkillRowItem({ skill, bundleId, enabled, lockedReason, onToggle, onView, onAssign, onRemove, onDelete }: {
   skill: SkillInfo
   bundleId: string | null
   enabled: boolean
+  /** 非空时开关被锁住（如：全局层已禁用，预设层无法打开），并显示原因。 */
+  lockedReason?: string
   onToggle: (skill: SkillInfo, enabled: boolean) => void
   onView: (skill: SkillInfo) => void
   onAssign?: (skill: SkillInfo) => void
@@ -483,9 +611,10 @@ function SkillRowItem({ skill, bundleId, enabled, onToggle, onView, onAssign, on
       type="button"
       role="switch"
       aria-checked={enabled}
-      aria-label={enabled ? skillT('disableSkill') : skillT('enableSkill')}
-      title={enabled ? skillT('disableSkill') : skillT('enableSkill')}
+      aria-label={lockedReason ?? (enabled ? skillT('disableSkill') : skillT('enableSkill'))}
+      title={lockedReason ?? (enabled ? skillT('disableSkill') : skillT('enableSkill'))}
       className={`${css.toggle} ${enabled ? css.toggleOn : css.toggleOff}`}
+      disabled={lockedReason !== undefined}
       onClick={(event) => {
         event.stopPropagation()
         onToggle(skill, !enabled)
@@ -581,6 +710,10 @@ export function SkillsPanel({ onClose, closing = false, anchor = null, onCardMou
   const [toggles, setToggles] = useState<{ skills: Record<string, boolean>; bundles: Record<string, boolean> }>({ skills: {}, bundles: {} })
   // 切换进行中的 key（避免重复点击）
   const [toggling, setToggling] = useState<Set<string>>(new Set())
+  // Agent 预设分类：名单 + 各预设覆盖 + 当前选中的预设（'*' = 全部 Agent）
+  const [presets, setPresets] = useState<PresetRow[]>([])
+  const [overrides, setOverrides] = useState<Record<string, Record<string, boolean>>>({})
+  const [activePreset, setActivePreset] = useState<string>(ALL_PRESETS)
 
   const refresh = (): void => {
     // 技能目录变更后,同步失效 skill-source 的 slash 菜单快照缓存。
@@ -591,9 +724,16 @@ export function SkillsPanel({ onClose, closing = false, anchor = null, onCardMou
   /** 开关切换后静默同步:仅失效 slash 缓存并重拉开关状态,不重载整个面板(避免闪烁)。 */
   const refreshTogglesOnly = (): void => {
     void import('../../skill-source').then(({ invalidateSkillCache }) => invalidateSkillCache())
-    void skillApi.toggleStatus().then(
-      (status) => { setToggles(status) },
-      () => { /* 保持当前显示 */ },
+    void skillApi.presetStatus().then(
+      (status) => {
+        setToggles({ skills: status.skills, bundles: status.bundles })
+        setOverrides(status.overrides)
+        setPresets(status.presets)
+      },
+      () => {
+        // 预设接口不可用（老 host）时退回只读全局层状态。
+        void skillApi.toggleStatus().then((status) => { setToggles(status) }, () => { /* 保持当前显示 */ })
+      },
     )
   }
 
@@ -610,12 +750,19 @@ export function SkillsPanel({ onClose, closing = false, anchor = null, onCardMou
         if (current) setState({ status: 'error' })
       },
     )
-    void skillApi.toggleStatus().then(
+    void skillApi.presetStatus().then(
       (status) => {
-        if (current) setToggles(status)
+        if (!current) return
+        setToggles({ skills: status.skills, bundles: status.bundles })
+        setOverrides(status.overrides)
+        setPresets(status.presets)
       },
       () => {
-        // 开关接口不可用时保持空状态（开关仍可操作,失败会提示）。
+        // 预设接口不可用时退化为「只有全局层」：圆球条只剩「全部 Agent」。
+        void skillApi.toggleStatus().then(
+          (status) => { if (current) setToggles(status) },
+          () => { /* 开关接口也不可用时保持空状态（开关仍可操作,失败会提示）。 */ },
+        )
       },
     )
     return () => { current = false }
@@ -643,11 +790,56 @@ export function SkillsPanel({ onClose, closing = false, anchor = null, onCardMou
   }
 
   const toggleSkill = (skill: SkillInfo, enabled: boolean): void => {
-    void runToggle(`skill:${skill.name}`, () => skillApi.setSkillEnabled(skill.name, enabled))
+    if (activePreset === ALL_PRESETS) {
+      void runToggle(`skill:${skill.name}`, () => skillApi.setSkillEnabled(skill.name, enabled))
+      return
+    }
+    void runToggle(
+      `skill:${skill.name}`,
+      () => skillApi.setPresetSkillEnabled(activePreset, skill.name, enabled),
+    )
   }
 
   const toggleBundle = (bundle: BundleInfo, enabled: boolean): void => {
-    void runToggle(`bundle:${bundle.id}`, () => skillApi.setBundleEnabled(bundle.id, enabled))
+    if (activePreset === ALL_PRESETS) {
+      void runToggle(`bundle:${bundle.id}`, () => skillApi.setBundleEnabled(bundle.id, enabled))
+      return
+    }
+    void runToggle(
+      `bundle:${bundle.id}`,
+      () => skillApi.setPresetBundleEnabled(activePreset, bundle.id, enabled),
+    )
+  }
+
+  /** 该预设下被单独关掉的技能（'*' 视图下为空表）。 */
+  const presetOverride = activePreset === ALL_PRESETS ? {} : (overrides[activePreset] ?? {})
+
+  /**
+   * 当前视图里一个技能的开关值。
+   *  - 「全部 Agent」：直接读全局层（SKILL.md frontmatter）；
+   *  - 某个预设：全局层关掉的仍显示为关（预设层无法打开全局关掉的技能），
+   *    否则看该预设是否有 false 覆盖。
+   */
+  const skillEnabledIn = (name: string): boolean => {
+    if (toggles.skills[name] === false) return false
+    if (activePreset === ALL_PRESETS) return true
+    return presetOverride[name] !== false
+  }
+
+  /** 技能包在当前视图下的开关值：内部技能全开才算开。 */
+  const bundleEnabledIn = (bundle: BundleInfo): boolean => {
+    if (activePreset === ALL_PRESETS) return toggles.bundles[bundle.id] !== false
+    return bundle.skills.every((skill) => skillEnabledIn(skill.name))
+  }
+
+  /** 预设视图下，被全局层禁用的技能行锁住开关（预设层只能收窄，无法打开）。 */
+  const skillLockedReason = (name: string): string | undefined =>
+    activePreset !== ALL_PRESETS && toggles.skills[name] === false ? t('presetLockedByGlobal') : undefined
+
+  /** 清空当前预设的全部单独设置。 */
+  const resetActivePreset = (): void => {
+    if (activePreset === ALL_PRESETS) return
+    void runToggle(`reset:${activePreset}`, () => skillApi.resetPreset(activePreset))
   }
 
   const toggleExpanded = (bundleId: string): void => {
@@ -855,6 +1047,7 @@ export function SkillsPanel({ onClose, closing = false, anchor = null, onCardMou
 
   return (
     <PopoverShell
+      solid
       closing={closing}
       onClose={() => {
         // 安装/确认进行中禁止关闭；二级弹窗（确认/查看器/归组）打开时 Esc 归二级弹窗。
@@ -878,6 +1071,48 @@ export function SkillsPanel({ onClose, closing = false, anchor = null, onCardMou
       />
       <PshBody className={css.modalBody}>
       <div className={`${css.panel} ${modalStaggerClass}`} aria-busy={state.status === 'loading'}>
+        {/* Agent 预设分类：圆球条（首个是「全部 Agent」= 全局层） */}
+        <div className={css.presetStrip} role="group" aria-label={t('presetStripLabel')}>
+          <PresetBall
+            id={ALL_PRESETS}
+            label={t('presetAll')}
+            active={activePreset === ALL_PRESETS}
+            dot={false}
+            title={t('presetAllName')}
+            onSelect={() => { setActivePreset(ALL_PRESETS) }}
+          />
+          {presets.map((preset) => {
+            const label = preset.name ?? preset.id
+            const count = Object.values(overrides[preset.id] ?? {}).filter((state2) => state2 === false).length
+            const parts = [label, preset.id]
+            if (preset.isDefault === true) parts.push(t('presetDefaultTag'))
+            if (count > 0) parts.push(t('presetOverrideCount', { n: count }))
+            return (
+              <PresetBall
+                key={preset.id}
+                id={preset.id}
+                label={label}
+                active={activePreset === preset.id}
+                dot={count > 0}
+                title={parts.join(' · ')}
+                onSelect={() => { setActivePreset(preset.id) }}
+              />
+            )
+          })}
+        </div>
+        <div className={css.presetHint}>
+          <span className={css.presetHintText}>
+            {activePreset === ALL_PRESETS
+              ? t('presetHintAll')
+              : t('presetHintScoped', { name: presets.find((preset) => preset.id === activePreset)?.name ?? activePreset })}
+          </span>
+          {activePreset !== ALL_PRESETS && Object.keys(presetOverride).length > 0 && (
+            <button type="button" className={css.presetReset} onClick={resetActivePreset}>
+              {t('presetReset')}
+            </button>
+          )}
+        </div>
+
         <div className={css.topRow}>
           <Tooltip label={t('newBundle')} side="bottom" delayMs={500}>
             <button type="button" className={css.newBundleButton} aria-label={t('newBundle')} aria-expanded={newBundleOpen}
@@ -980,7 +1215,7 @@ export function SkillsPanel({ onClose, closing = false, anchor = null, onCardMou
                 {bundles.map((bundle) => {
                   const open2 = expanded.has(bundle.id)
                   const renamingThis = renameTarget?.bundleId === bundle.id
-                  const bundleEnabled = toggles.bundles[bundle.id] !== false
+                  const bundleEnabled = bundleEnabledIn(bundle)
                   const bundleToggling = toggling.has(`bundle:${bundle.id}`)
                   return (
                     <li key={bundle.id} className={css.bundle} data-open={open2 ? 'true' : undefined}>
@@ -1040,7 +1275,8 @@ export function SkillsPanel({ onClose, closing = false, anchor = null, onCardMou
                             <li className={css.status}>{t('bundleNoSkills')}</li>
                           ) : bundle.skills.map((skill) => (
                             <SkillRowItem key={skill.name} skill={skill} bundleId={bundle.id}
-                              enabled={toggles.skills[skill.name] !== false}
+                              enabled={skillEnabledIn(skill.name)}
+                              lockedReason={skillLockedReason(skill.name)}
                               onToggle={toggleSkill}
                               onView={openViewer}
                               onRemove={(s) => { void removeFromBundle(bundle.id, s.name) }}
@@ -1061,7 +1297,8 @@ export function SkillsPanel({ onClose, closing = false, anchor = null, onCardMou
               <ul className={css.skillList}>
                 {loose.map((skill) => (
                   <SkillRowItem key={skill.name} skill={skill} bundleId={null}
-                    enabled={toggles.skills[skill.name] !== false}
+                    enabled={skillEnabledIn(skill.name)}
+                    lockedReason={skillLockedReason(skill.name)}
                     onToggle={toggleSkill}
                     onView={openViewer}
                     onAssign={(s) => { setAssignTarget(s) }}

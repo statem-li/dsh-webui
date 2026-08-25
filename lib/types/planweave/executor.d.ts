@@ -80,7 +80,13 @@ export interface ExecLike {
     agent?: unknown;
     signal?: AbortSignal;
 }
-/** 从 host ctx 取 subagents 服务；未挂载返回 null（fallback 到 llm 路径）。 */
+/**
+ * 从 host ctx 取 subagents 服务；未挂载返回 null（fallback 到 llm 路径）。
+ *
+ * 必须走 `ctx.get('subagents')`：cordis 对未在 inject 声明的服务做裸属性访问
+ * （`ctx.subagents`）会抛 `cannot get property "subagents" without inject`，
+ * 而不是返回 undefined —— 那会让整条执行链在此崩掉而非优雅降级。
+ */
 export declare function subagentRuntime(ctx: unknown): SubagentRuntimeLike | null;
 /** 首个可用 subagent provider（spawn/fork/acp…）。 */
 export declare function defaultSubagentProvider(ctx: unknown): string | null;

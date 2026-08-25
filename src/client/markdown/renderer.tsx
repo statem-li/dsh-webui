@@ -1,8 +1,17 @@
-import { memo, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { ReactNode } from 'react'
 import MarkdownRender, { MarkdownCodeBlockNode } from 'markstream-react'
 import type { NodeComponentProps } from 'markstream-react'
-import type { CodeBlockNode, HeadingNode, ImageNode, InlineCodeNode, LinkNode, ParsedNode } from 'stream-markdown-parser'
+import type {
+  CodeBlockNode,
+  CustomComponentNode,
+  HeadingNode,
+  ImageNode,
+  InlineCodeNode,
+  LinkNode,
+  ParagraphNode,
+  ParsedNode,
+} from 'stream-markdown-parser'
 import { IconThinkOutline14, JsonBlock } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { MarkdownFileMentions } from '@deepseek-ai/dsh-client-ui-primitives'
 import { ImageGallery } from '@deepseek-ai/dsh-client-ui-attachment'
@@ -16,6 +25,8 @@ import { activityBus } from './activity-bus.ts'
 import { DiagramBlock, isDiagramLang } from './diagram.tsx'
 import { MoodBlock, isMoodLang } from '../mood/MoodBlock.tsx'
 import { FlowCard, type ReplyCardMeta } from './flow-card.tsx'
+import { isGeneratedImageUrl } from '../image-gallery/registry'
+import { DEFAULT_GALLERY_LABELS, GalleryStrip } from '../image-gallery/GalleryStrip'
 
 const CUSTOM_COMPONENT_SCOPE = 'dsh-better-markdown'
 
@@ -48,6 +59,92 @@ export function DshImageNode({ node }: NodeComponentProps<ImageNode>) {
   const src = remoteImage(node.src)
   if (src === undefined) return <span className="dsh-better-markdown__image-alt">{node.alt}</span>
   return <img className="dsh-better-markdown__image" src={src} alt={node.alt} title={node.title ?? undefined} referrerPolicy="no-referrer" />
+}
+
+/** image_strip 自定义节点类型名（postTransform 聚合产物，渲染器按 type 查组件）。 */
+const IMAGE_STRIP_TYPE = 'image_strip'
+
+/**
+ * markdown 生图画廊条：回复正文里连续出现的生图结果图片（模型用 ![]() 把
+ * generate_image 的 URL 复制进了总结卡），原先每张都渲染成 max-width:100% 的
+ * 大图、竖排占满整行，非常浪费空间。这里把它们重排成与消息流画廊一致的样式——
+ * 多张并排缩略图（带序号角标）、单张小图（≤360px），点击打开全屏 Lightbox。
+ * 仅当图片 URL 命中 image-gallery 注册表（确为生图结果）才生效；
+ * 普通 markdown 图片（文档截图等）完全不受影响。
+ */
+export function MarkdownImageStrip({ node }: NodeComponentProps<CustomComponentNode>) {
+  const images = useMemo(() => {
+    const children = Array.isArray(node.children) ? node.children : []
+    const result: { src: string; alt: string }[] = []
+    for (const child of children) {
+      if (child === null || typeof child !== 'object') continue
+      const candidate = child as { type?: unknown; src?: unknown; alt?: unknown }
+      if (candidate.type !== 'image' || typeof candidate.src !== 'string') continue
+      const src = remoteImage(candidate.src)
+      if (src === undefined || !isGeneratedImageUrl(src)) continue
+      result.push({ src, alt: typeof candidate.alt === 'string' ? candidate.alt : '' })
+    }
+    return result
+  }, [node.children])
+  if (images.length === 0) return null
+  return (
+    <GalleryStrip images={images.map(image => ({ url: image.src, model: null }))} labels={DEFAULT_GALLERY_LABELS} />
+  )
+}
+
+/** 段落是否为「纯图片段落」（只含 image，可夹空白文本）；是则返回其中的 image 列表。 */
+function paragraphImages(node: ParsedNode): ImageNode[] | null {
+  if (node.type !== 'paragraph') return null
+  const children = ((node as ParagraphNode).children ?? []) as ParsedNode[]
+  if (children.length === 0) return null
+  const images: ImageNode[] = []
+  for (const child of children) {
+    if (child.type === 'image') { images.push(child as ImageNode); continue }
+    // 行尾空白/换行产生的空 text 允许夹带
+    if (child.type === 'text' && typeof (child as { content?: unknown }).content === 'string'
+      && String((child as { content?: unknown }).content).trim() === '') continue
+    return null
+  }
+  return images
+}
+
+/**
+ * postTransform：把顶层连续的「纯图片段落」聚合成单个 image_strip 自定义节点。
+ * 仅当段内全部图片都是注册表登记过的生图结果 URL 才聚合——普通 markdown 图片
+ * 的节点结构原样保留，渲染行为零变化。流式增量解析下该变换幂等（每次全量
+ * 重 parse，同一文本产出同一结构），不会引起节点来回跳动。
+ */
+function collectImageStrips(nodes: ParsedNode[]): ParsedNode[] {
+  const out: ParsedNode[] = []
+  let pending: ImageNode[] = []
+  const flush = (): void => {
+    if (pending.length === 0) return
+    const strip = {
+      type: IMAGE_STRIP_TYPE,
+      tag: IMAGE_STRIP_TYPE,
+      content: '',
+      children: pending,
+      raw: '',
+    } as unknown as ParsedNode
+    out.push(strip)
+    pending = []
+  }
+  for (const node of nodes) {
+    const images = paragraphImages(node)
+    if (images !== null && images.every(image => isGeneratedImageUrl(image.src))) {
+      pending.push(...images)
+      continue
+    }
+    flush()
+    out.push(node)
+  }
+  flush()
+  return out
+}
+
+/** Markstream 的节点后处理：目录锚点注入 + 生图图片条聚合。 */
+function postProcessNodes(nodes: ParsedNode[]): ParsedNode[] {
+  return injectHeadingIds(collectImageStrips(nodes))
 }
 
 /** Preserve safe external links while leaving relative and unsafe targets inert. */
@@ -227,7 +324,7 @@ export const MarkstreamMarkdown = memo(function MarkstreamMarkdown({ text, strea
   const codeBlockProps = useMemo(() => ({
     fileMentions: streaming ? undefined : fileMentions,
   }), [fileMentions, streaming])
-  const parseOptions = useMemo(() => ({ postTransformNodes: injectHeadingIds }), [])
+  const parseOptions = useMemo(() => ({ postTransformNodes: postProcessNodes }), [])
   const headings = useMemo(() => extractHeadings(text), [text])
   return (
     <div className="dsh-better-markdown__markdown" data-markdown-renderer="markstream-react">
@@ -312,12 +409,24 @@ function ReasoningEntry({ items, running, t, turn, thinkingStart }: {
     }
     return ''
   }, [items, running])
-  // 跟随最新：思考文字每增长一次就把滚动框滚到底。
+  // 跟随最新：思考文字增长时把预览框滚到底——但仅当读者停在底部。
+  // 向上翻阅即停止自动跟随（想看哪里自己滚），滚回底部（≤24px）自动恢复；
+  // 阈值与 ChatView 的 FOLLOW_THRESHOLD 一致。滚动事件记录「读者是否钉在底部」，
+  // 纯几何判断无法区分「内容自己长高」和「读者上翻」，必须有这面旗子。
   const liveRef = useRef<HTMLDivElement | null>(null)
+  const livePinnedRef = useRef(true)
+  const onLiveScroll = useCallback((event: React.UIEvent<HTMLDivElement>): void => {
+    const el = event.currentTarget
+    livePinnedRef.current = el.scrollHeight - el.scrollTop - el.clientHeight <= 24
+  }, [])
   useEffect(() => {
     if (!running) return
     const el = liveRef.current
-    if (el !== null) el.scrollTop = el.scrollHeight
+    if (el === null) return
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight
+    // 双保险：滚动事件尚未派发的一帧内，几何距离也能拦住一次误跟随。
+    if (!livePinnedRef.current && distance > 24) return
+    el.scrollTop = el.scrollHeight
   }, [liveText, running])
 
   return (
@@ -338,7 +447,7 @@ function ReasoningEntry({ items, running, t, turn, thinkingStart }: {
         </span>
       </button>
       {running && liveText !== '' && (
-        <div className="dsh-better-markdown__reasoning-live" ref={liveRef} aria-live="polite">
+        <div className="dsh-better-markdown__reasoning-live" ref={liveRef} onScroll={onLiveScroll} aria-live="polite">
           {liveText}
         </div>
       )}

@@ -1,15 +1,19 @@
 /**
  * dsh-image-gallery — 生图结果会话节点定义。
  *
- * 监听会话事件流里 generate_image 工具的生命周期：
- *   1. tool/call（name=generate_image）→ start，记住调用身份与 prompt；
- *   2. tool/result（content 文本含 imageUrl）→ update，解析生成的图片 URL；
- * 同一 callId 的事件归并到同一个 Context，最终发布为「生成的图片」画廊节点。
+ * 监听会话事件流里生图工具的成功结果（tool/result 文本含 imageUrl 指纹），
+ * 按「轮次（turn）」归并：同一轮 assistant 回合里的所有生图结果聚进同一个
+ * 画廊节点，多图在节点内并排一行（放不下自动换行），不再一次调用占一行。
  *
- * 匹配策略刻意精确：
- *   - tool/call 只匹配生图工具名（避免为其它工具建 Context）；
- *   - tool/result 只匹配文本里含 "imageUrl" 的结果（生图成功的特征），
- *     其余工具的 result 不产生任何匹配，不留 pending Context。
+ * 引擎语义利用（conversation-assembler）：
+ *   - 本 definition 不 match tool/call，即 Context 永远没有 start Match；
+ *   - 同一 turn 的每条生图 result 以 update 角色进入同一个 Context
+ *     （id = turn-N）。引擎对「无 start 的纯 update Context」不会调用
+ *     start()/update()，state 保持 undefined，但 matches 照常按 seq 累积；
+ *   - buildViewNode 直接从 matches 回演出图片列表——事件数据全部来自
+ *     日志，重放/翻页（prepend 合并 matches）结果确定。
+ * 这样规避了「同 id 收到第二个 start Match 会 throw」的引擎不变量，
+ * 同时拿到跨调用归并。
  */
 import type {
   ConversationMatch,
@@ -18,33 +22,21 @@ import type {
   ConversationLocation,
 } from '@deepseek-ai/dsh-client-runtime/client'
 import { isAppendSurfaceEvent } from '@deepseek-ai/dsh-client-runtime/client'
+import { registerGeneratedImageUrls } from './registry'
 
 /** 一张成功生成、可展示的图片。 */
 export interface GeneratedImageEntry {
   readonly callId: string
   readonly model: string | null
   readonly url: string
-  readonly prompt: string | null
 }
 
 /** 发布到 Chat 渲染器的载荷。 */
 export interface GeneratedImagesChatData {
   readonly images: readonly GeneratedImageEntry[]
-  /** 来源工具名（generate_image / browser_screenshot），用于区分标题。 */
-  readonly toolName: string
 }
 
-interface GeneratedImagesState extends GeneratedImagesChatData {
-  readonly toolName: string
-  readonly promptRaw: string | null
-}
-
-/** 当前识别的图片工具名（宿主可增减；这里覆盖 dsh-vision-helper 的 generate_image 与 AI 浏览器的 browser_screenshot / browser_see）。 */
-const IMAGE_TOOL_NAMES = new Set(['generate_image', 'browser_screenshot', 'browser_see'])
-
-function isImageToolName(value: string): boolean {
-  return IMAGE_TOOL_NAMES.has(value)
-}
+interface GeneratedImagesState extends GeneratedImagesChatData {}
 
 /** 从 tool/result 的 message.content 里取第一个纯文本块。 */
 function resultText(content: readonly unknown[]): string | null {
@@ -95,25 +87,17 @@ function parseImageResult(text: string): { urls: readonly string[]; model: strin
   push(record.imageUrl)
   if (typeof record.imageDataUrl === 'string' && record.imageDataUrl) push(record.imageDataUrl)
   if (urls.length === 0) return null
+  // 登记进共享注册表：markdown 渲染器靠它识别「回复正文里 ![]() 引用的图是不是生图结果」。
+  registerGeneratedImageUrls(urls)
   return { urls, model: typeof record.model === 'string' ? record.model : null }
-}
-
-/** 从 tool/call arguments（JSON 字符串）里取 prompt 字段。 */
-function parsePrompt(argumentsRaw: string): string | null {
-  try {
-    const parsed = JSON.parse(argumentsRaw) as { prompt?: unknown }
-    return typeof parsed.prompt === 'string' ? parsed.prompt : null
-  } catch {
-    return null
-  }
 }
 
 function locationOf(context: ConversationNodeContext): ConversationLocation {
   return context.start?.location ?? context.matches[0]?.location ?? { kind: 'unresolved' }
 }
 
-/** 只含 result（start 被窗口截断）时，从 matches 里回演出画廊状态。 */
-function fallbackState(context: ConversationNodeContext): GeneratedImagesState | undefined {
+/** 从 matches（本 turn 的全部生图 result）回演出画廊状态——本 definition 的唯一状态来源。 */
+function stateFromMatches(context: ConversationNodeContext): GeneratedImagesState | undefined {
   let images: GeneratedImageEntry[] = []
   for (const match of context.matches) {
     if (match.event.type !== 'tool/result') continue
@@ -123,38 +107,28 @@ function fallbackState(context: ConversationNodeContext): GeneratedImagesState |
     if (parsed === null) continue
     const callId = String(match.event.data.message.source.callId)
     for (const url of parsed.urls) {
-      images = [...images, { callId, model: parsed.model, url, prompt: null }]
+      images = [...images, { callId, model: parsed.model, url }]
     }
   }
-  return images.length === 0 ? undefined : { toolName: 'generate_image', promptRaw: null, images }
+  return images.length === 0 ? undefined : { images }
 }
 
-/** 生图画廊会话节点定义（Chat 目标）。 */
+/** 生图画廊会话节点定义（Chat 目标，按 turn 归并）。 */
 export const generatedImagesDefinition: ConversationNodeDefinition<GeneratedImagesState> = {
   kind: 'generated-images',
   target: 'chat',
-  match: (event): { id: string; role: 'start' | 'update' } | null => {
-    if (event.type === 'tool/call') {
-      return isImageToolName(event.data.name)
-        ? { id: String(event.data.callId), role: 'start' }
-        : null
-    }
-    if (event.type === 'tool/result' && isAppendSurfaceEvent(event)) {
-      const text = resultText(event.data.message.content)
-      if (!isImageResultText(text)) return null
-      const callId = event.data.message.source.callId
-      return { id: String(callId), role: 'update' }
-    }
-    return null
+  match: (event): { id: string; role: 'update' } | null => {
+    // 只认生图成功的 result；同一 turn 的所有结果归并到同一个 Context。
+    // 刻意不 match tool/call：没有 start Match 就不会触发引擎的
+    // 「同 id 二次 start」不变量，归并得以安全进行。
+    if (event.type !== 'tool/result' || !isAppendSurfaceEvent(event)) return null
+    const text = resultText(event.data.message.content)
+    if (!isImageResultText(text)) return null
+    return { id: `turn-${event.data.turn}`, role: 'update' }
   },
-  start: (_context, match) => {
-    if (match.event.type !== 'tool/call') throw new Error('generated-images start requires tool/call')
-    return {
-      toolName: match.event.data.name,
-      promptRaw: parsePrompt(match.event.data.arguments),
-      images: [],
-    }
-  },
+  // 引擎不变量下 start()/update() 不会被调用（本 definition 无 start Match，
+  // 纯 update 的 Context 引擎不调用这两个钩子）；实现仅为满足接口并兜底。
+  start: () => ({ images: [] }),
   update: (context, match) => {
     if (match.event.type !== 'tool/result') return context.state
     const text = resultText(match.event.data.message.content)
@@ -166,13 +140,12 @@ export const generatedImagesDefinition: ConversationNodeDefinition<GeneratedImag
       callId,
       model: parsed.model,
       url,
-      prompt: context.state.promptRaw,
     }))
-    return { ...context.state, images: [...context.state.images, ...entries] }
+    return { images: [...context.state.images, ...entries] }
   },
   publication: () => 'immediate',
   buildViewNode: (context) => {
-    const state = context.state ?? fallbackState(context)
+    const state = context.state ?? stateFromMatches(context)
     if (state === undefined || state.images.length === 0) return null
     const anchor = context.start?.event.seq ?? context.matches[0]?.event.seq ?? 0
     return {
@@ -183,7 +156,7 @@ export const generatedImagesDefinition: ConversationNodeDefinition<GeneratedImag
       anchorSeq: anchor,
       location: locationOf(context),
       visibility: 'visible',
-      data: { images: state.images, toolName: state.toolName } satisfies GeneratedImagesChatData,
+      data: { images: state.images } satisfies GeneratedImagesChatData,
     }
   },
 }

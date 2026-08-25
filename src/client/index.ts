@@ -41,17 +41,24 @@ import { apply as registerUpdater } from './updater'
 import { apply as registerPluginUpdateCard } from './plugin-update-card'
 import { applyMessageWidthClient } from './message-width'
 import { apply as registerProxy } from './proxy'
+// 网关伪装接入：设置页卡片（域名 → UA 改写 / 强制代理，接白名单网关）。
+import { apply as registerGatewayRewrite } from './gateway-rewrite-card'
+// 供应商限流：设置页卡片（域名 → RPM 令牌桶 + 并发信号量，从源头避免 429）。
+import { apply as registerProviderThrottleCard } from './provider-throttle-card'
 import { applyBrowserClient } from './browser'
 import { applyMemoryClient } from './memory'
 import { applyImageGallery } from './image-gallery'
 import { applyProviderHub } from './provider-hub'
 import { applyFileExplorerClient } from './file-explorer'
+// 工作区文档卡片：sidebar footer 峰谷卡上方的 agent.md / claude.md 卡片。
+import { applyWorkspaceDocs } from './workspace-docs'
 import { applyWorkspaceDirPickerClient } from './workspace-dir-picker'
 import { apply as applyUsageEntries } from './usage/entry'
 import { applyPeakValley } from './peak-valley'
 import { applyApprovalNotifier } from './approval-notify'
 import {
   BetterAssistantNodeView, DshCodeBlockNode, DshImageNode, DshInlineCodeNode, DshLinkNode,
+  MarkdownImageStrip,
 } from './markdown/renderer'
 // 图表渲染（mermaid 围栏 → 图，引擎按需加载）：模块开关。
 import { DiagramBlock, setDiagramEnabled } from './markdown/diagram'
@@ -191,6 +198,9 @@ export function apply(ctx: ClientContext): void {
       image: DshImageNode,
       inline_code: DshInlineCodeNode,
       link: DshLinkNode,
+      // 回复正文里连续出现的生图结果图片（![]() 引用）聚合条：多张并排缩略图、
+      // 单张小图、点击全屏 Lightbox（替代原先一张占满整行宽的大图）。
+      image_strip: MarkdownImageStrip,
       // markstream 对 ```mermaid 围栏走**专用分支**（在查 code_block 自定义组件
       // 之前就命中），不注册这个 key 的话会落到它内置的 MermaidBlockNode ——
       // 那个组件静态 import 'mermaid'，被我们的构建 stub 掉，只会显示源码占位。
@@ -238,6 +248,12 @@ export function apply(ctx: ClientContext): void {
   // ---- dsh-proxy：网络代理设置行 -----------------------------------------
   if (on('proxy')) registerProxy(ctx)
 
+  // ---- 网关伪装接入：按域名改写 UA / 强制代理的规则卡（紧随网络代理之下）----
+  if (on('gatewayRewrite')) registerGatewayRewrite(ctx)
+
+  // ---- 供应商限流：按域名 RPM 令牌桶 + 并发信号量设置卡（紧随网关伪装之下）----
+  if (on('providerThrottle')) registerProviderThrottleCard(ctx)
+
   // ---- dsh-browser：设置页「允许 AI 使用浏览器」开关 ---------------------
   if (on('browser')) applyBrowserClient(ctx)
 
@@ -249,6 +265,12 @@ export function apply(ctx: ClientContext): void {
 
   // ---- dsh-file-explorer：右上角文件浏览器（抽屉 + 树 + 编辑器）-----------
   if (on('fileExplorer')) applyFileExplorerClient(ctx)
+
+  // ---- 工作区文档卡片：峰谷卡上方的 AGENTS.md / CLAUDE.md 卡片（点击复用 ----
+  //      文件浏览器的应用内预览卡，两文件皆缺时提供 AGENTS.md 一键创建）。
+  //      依赖 fileExplorer：预览宿主（FileExplorerEntry）由其装配，关闭后
+  //      预览事件无人接听，本卡片随之隐藏。
+  if (on('workspaceDocs') && on('fileExplorer')) applyWorkspaceDocs(ctx)
 
   // ---- 工作区目录选择器：自写弹窗（添加工作区选文件夹，shadow 官方 native）---
   if (on('dirPicker')) applyWorkspaceDirPickerClient(ctx)

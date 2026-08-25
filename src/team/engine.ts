@@ -44,7 +44,7 @@ import {
   type ToolRestrictionLike,
 } from './capabilities.js'
 import { TeamStore } from './store.js'
-import { TEAM_SCHEMA_VERSION } from './types.js'
+import { TEAM_SCHEMA_VERSION, type TodoItemLite } from './types.js'
 
 /** 注入服务均为运行时动态注册，类型上放宽。 */
 type AnyContext = any
@@ -71,6 +71,12 @@ export interface LlmLike {
 interface ContentBlockLike { type: string, text?: string }
 
 interface SubagentRunLike {
+  /**
+   * 本地运行的子会话 id（DSH 规定本地 run.id === 子会话 id）。
+   * 用于跟踪子会话日志、把思考/正文增量转发成步骤实时快照；
+   * remote provider 的 id 不对应本地会话，读取不到日志则静默无过程流。
+   */
+  id?: string
   result: Promise<{
     output: ContentBlockLike[]
     structured?: unknown
@@ -258,6 +264,8 @@ export class TeamEngine {
     this.store.saveRun(run)
 
     let failed = false
+    /** run 级异常信息（不能只写进局部 run：后续会重读磁盘，会把它覆盖掉）。 */
+    let runError = ''
     try {
       for (const step of planned) {
         if (controller.signal.aborted) break
@@ -271,8 +279,8 @@ export class TeamEngine {
         }
       }
     } catch (error) {
-      run = this.store.readRun(runId) ?? run
-      run = { ...run, error: error instanceof Error ? error.message : String(error) }
+      runError = error instanceof Error ? error.message : String(error)
+      if (runError === '') runError = '运行失败（未提供错误信息）'
       failed = true
     } finally {
       this.active.delete(runId)
@@ -302,13 +310,31 @@ export class TeamEngine {
       }
     }
 
+    // 失败原因：优先 run 级异常，否则汇总失败步骤的错误 —— 否则面板/HUD 只能看到
+    // 一个没有任何线索的 error 状态（历史缺陷：catch 写进局部 run 后被磁盘重读覆盖）。
+    let errorText = ''
+    if (cancelled) {
+      errorText = '运行已取消'
+    } else if (failed) {
+      if (runError !== '') {
+        errorText = runError
+      } else {
+        const reasons = steps
+          .filter(step => step.status === 'error')
+          .map(step => `${step.roleName}：${step.error !== undefined && step.error !== '' ? step.error : '未提供错误信息'}`)
+        errorText = reasons.length > 0
+          ? reasons.join('；')
+          : '运行失败但未采集到具体原因（可能是所有步骤都未开始执行）'
+      }
+    }
+
     this.store.saveRun({
       ...run,
       steps,
       status,
       finishedAt: new Date().toISOString(),
       ...(finalFile !== undefined ? { finalFile } : {}),
-      ...(cancelled ? { error: '运行已取消' } : {}),
+      ...(errorText !== '' ? { error: errorText } : {}),
     })
   }
 
@@ -417,6 +443,8 @@ export class TeamEngine {
         const text = await this.invoke({
           channel, binding, system, userPrompt, globals, controller, context, toolFilter,
           label: `${team.name} · ${planned.role.name}`,
+          runId,
+          stepIndex: planned.index,
           onDelta: (accumulated) => {
             this.patchStep(runId, planned.index, { output: tailSnapshot(accumulated) })
           },
@@ -463,9 +491,23 @@ export class TeamEngine {
     return canSubagent ? 'subagent' : 'llm'
   }
 
+  /**
+   * 取 subagents 运行时；不可用时返回 null（角色降级为 llm 直跑）。
+   *
+   * 必须走 `ctx.get('subagents')`：cordis 对**未在 inject 声明**的服务做裸属性访问
+   * （`ctx.subagents`）会直接抛 `cannot get property "subagents" without inject`，
+   * 而该异常发生在 pickChannel 里、runStep 的 try 之外 —— 整个运行会在第一步就崩，
+   * 表现为「秒失败、所有步骤 skipped、连模型都没解析」。`ctx.get()` 对缺失服务返回
+   * undefined，可安全降级。
+   */
   private subagents(): SubagentRuntimeLike | null {
-    const runtime = (this.ctx as { subagents?: SubagentRuntimeLike }).subagents
-    return runtime !== undefined && typeof runtime.list === 'function' ? runtime : null
+    let runtime: SubagentRuntimeLike | undefined
+    try {
+      runtime = this.ctx.get?.('subagents') as SubagentRuntimeLike | undefined
+    } catch {
+      return null
+    }
+    return runtime !== undefined && runtime !== null && typeof runtime.list === 'function' ? runtime : null
   }
 
   /** 调用一次通道（统一超时 + 取消语义）。 */
@@ -480,9 +522,11 @@ export class TeamEngine {
     /** 角色工具装配（仅 subagent 通道生效）。 */
     toolFilter: ToolRestrictionLike | null
     label: string
+    runId: string
+    stepIndex: number
     onDelta: (accumulated: string) => void
   }): Promise<string> {
-    const { channel, binding, system, userPrompt, globals, controller, context, toolFilter, label, onDelta } = args
+    const { channel, binding, system, userPrompt, globals, controller, context, toolFilter, label, runId, stepIndex, onDelta } = args
     const stepController = new AbortController()
     const onAbort = (): void => stepController.abort()
     controller.signal.addEventListener('abort', onAbort, { once: true })
@@ -490,7 +534,9 @@ export class TeamEngine {
     try {
       if (channel === 'subagent') {
         const text = await this.invokeSubagent(
-          `${system}\n\n---\n\n${userPrompt}`, label, context, stepController.signal, toolFilter,
+          `${system}\n\n---\n\n${userPrompt}`,
+          label, context, stepController.signal, toolFilter,
+          { onDelta, onTodos: (todos) => { this.patchStep(runId, stepIndex, { todos }) } },
         )
         onDelta(text)
         return text
@@ -566,6 +612,11 @@ export class TeamEngine {
     context: RunContext,
     signal: AbortSignal,
     toolFilter: ToolRestrictionLike | null,
+    /** 过程流出口：子会话的思考/正文增量实时转发（写步骤快照）。 */
+    handlers: {
+      onDelta: (accumulated: string) => void
+      onTodos: (todos: TodoItemLite[]) => void
+    },
   ): Promise<string> {
     const runtime = this.subagents()
     if (runtime === null) throw new TeamError('subagents 服务不可用', 'subagent_unavailable', 503)
@@ -591,6 +642,10 @@ export class TeamEngine {
         throw error
       }
     }
+    // 跟踪子会话日志：框架只回传最终文本，但本地子会话的事件流（思考/正文
+    // 增量、todo_write 任务清单）持续落盘 —— 用水位线读原语把过程实时转发，
+    // 用户不用干等，HUD/详情卡能看到子 agent 正在做什么、清单完成了什么。
+    const stopTail = this.tailSubagentSession(run.id, handlers, signal)
     try {
       const result = await run.result
       if (result.stopReason !== 'completed' && result.stopReason !== 'max-tokens') {
@@ -604,8 +659,92 @@ export class TeamEngine {
       if (text === '') throw new Error('subagent 未返回内容')
       return text
     } finally {
+      stopTail()
       await run.dispose()
     }
+  }
+
+  /**
+   * 跟踪子 agent 会话日志，把思考/正文增量与任务清单转发给上层。
+   *
+   * 实现：sessionPersistence.readFrom(id, watermark) 是官方的「从水位线读后缀」
+   * 原语（SQLite 后端只物理读后缀），每秒轮询一次：
+   *  - assistant/chunk 的 reasoning-delta / text-delta → 拼成 Markdown 快照
+   *    （思考为引用块、正文原样）经 handlers.onDelta 写进 run.json；
+   *  - tool/call 的 todo_write → 解析其 todos 参数经 handlers.onTodos 写入步骤
+   *    的结构化字段 —— HUD 卡与详情卡即可像对话流一样看到子 agent 的过程。
+   * 子会话 id 拿不到 / 后端不支持 / 日志未就绪时静默降级零过程流。
+   */
+  private tailSubagentSession(
+    childId: string | undefined,
+    handlers: {
+      onDelta: (accumulated: string) => void
+      onTodos: (todos: TodoItemLite[]) => void
+    },
+    signal: AbortSignal,
+  ): () => void {
+    if (childId === undefined || childId === '') return () => {}
+    const persistence = this.ctx.get?.('sessionPersistence') as {
+      readFrom?: (id: string, fromSeq: number, signal?: AbortSignal) => Promise<{ events?: unknown[] }>
+    } | undefined
+    if (persistence?.readFrom === undefined) return () => {}
+    let stopped = false
+    let watermark = 0
+    let thinking = ''
+    let answer = ''
+    let todos: TodoItemLite[] | null = null
+    const renderSnapshot = (): string => {
+      // 思考可能极长：快照只保留尾部（进行中看最新思路最有用）。
+      const thinkTail = thinking.length > 2400 ? `…${thinking.slice(-2400)}` : thinking
+      const parts: string[] = []
+      if (thinkTail.trim() !== '') {
+        parts.push(`> 🧠 **思考**\n>\n> ${thinkTail.trim().replace(/\n/g, '\n> ')}`)
+      }
+      if (answer.trim() !== '') parts.push(answer)
+      return parts.join('\n\n')
+    }
+    void (async (): Promise<void> => {
+      while (!stopped && !signal.aborted) {
+        try {
+          const inspection = await persistence.readFrom!(childId, watermark, signal)
+          const events = Array.isArray(inspection?.events) ? inspection.events : []
+          let grew = false
+          for (const event of events) {
+            const e = event as {
+              seq?: number
+              type?: string
+              data?: {
+                chunk?: { type?: string, text?: string }
+                name?: string
+                arguments?: string
+              }
+            }
+            if (typeof e.seq === 'number' && e.seq > watermark) watermark = e.seq
+            // 任务清单：todo_write 工具调用（arguments 为 JSON 字符串）。
+            if (e.type === 'tool/call' && e.data?.name === 'todo_write' && typeof e.data.arguments === 'string') {
+              const parsedTodos = parseTodoWriteArgs(e.data.arguments)
+              if (parsedTodos !== null) {
+                todos = parsedTodos
+                handlers.onTodos(todos)
+              }
+              continue
+            }
+            // 思考/正文增量。
+            const chunk = e.data?.chunk
+            if (e.type !== 'assistant/chunk' || chunk === null || typeof chunk !== 'object') continue
+            if (typeof chunk.text !== 'string' || chunk.text === '') continue
+            if (chunk.type === 'reasoning-delta') { thinking += chunk.text; grew = true }
+            else if (chunk.type === 'text-delta') { answer += chunk.text; grew = true }
+          }
+          if (grew) handlers.onDelta(renderSnapshot())
+        } catch {
+          // 会话日志尚未就绪 / 后端不支持 / 已取消：静默重试或退出。
+          if (signal.aborted) break
+        }
+        await new Promise(resolve => setTimeout(resolve, 1000))
+      }
+    })()
+    return () => { stopped = true }
   }
 
   /** 原子更新某步字段（读—改—写 run.json）。 */
@@ -623,4 +762,25 @@ export class TeamEngine {
 function tailSnapshot(text: string): string {
   if (text.length <= SNAPSHOT_OUTPUT_MAX) return text
   return `…（前文已截断）\n${text.slice(-SNAPSHOT_OUTPUT_MAX)}`
+}
+
+/** todo_write 的 arguments（JSON 字符串）→ 任务清单投影；非法/空列表返回 null。 */
+function parseTodoWriteArgs(raw: string): TodoItemLite[] | null {
+  try {
+    const parsed = JSON.parse(raw) as { todos?: unknown }
+    if (!Array.isArray(parsed.todos)) return null
+    const items: TodoItemLite[] = []
+    for (const item of parsed.todos) {
+      const it = (item ?? {}) as { content?: unknown, status?: unknown }
+      const content = typeof it.content === 'string' ? it.content.trim() : ''
+      if (content === '') continue
+      const status = it.status === 'in_progress' || it.status === 'completed' || it.status === 'pending'
+        ? it.status
+        : 'pending'
+      items.push({ content, status })
+    }
+    return items.length > 0 ? items : null
+  } catch {
+    return null
+  }
 }

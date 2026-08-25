@@ -56,6 +56,11 @@ interface ResolvedSnapshot extends SkillSnapshot {
   enabled: Record<string, boolean>
 }
 
+/** /api/skill-toggles/presets 响应里本模块关心的两块。 */
+interface PresetWire {
+  overrides?: Record<string, Record<string, boolean>>
+}
+
 /** 集合内技能入口的候选 value 前缀(bundle 与 skill 候选区分)。 */
 const BUNDLE_MARK = 'bundle:'
 const SKILL_MARK = 'skill:'
@@ -77,6 +82,39 @@ const fetches = new Map<SessionId, CatalogFetch>()
 /** 会话级 lexicon 失效监听器。 */
 const lexiconListeners = new Map<SessionId, Set<() => void>>()
 
+/** apply() 时捕获的 client root ctx(读 sessions 快照拿会话预设 id)。 */
+let rootCtx: ClientContext | undefined
+
+/** 预设名单/覆盖缓存(全客户端共享;TTL 与快照一致)。 */
+let presetsCache: { at: number; promise: Promise<PresetWire | null> } | undefined
+
+function fetchPresets(): Promise<PresetWire | null> {
+  if (presetsCache !== undefined && Date.now() - presetsCache.at < SNAPSHOT_TTL_MS) {
+    return presetsCache.promise
+  }
+  const promise = fetch('/api/skill-toggles/presets', {
+    headers: { accept: 'application/json' },
+  })
+    .then((response) => response.ok ? response.json() as Promise<PresetWire> : null)
+    .catch(() => null)
+  presetsCache = { at: Date.now(), promise }
+  return promise
+}
+
+/** 当前会话运行的 Agent 预设 id(client sessions 列表快照;读不到返回 undefined)。 */
+function sessionPresetOf(sessionId: SessionId): string | undefined {
+  try {
+    const sessions = (rootCtx as unknown as { get?: (name: string) => unknown } | undefined)?.get?.('sessions') as
+      | { list?: { getSnapshot?: () => { byId?: Record<string, { agentPreset?: string }> } } }
+      | undefined
+    const byId = sessions?.list?.getSnapshot?.()?.byId
+    const preset = byId?.[sessionId]?.agentPreset
+    return typeof preset === 'string' && preset !== '' ? preset : undefined
+  } catch {
+    return undefined
+  }
+}
+
 function notifyListeners(sessionId: SessionId): void {
   for (const listener of [...(lexiconListeners.get(sessionId) ?? [])]) {
     try { listener() } catch (error) { console.error('[skill-source] lexicon listener failed:', error) }
@@ -94,7 +132,7 @@ function fetchSnapshot(sessionId: SessionId): Promise<ResolvedSnapshot> {
   const abort = new AbortController()
   const entry: CatalogFetch = { promise: undefined as never, fetchedAt: Date.now(), abort }
   const promise = (async () => {
-    const [listResponse, toggleResponse] = await Promise.all([
+    const [listResponse, toggleResponse, presetWire] = await Promise.all([
       fetch('/api/skill-manager/list', {
         headers: { accept: 'application/json' },
         signal: abort.signal,
@@ -103,6 +141,7 @@ function fetchSnapshot(sessionId: SessionId): Promise<ResolvedSnapshot> {
         headers: { accept: 'application/json' },
         signal: abort.signal,
       }).catch(() => null),
+      fetchPresets(),
     ])
     const body = await listResponse.json() as SkillSnapshot & { error?: string }
     if (!listResponse.ok) throw new Error(body.error ?? `skill list failed (${String(listResponse.status)})`)
@@ -110,6 +149,17 @@ function fetchSnapshot(sessionId: SessionId): Promise<ResolvedSnapshot> {
     if (toggleResponse !== null && toggleResponse.ok) {
       const toggles = await toggleResponse.json() as { skills?: Record<string, boolean>; error?: string }
       if (toggles.skills !== undefined) enabled = toggles.skills
+    }
+    // 会话预设覆盖:该会话所属 Agent 预设里显式 false 的技能,在 slash 菜单
+    // 里同样隐藏(与 host 闸门语义一致——预设层只能收窄全局层)。
+    const presetId = sessionPresetOf(sessionId)
+    const overrides = presetId === undefined ? undefined : presetWire?.overrides?.[presetId]
+    if (overrides !== undefined) {
+      const merged: Record<string, boolean> = { ...enabled }
+      for (const [name, state] of Object.entries(overrides)) {
+        if (state === false) merged[name] = false
+      }
+      enabled = merged
     }
     return { ...body, enabled }
   })()
@@ -127,6 +177,8 @@ function fetchSnapshot(sessionId: SessionId): Promise<ResolvedSnapshot> {
 
 /** 失效一个会话的缓存(技能面板改动后调用;sessionId 缺省时全清)。 */
 export function invalidateSkillCache(sessionId?: SessionId): void {
+  // 预设覆盖与全局开关一起失效:面板改动可能改了任意预设的账本。
+  presetsCache = undefined
   if (sessionId === undefined) {
     for (const key of [...fetches.keys()]) {
       const entry = fetches.get(key)
@@ -197,6 +249,10 @@ function bundleCandidate(snapshot: ResolvedSnapshot, bundle: BundleView): { name
  * @param ctx - client root context。
  */
 export function apply(ctx: ClientContext): void {
+  rootCtx = ctx
+  ctx.effect(() => {
+    return () => { if (rootCtx === ctx) rootCtx = undefined }
+  }, 'skill-source: root ctx capture')
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'skill-source: dictionaries')
   injectSkillRowStyles()
   ctx.slots.inject('tool.call.toolview', () => ctx.slots.register(

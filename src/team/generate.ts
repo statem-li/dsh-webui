@@ -49,7 +49,7 @@ const SYSTEM = [
   '你是多智能体团队编制设计师。用户给出一句需求，你要设计一支能落地完成该类任务的 AI 角色团队。',
   '',
   '设计要求：',
-  '1. 必须包含一个 id 为 "hanako"、group 为 "core" 的主脑角色（协调中枢、最终整合者）。',
+  '1. 必须包含一个 id 为 "brain"、group 为 "core" 的主脑角色（协调中枢、最终整合者）。',
   '2. 除主脑外再设计 3~8 个专职角色，职责边界清晰、不重叠，覆盖该需求的完整工作流。',
   '3. 每个角色的 group 从以下三选一：judge（信息与判断：调研/审查/策划）、act（落地执行：实现/产出/成稿/整理）、guard（守护支持：陪伴/评审/运维/合规）。',
   '4. 角色 id 用简短小写英文（字母数字连字符，≤20 字符），name 用简短中文名（1~3 字最佳，如「察」「驳」「匠」），en 用 id 同名英文，tagline 是 6~14 字的中文定位语（用「·」分隔两个短语）。',
@@ -59,7 +59,7 @@ const SYSTEM = [
   '8. 不要输出任何模型名称或 provider——模型由用户在界面上统一配置。',
   '',
   '只输出一个 JSON 对象，不要 markdown 围栏，不要任何解释文字，形状严格如下：',
-  '{"name":"团队名（4~10 字中文）","description":"一句话说明这支团队做什么","roles":[{"id":"hanako","name":"主脑","en":"hanako","tagline":"协调中枢·总管兜底","group":"core","prompt":"..."},{"id":"...","name":"...","en":"...","tagline":"...","group":"judge|act|guard","prompt":"..."}],"chains":[{"id":"...","name":"...","finalSynthesize":true,"steps":[{"roleId":"...","taskNote":"..."}]}],"directLinks":[{"from":"...","to":"...","kind":"bidirectional","label":"..."}]}',
+  '{"name":"团队名（4~10 字中文）","description":"一句话说明这支团队做什么","roles":[{"id":"brain","name":"主脑","en":"brain","tagline":"协调中枢·总管兜底","group":"core","prompt":"..."},{"id":"...","name":"...","en":"...","tagline":"...","group":"judge|act|guard","prompt":"..."}],"chains":[{"id":"...","name":"...","finalSynthesize":true,"steps":[{"roleId":"...","taskNote":"..."}]}],"directLinks":[{"from":"...","to":"...","kind":"bidirectional","label":"..."}]}',
 ].join('\n')
 
 /** 从 LLM 输出里稳健提取 JSON 对象。 */
@@ -144,9 +144,9 @@ function sanitizeRoles(input: unknown): Role[] {
   // 确保有主脑：缺失时补一个。
   if (!roles.some(role => role.group === 'core')) {
     roles.unshift({
-      id: 'hanako',
+      id: 'brain',
       name: '主脑',
-      en: 'hanako',
+      en: 'brain',
       tagline: '协调中枢·总管兜底',
       group: 'core',
       prompt: [

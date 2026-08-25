@@ -40,8 +40,9 @@ export type RoleGroup = 'core' | 'judge' | 'act' | 'guard'
 export type ExecutorPref = 'auto' | 'llm' | 'subagent'
 
 /**
- * 角色在编制图上的位置（归一化 0..1，相对画布宽高）。
- * 缺省 = 前端按环形自动布局；用户拖拽后写入并持久化。
+ * 角色在编制图上的位置（**world 绝对像素，可为负 —— 无限画布**）。
+ * 缺省 = 前端按网格自动布局；用户拖拽后写入并持久化。
+ * 旧版本（≤2026-08）此处存的是 0..1 归一化值，前端会自动折算迁移。
  */
 export interface NodePos {
   x: number
@@ -220,6 +221,12 @@ export type StepStatus = 'pending' | 'running' | 'done' | 'error' | 'skipped'
 export type RunOrigin = 'panel' | 'chat-toggle' | 'tool'
 
 /** 单步运行快照。 */
+/** 子 agent 任务清单的单项（todo_write 参数的最小投影）。 */
+export interface TodoItemLite {
+  content: string
+  status: 'pending' | 'in_progress' | 'completed'
+}
+
 export interface RunStep {
   index: number
   roleId: string
@@ -254,6 +261,11 @@ export interface RunStep {
   }
   /** 通道降级 / 模型继承会话等提示。 */
   warning?: string
+  /**
+   * 子 agent 的任务清单快照（截获其 todo_write 工具调用，每次全量覆盖）。
+   * 仅 subagent 通道且子 agent 实际使用任务清单时存在。
+   */
+  todos?: TodoItemLite[]
   startedAt?: string
   finishedAt?: string
   error?: string
@@ -392,16 +404,22 @@ export function normalizeBinding(input: unknown): ModelBinding | null {
 const VALID_GROUPS: ReadonlySet<string> = new Set<RoleGroup>(['core', 'judge', 'act', 'guard'])
 const VALID_EXECUTORS: ReadonlySet<string> = new Set<ExecutorPref>(['auto', 'llm', 'subagent'])
 
-/** 归一化图上位置：0..1 之外一律丢弃（视为无手工位置）。 */
+/**
+ * 归一化图上位置（world 像素，允许负值 —— 画布无边界）。
+ * 非有限数一律丢弃（视为无手工位置）；坐标取整并钳在 ±1e6 内防脏数据。
+ *
+ * 历史：v1 存的是 0..1 归一化值（相对固定尺寸画布），前端 TeamBoard 会识别
+ * 「全部落在 0..1 且带小数」的老数据并折算成 px，下次拖拽即写回 px。所以这里
+ * **不能**再拒绝 >1 的值。
+ */
 function normalizePos(input: unknown): NodePos | undefined {
   if (input === null || typeof input !== 'object') return undefined
   const raw = input as Record<string, unknown>
   const x = typeof raw.x === 'number' ? raw.x : NaN
   const y = typeof raw.y === 'number' ? raw.y : NaN
   if (!Number.isFinite(x) || !Number.isFinite(y)) return undefined
-  if (x < 0 || x > 1 || y < 0 || y > 1) return undefined
-  // 保留 4 位小数，避免拖拽产生超长浮点写满文件。
-  return { x: Math.round(x * 10000) / 10000, y: Math.round(y * 10000) / 10000 }
+  const clamp = (value: number): number => Math.round(Math.min(1e6, Math.max(-1e6, value)) * 10000) / 10000
+  return { x: clamp(x), y: clamp(y) }
 }
 
 /** 名称列表归一化：去空白、去重、限长（工具名/技能名/包 id 共用）。 */
@@ -578,6 +596,22 @@ export function normalizeTeam(input: unknown): Team {
     }
   }
 
+  // ── 存量迁移：出厂主脑旧英文标识 "hanako" → "brain"（2026-08 更名，用户要求
+  // 编排数据不暴露内部代号）。幂等：没有 hanako 时零开销；极端情况下团队里已
+  // 同时存在 brain 角色则跳过改名避免 id 冲突（findCoreRole 按 group 兜底仍可用）。
+  const hasBrain = seenRole.has('brain')
+  const renamed = new Map<string, string>()
+  if (!hasBrain && seenRole.has('hanako')) {
+    seenRole.delete('hanako')
+    seenRole.add('brain')
+    renamed.set('hanako', 'brain')
+    for (const role of roles) {
+      if (role.id !== 'hanako') continue
+      role.id = 'brain'
+      if (role.en === 'hanako') role.en = 'brain'
+    }
+  }
+
   const seenChain = new Set<string>()
   const chains: Chain[] = []
   if (Array.isArray(raw.chains)) {
@@ -585,15 +619,24 @@ export function normalizeTeam(input: unknown): Team {
       const chain = normalizeChain(item)
       if (seenChain.has(chain.id)) continue
       seenChain.add(chain.id)
-      // 丢弃指向不存在角色的 role 步骤（synthesize 步的 roleId 可留空）。
-      chain.steps = chain.steps.filter(step =>
-        step.kind === 'synthesize' ? (step.roleId === undefined || seenRole.has(step.roleId)) : seenRole.has(step.roleId))
+      // 先随迁移改写引用，再丢弃指向不存在角色的 role 步骤（synthesize 步的 roleId 可留空）。
+      chain.steps = chain.steps
+        .map(step => (step.kind === 'role' && renamed.has(step.roleId)
+          ? { ...step, roleId: renamed.get(step.roleId) ?? step.roleId }
+          : step))
+        .filter(step =>
+          step.kind === 'synthesize' ? (step.roleId === undefined || seenRole.has(step.roleId)) : seenRole.has(step.roleId))
       chains.push(chain)
     }
   }
 
   const directLinks = Array.isArray(raw.directLinks)
     ? raw.directLinks.map(normalizeLink)
+      .map(link => (link === null
+        ? null
+        : renamed.has(link.from) || renamed.has(link.to)
+          ? { ...link, from: renamed.get(link.from) ?? link.from, to: renamed.get(link.to) ?? link.to }
+          : link))
       .filter((l): l is DirectLink => l !== null && seenRole.has(l.from) && seenRole.has(l.to))
     : []
 

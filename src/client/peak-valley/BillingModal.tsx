@@ -64,10 +64,26 @@ const card: CSSProperties = {
   maxHeight: 'calc(100vh - 48px)',
   display: 'flex',
   flexDirection: 'column',
-  background: 'var(--dsw-alias-bg-base)',
   borderRadius: 16,
   boxShadow: '0 24px 64px rgba(0,0,0,.5)',
   overflow: 'hidden',
+}
+
+/** 实底样式：玻璃质感开启时账单弹窗也保持不透明（data-solid 豁免玻璃规则）。 */
+const BILLING_STYLE_ID = 'dsh-billing-card-solid-styles'
+const BILLING_SHEET = [
+  '.dsh-billing-card{background:var(--dsw-alias-bg-base)}',
+  'html[data-dsh-glass] .dsh-billing-card[data-solid]{background:var(--dsw-static-neutral-bluish-00,#fff);backdrop-filter:none;-webkit-backdrop-filter:none}',
+  'html[data-dsh-glass] body[data-ds-dark-theme] .dsh-billing-card[data-solid]{background:var(--dsw-static-neutral-bluish-850,#2c2c2e)}',
+].join('\n')
+
+function ensureBillingSolidStyles(): void {
+  if (typeof document === 'undefined') return
+  if (document.getElementById(BILLING_STYLE_ID) !== null) return
+  const tag = document.createElement('style')
+  tag.id = BILLING_STYLE_ID
+  tag.textContent = BILLING_SHEET
+  document.head.appendChild(tag)
 }
 
 const header: CSSProperties = {
@@ -333,6 +349,7 @@ function Skeleton(): JSX.Element {
 }
 
 export function BillingModal({ closing, onClose }: BillingModalProps): JSX.Element {
+  ensureBillingSolidStyles()
   const [account, setAccount] = useState<AccountSnapshot | null | undefined>(undefined)
   const [billing, setBilling] = useState<BillingResponse | null | undefined>(undefined)
   const [loading, setLoading] = useState(true)
@@ -416,7 +433,8 @@ export function BillingModal({ closing, onClose }: BillingModalProps): JSX.Eleme
     <div style={isMobile ? { ...mask, padding: 0 } : mask} className={modalMaskAnimClass(closing)} onClick={onClose}>
       <div
         style={isMobile ? { ...card, width: '100vw', maxWidth: '100vw', maxHeight: '100dvh', borderRadius: 0 } : card}
-        className={modalAnimClass(closing)}
+        className={`dsh-billing-card ${modalAnimClass(closing)}`}
+        data-solid=""
         onClick={e => e.stopPropagation()}
       >
         {/* 标题区 */}

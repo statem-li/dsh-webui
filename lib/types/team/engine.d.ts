@@ -78,6 +78,15 @@ export declare class TeamEngine {
     private runStep;
     /** 通道选择（docs §4.3）。 */
     private pickChannel;
+    /**
+     * 取 subagents 运行时；不可用时返回 null（角色降级为 llm 直跑）。
+     *
+     * 必须走 `ctx.get('subagents')`：cordis 对**未在 inject 声明**的服务做裸属性访问
+     * （`ctx.subagents`）会直接抛 `cannot get property "subagents" without inject`，
+     * 而该异常发生在 pickChannel 里、runStep 的 try 之外 —— 整个运行会在第一步就崩，
+     * 表现为「秒失败、所有步骤 skipped、连模型都没解析」。`ctx.get()` 对缺失服务返回
+     * undefined，可安全降级。
+     */
     private subagents;
     /** 调用一次通道（统一超时 + 取消语义）。 */
     private invoke;

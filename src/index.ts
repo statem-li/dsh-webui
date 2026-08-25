@@ -29,6 +29,8 @@ import { applyDonePill } from './done-pill.js'
 import { applyUpdater } from './updater.js'
 import { applyPluginUpdate } from './plugin-update.js'
 import { applyProxy } from './proxy.js'
+import { applyGatewayRewrite } from './gateway-rewrite.js'
+import { applyProviderThrottle } from './provider-throttle.js'
 import { applyBrowser } from './browser/index.js'
 import { applyBrowserSpeed } from './browser/speed.js'
 import { applyDiagram } from './diagram.js'
@@ -274,6 +276,14 @@ export async function apply(ctx: Context, config: WebuiConfig = {}): Promise<voi
 
   // 6) 网络代理（自 dsh-proxy 合并）。
   if (modules.proxy) applyProxy(ctx)
+
+  // 6.5) 网关伪装接入：按域名改写 User-Agent / 可选强制代理（接 UA 白名单网关）。
+  //      必须晚于 applyProxy 装配，让本模块的 fetch 包装叠在 network-proxy 之上。
+  if (modules.gatewayRewrite) applyGatewayRewrite(ctx)
+
+  // 6.8) 供应商限流：按域名 RPM 令牌桶 + 并发信号量（从源头避免 429）。
+  //      与 gateway-rewrite 同为 fetch 包装，二者互不冲突（各自幂等安装）。
+  if (modules.providerThrottle) applyProviderThrottle(ctx)
 
   // 7) AI 浏览器操作（自 dsh-browser 合并；config.browser 可选覆盖）。
   // 固定有头：本机真实窗口启动即最大化（≈电脑分辨率），画面经 screencast
