@@ -99,12 +99,8 @@ import { applySidebarFloatSetting } from './sidebar-float-row'
 // 外观主题：玻璃质感（Glassmorphism）——启动恢复 + 通用设置里的外观开关行。
 import { bootGlass, retractGlass } from './glass'
 import { registerGlassSetting } from './glass-row'
-// PlanWeave：侧边栏导航行 + 计划面板（进度/块列表/一键推进）。
-import { applyPlanweaveClient } from './planweave'
 // 自动化：侧边栏导航行 + 任务计划面板（openhanako 式 cron/at/every）+ 完成通知。
 import { applyAutomation } from './automation'
-// PlanWeave：插件配置页签的设置卡（项目名/执行模型/每轮步数）。
-import { registerPlanweaveSettingsCard } from './planweave/SettingsCard'
 // 团队编排：侧边栏「团队」面板 + 对话框团队开关 + 对话流执行 HUD。
 import { applyTeamClient } from './team'
 // 会话切换柔和过渡：内容区淡入浮入 + 侧边栏行选中底色平滑渐变。
@@ -333,12 +329,6 @@ export function apply(ctx: ClientContext): void {
 
   // ---- 自动化（openhanako 式）：侧边栏入口 + 任务计划面板 + 完成通知 --------
   if (on('automation')) applyAutomation(ctx)
-
-  // ---- PlanWeave：侧边栏入口 + 计划面板 ------------------------------------
-  if (on('planweave')) applyPlanweaveClient(ctx)
-
-  // ---- PlanWeave：插件配置页签的设置卡 --------------------------------------
-  if (on('planweave')) registerPlanweaveSettingsCard(ctx)
 
   // ---- 团队编排：侧边栏「团队」面板 + 对话框团队开关 + 对话流执行 HUD --------
   if (on('team')) applyTeamClient(ctx)

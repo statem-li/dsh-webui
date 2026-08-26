@@ -14,7 +14,7 @@ import { join } from 'node:path'
 import { automationDataRoot } from './store.js'
 import type { CronJob } from './types.js'
 
-/** 最小 LLM 服务契约（与 automation/planweave 同款，避免拉入 dsh 类型依赖链）。 */
+/** 最小 LLM 服务契约（与既有模块同款，避免拉入 dsh 类型依赖链）。 */
 export interface LlmStreamChunk {
   type: string
   text?: string

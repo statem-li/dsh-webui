@@ -66,7 +66,7 @@ import { TEAM_SCHEMA_VERSION, type TodoItemLite } from './types.js'
 /** 注入服务均为运行时动态注册，类型上放宽。 */
 type AnyContext = any
 
-// ── 最小 LLM / subagent 契约（与 automation / planweave 同款，避免拉依赖链） ──
+// ── 最小 LLM / subagent 契约（与 automation 同款，避免拉依赖链） ──
 
 interface LlmChunk {
   type: string

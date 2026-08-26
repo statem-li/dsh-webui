@@ -76,7 +76,7 @@
    （受 `maxParallel` 限制，默认 2），波次之间严格串行（后一波看得到前面全部波次的产出）；
    尾步可选「主脑整合」汇聚全部步骤产出。并行有三个来源：链步骤上的 `parallel: true`、
    `team_run` 的 `plan` 波次数组、`autoPlan` 让主脑自主编排（§4.5）。
-5. **只通过插件扩展 DSH**：不改 DSH 源码；host/API 模式复用 `planweave` 模块已验证的
+5. **只通过插件扩展 DSH**：不改 DSH 源码；host/API 模式复用 `automation` 等既有模块已验证的
    settings 命名空间 + loopback HTTP + 模型工具三件套范式。
 
 ---
@@ -137,8 +137,7 @@ interface ModelBinding {
 }
 ```
 
-- 模型目录来源：DSH `llm-pi-ai` 命名空间（与 `webui_sync_reasoning` / `planweave /providers`
-  同一数据源），UI 用下拉枚举（provider 分组 → model）。
+- 模型目录来源：DSH `llm-pi-ai` 命名空间（与 `webui_sync_reasoning` 同一数据源），UI 用下拉枚举（provider 分组 → model）。
 - `reasoningEfforts` 透传；缺失时可用既有 `webui_sync_reasoning` 供应商模板补全。
 
 ### 3.3 链条 `Chain`（协作接力）
@@ -285,7 +284,7 @@ function 选通道(role, 触发上下文):
   （复用 automation-host 的流式解析范式：text-delta 累积，finish reason 校验）。
 - `subagent`：`subagents.start(provider, { parent: exec.agent, prompt, label, signal })`，
   `stopReason ∈ {completed, max-tokens}` 视为完成，文本提取自 output text blocks（复用
-  `planweave/executor.ts` 的 `runSubagentText` 范式）。
+  既有模块的 subagent 文本提取范式）。
 
 ### 4.4 主脑整合（synthesize）
 
@@ -363,7 +362,7 @@ src/client/team/
 └── RoleRunCard.tsx — HUD 内单角色运行卡
 ```
 
-### 5.2 HTTP API（loopback-only，同 planweave 范式）
+### 5.2 HTTP API（loopback-only，同既有模块范式）
 
 | 方法 | 路径 | 作用 |
 |---|---|---|
@@ -382,7 +381,7 @@ src/client/team/
 | POST | `/api/webui-team/runs/:id/cancel` | 取消 |
 | GET | `/api/webui-team/history?teamId=&limit=` | 历史运行清单 |
 
-安全：`loopbackAllowed` 校验 + 产物路径 containment（runs 目录内），同 planweave 既有写法。
+安全：`loopbackAllowed` 校验 + 产物路径 containment（runs 目录内），同既有模块写法。
 
 ### 5.3 DSH 模型工具
 
@@ -397,7 +396,7 @@ src/client/team/
 ### 5.4 设置分区
 
 - settings 命名空间 `webui-team`：globals 的 settings.yaml 影射（`defaultProvider`/`defaultModel`/
-  `activeTeamId`/`timeoutSec` 等，同 planweave 惯例）；团队编制大对象走文件（§7）。
+  `activeTeamId`/`timeoutSec` 等，同既有模块惯例）；团队编制大对象走文件（§7）。
 - 模块开关：新增 `team` key 进 `webui-modules`（默认启用），host 关闭时不注册路由/工具/提示词，
   client 关闭时不挂面板入口与对话框开关。
 
@@ -556,7 +555,7 @@ TAB 式面板卡片（窄屏回退底部 sheet）。
 **数据来源**：`GET /api/webui-team/runs/active?sessionId=` 返回本会话活跃 Run 快照
 （含每步状态/模型/摘要/时间）；运行中 1s 轮询、空闲 5s 轮询，运行结束后停止。
 流式增量摘要由 engine 每 ~500ms 把当前步的累积输出写进 run.json 的 `steps[i].output`（截断），
-HUD 直接读快照即可，不额外开 SSE（与 automation/planweave 的轮询范式一致）。
+HUD 直接读快照即可，不额外开 SSE（与 automation 的轮询范式一致）。
 
 **多团队并发**：同会话同时有多个 Run 时（`maxConcurrentRuns>1`），HUD 折叠态显示
 `N 个团队运行中`，展开后按 Run 分段（每段一个团队标题 + 该团队的角色卡网格）。
@@ -774,8 +773,8 @@ interface RoleCapabilities {
 
 ## 13. 与既有模块的关系
 
-- **不冲突**：`planweave`（计划任务图）管「长期项目实施」，team 管「一次任务的多角色接力」；
-  两者可组合（team 的产物作为 planweave 的块输入），v1 不做互操作。
+- **不冲突**：`automation`（定时任务）管「按计划触发」，team 管「一次任务的多角色接力」；
+  两者可组合（team 的产物可作为 automation 任务的输入），v1 不做互操作。
 - **复用**：providers 枚举、loopback 校验、llm 流式解析、subagent start 均复刻/复用
-  planweave 与 automation 的既有范式；模型枚举与 `webui_sync_reasoning` 同一数据源。
+  既有模块范式；模型枚举与 `webui_sync_reasoning` 同一数据源。
 - **模块开关**：新增 `team` key 进 `webui-modules`，默认启用（README 模块表补一行）。

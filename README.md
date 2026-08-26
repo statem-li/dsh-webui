@@ -1,6 +1,6 @@
 # dsh-webui — DeepSeek Harness 会话增强全家桶
 
-一个插件融合视图切换、消息导航、技能管理、供应商管理、辅助视觉、生图/生视频、记忆（hybrid 检索）、AI 浏览器、文件浏览器、Markdown 渲染、工具聚合、用量统计、网页搜索、定时自动化任务引擎、PlanWeave 计划项目、团队 Agent 编排（多团队多角色接力）、会话产物清单、对话退回与文件回退/修改历史对比、提示音、壳管理更新、插件自更新、网络代理、网关伪装接入、供应商限流、消息截图、中文思考、工作区临时垃圾清理等能力。纯插件实现，不改动 DSH 源码。
+一个插件融合视图切换、消息导航、技能管理、供应商管理、辅助视觉、生图/生视频、记忆（hybrid 检索）、AI 浏览器、文件浏览器、Markdown 渲染、工具聚合、用量统计、网页搜索、定时自动化任务引擎、团队 Agent 编排（多团队多角色接力）、会话产物清单、对话退回与文件回退/修改历史对比、提示音、壳管理更新、插件自更新、网络代理、网关伪装接入、供应商限流、消息截图、中文思考、工作区临时垃圾清理等能力。纯插件实现，不改动 DSH 源码。
 
 ## 一句话安装（DSH）
 
@@ -32,7 +32,6 @@ dsh-webui 是全家桶，但每个功能模块都可以单独关闭——不需�
 webui-modules:
   browser: false      # 不需要 AI 浏览器
   automation: false   # 不需要自动化
-  planweave: false    # 不需要 PlanWeave 计划项目
   team: false         # 不需要团队 Agent 编排
   peakValley: false   # 不需要峰谷时刻卡片
 ```
@@ -77,7 +76,6 @@ curl -X POST http://127.0.0.1:3080/api/webui-modules \
 | 技能 | `skills` | 技能 slash 两级导航源 + 技能开关路由 |
 | AI 浏览器 | `browser` | 浏览器工具 + dock UI + 设置开关 |
 | 自动化与计划 | `automation` | 自动化任务 + 真实执行引擎 |
-| | `planweave` | PlanWeave 计划项目 |
 | | `team` | 团队 Agent 编排器（多团队多角色接力 + 一句话生成 + 可拖拽关联画布 + 每角色工具/技能装配 + 对话框团队开关 + 执行 HUD） |
 | 记忆 | `memory` | 记忆引擎 + Memory Dream |
 | 用量与统计 | `usage` | 用量工作台 |
@@ -269,20 +267,6 @@ dock 工具条「选取元素」按钮进入选取模式，点击预览画面任
 - **运行记录**：每次执行落一条 jsonl 记录（success / error / skipped + 起止时间 + 输出摘要 + 完整产出全文回看）
 - **Agent 协作**：`automation` 工具供 Agent 列出全部任务、以自然语言建议新建/修改任务（经用户确认生效）
 
-### PlanWeave 计划项目
-
-把 [PlanWeave](https://github.com/planweave-ai) 的「计划 → 任务图 → 认领/执行/评审/反馈」循环接入 DSH，作为本地任务图跟踪实现/评审进度：
-
-| 工具 | 用途 |
-|---|---|
-| `planweave_init` | 初始化（或打开）一个计划项目，首次调用创建空计划，同名项目可复用 |
-| `planweave_status` | 查看执行状态：任务/块状态、当前可认领项、反馈与计数 |
-| `planweave_run` | 按就绪顺序认领并执行实现/评审块、处理评审反馈，最多循环若干步 |
-
-- settings 命名空间 `planweave`：默认项目名 + 执行模型 + 每轮步数
-- HTTP API：`GET /api/planweave/status`（loopback，供 client 面板轮询）
-- 核心引擎复用 `@planweave-ai/runtime`；执行器走 `ctx.llm`
-
 ### 团队 Agent 编排（`team`）
 
 把「多角色 AI 团队分工协作」做成可编排的数据：**多个团队**，每个团队有自己的角色集、协作链、
@@ -380,7 +364,6 @@ src/
 ├── index.ts                  — host 半身入口：各能力模块装配（按模块开关裁剪）
 ├── modules.ts                — 功能模块 key 清单与开关解析（host / client 共用）
 ├── modules-host.ts           — 模块开关 host（settings 命名空间 webui-modules + GET/POST /api/webui-modules）
-├── planweave/                — PlanWeave 计划项目（engine / executor / host / workspace）
 ├── team/                     — 团队 Agent 编排（types / seed 出厂编制 / store 多团队存储 / roster 模型解析 / prompts / engine 运行引擎 / capabilities 能力装配 / generate 一句话生成 / chat-mode 提示词注入 / tools / host 路由）
 ├── automation/               — 定时自动化任务引擎（store / scheduler / executor / tool / suggestions / routes）
 ├── deliverables.ts           — 会话产物记账 host（/api/webui-deliverables，按会话白名单授权）

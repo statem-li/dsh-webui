@@ -25,8 +25,7 @@ export interface ProviderView {
     models: ProviderModelView[];
 }
 /**
- * 读 DSH 内置 `llm-pi-ai` 命名空间的 providers 配置（与 webui_sync_reasoning /
- * planweave /providers 同一数据源），投影为下拉分组数据。
+ * 读 DSH 内置 `llm-pi-ai` 命名空间的 providers 配置（与 webui_sync_reasoning 同一数据源），投影为下拉分组数据。
  */
 export declare function listProviders(ctx: AnyContext): ProviderView[];
 /** 校验一个绑定是否存在于 providers 枚举中（provider 为空时跳过校验）。 */

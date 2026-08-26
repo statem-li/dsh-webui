@@ -2,7 +2,7 @@
  * team — client 半身装配入口。
  *
  * 三个挂载点：
- *  1. 侧边栏导航行「团队」入口 + 右侧滑出面板（team 槽位，PlanWeave 之后）。
+ *  1. 侧边栏导航行「团队」入口 + 右侧滑出面板（team 槽位）。
  *  2. 对话框「团队」开关（conversation.input.right，order 4，提示词优化左侧）。
  *  3. 对话流悬浮执行 HUD（fixed 浮层，贴对话区顶部）。
  */

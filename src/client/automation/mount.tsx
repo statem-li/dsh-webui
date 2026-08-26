@@ -6,7 +6,7 @@
  *  - 锚点 = `[data-slot="sidebar.workspaces"]`（slots 渲染器的稳定锚 div）；
  *  - host div（#dsh-automation-menu-host）插到该容器之前——AutomationApp
  *    在 host 内随 React 树渲染 skills / memory 合并行槽位（与自动化按钮
- *    同行，见 AutomationApp），用量/PlanWeave 等其余导航行排在 host 之后；
+ *    同行，见 AutomationApp），用量/团队等其余导航行排在 host 之后；
  *    外部脚本不往 host 里 append 节点（会与 React 首次提交竞态）；
  *  - 低频轮询兜底：侧边栏整体重挂（HMR/插件重载）后自动重新插入。
  */

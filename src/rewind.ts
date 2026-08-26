@@ -470,7 +470,7 @@ export function safeRelative(cwd: string, absPath: string): string | null {
 /** 某目录名是否应被排除（精确 + 下划线前缀 + 前缀）。 */
 function isExcludedDir(name: string): boolean {
   if (EXCLUDED_DIRS.has(name)) return true
-  // 下划线前缀目录视为工具/临时/分析/备份产物（_tmp、_kr-、_planweave_analysis、
+  // 下划线前缀目录视为工具/临时/分析/备份产物（_tmp、_kr-、_repo_analysis、
   // _update-backup-* 等），不是项目文件，快照与回退一律跳过——避免把「分析任务
   // 生成的整仓副本」「更新备份」等大量非对话产物误算成新增文件、退回时误删。
   if (name.startsWith('_')) return true

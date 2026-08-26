@@ -49,7 +49,6 @@ import { applyPromptOptimize } from './prompt-optimize.js'
 import { applySidebarFloat } from './sidebar-float.js'
 import { applyAppearance } from './appearance.js'
 import { applyAutomationHost } from './automation/index.js'
-import { applyPlanweaveHost } from './planweave/host.js'
 import { applyTeamHost } from './team/host.js'
 import { applyPerfBench } from './perf-bench.js'
 import { applyDevRoleProbe } from './devrole-probe.js'
@@ -343,10 +342,7 @@ export async function apply(ctx: Context, config: WebuiConfig = {}): Promise<voi
   //     （/api/webui-automation：任务 CRUD / 建议确认 / 运行历史 / 完成事件）。
   if (modules.automation) applyAutomationHost(ctx)
 
-  // 20) PlanWeave：本地计划任务图 + 认领/执行/评审/反馈循环（@planweave-ai/runtime 内核 + ctx.llm 执行器）。
-  if (modules.planweave) applyPlanweaveHost(ctx)
-
-  // 20.2) 团队 Agent 编排器：多团队编制（一团队一文件）+ 接力运行引擎（llm/subagent 双通道）
+  // 20) 团队 Agent 编排器：多团队编制（一团队一文件）+ 接力运行引擎（llm/subagent 双通道）
   //       + team_run/team_status/team_list 工具 + 对话框团队模式提示词注入
   //       （/api/webui-team：teams / globals / providers / chat-mode / runs）。
   if (modules.team) applyTeamHost(ctx)

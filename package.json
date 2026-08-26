@@ -23,7 +23,6 @@
     "scripts/build.sh",
     "scripts/conversation-done-card.ps1",
     "assets/task-done.wav",
-    "assets/planweave-skills",
     "assets/vendor",
     "scripts/voice-speaker.ps1"
   ],
@@ -50,7 +49,6 @@
     }
   },
   "dependencies": {
-    "@planweave-ai/runtime": "^0.4.0",
     "@shikijs/langs": "4.4.3",
     "@shikijs/themes": "4.4.3",
     "dompurify": "^3.4.14",

@@ -8,9 +8,6 @@ importers:
 
   .:
     dependencies:
-      '@planweave-ai/runtime':
-        specifier: ^0.4.0
-        version: 0.4.0
       '@shikijs/langs':
         specifier: 4.4.3
         version: 4.4.3
@@ -125,11 +122,6 @@ importers:
         version: 5.9.3
 
 packages:
-
-  '@agentclientprotocol/sdk@1.2.1':
-    resolution: {integrity: sha512-jwYUdOQR7tc+Zfch53VL4JJyUNK/46q03uUTYb+PjECsmnNl94XFXOfYLJ8RBpMNidXd1rpOAVgb0vqD98xImA==}
-    peerDependencies:
-      zod: ^3.25.0 || ^4.0.0
 
   '@codemirror/autocomplete@6.20.3':
     resolution: {integrity: sha512-tlosUqb+3BbxCxZdu4tKeRghPFC+QM7q4X5YhKV2eCmPG+1r2F3f4AaSz5sCrFqUtX4Jh20VFTKecl16MgiV9g==}
@@ -262,18 +254,6 @@ packages:
 
   '@oxc-project/types@0.146.0':
     resolution: {integrity: sha512-XC0QsnnhVe7sLIWmYmdPw7x5P0h4W8vUU3Nv1ySgWXtvCz8NizoAEpGXA0sOYoJQV2Rl13LgURAHQ5cI5ILCSA==}
-
-  '@planweave-ai/agent-host-protocol@0.4.0':
-    resolution: {integrity: sha512-uMpdnqybBRfH2HvoBVXCpp0cKiCmUTv3XAUhg9PTV9Yhu6XeZIqZYhFb/zUdF2URgHTUdxawYRUKAoH2GurX7g==, tarball: https://registry.npmjs.org/@planweave-ai/agent-host-protocol/-/agent-host-protocol-0.4.0.tgz}
-    engines: {node: '>=22.13'}
-
-  '@planweave-ai/collaboration-protocol@0.4.0':
-    resolution: {integrity: sha512-5/V5mSVlx944Jg/oSHIaOwdwZPxMo/1fVCgqHVPgbE1IkKYitE8yssjNAgHQxPE58zTahLgS1PnWErJ5ENWGYg==, tarball: https://registry.npmjs.org/@planweave-ai/collaboration-protocol/-/collaboration-protocol-0.4.0.tgz}
-    engines: {node: '>=22.13'}
-
-  '@planweave-ai/runtime@0.4.0':
-    resolution: {integrity: sha512-EyTZQwGtmpPSFxRlMV0dbawwFrrgP+LT3TC/b2yJMLuzxzbjPbUWCreNQaain8U52kG12BpUOBfxESQREpdHFA==}
-    engines: {node: '>=22.13'}
 
   '@quansync/fs@1.0.0':
     resolution: {integrity: sha512-4TJ3DFtlf1L5LDMaM6CanJ/0lckGNtJcMjQ1NAV6zDmA0tEHKZtxNKin8EgPaVX1YzljbxckyT2tJrpQKAtngQ==}
@@ -584,12 +564,6 @@ packages:
 
   '@yuku-toolchain/types@0.8.7':
     resolution: {integrity: sha512-2Z53dNxAJL6UvFoIrDZvYf3zlO8s4VJK4O2hhaB4mXVwwpX/7ajtss3cmfqKvamlNLWyt9FSWs4eoYdlbxpnHA==}
-
-  ajv-formats@3.0.1:
-    resolution: {integrity: sha512-8iUql50EUR+uUcdRQ3HDqa6EVyo3docL8g5WJ3FNcWmu62IbkGUue/pEyLBW8VGKKucTPgqeks4fIU1DA4yowQ==}
-
-  ajv@8.20.0:
-    resolution: {integrity: sha512-Thbli+OlOj+iMPYFBVBfJ3OmCAnaSyNn4M1vz9T6Gka5Jt9ba/HIR56joy65tY6kx/FCF5VXNB819Y7/GUrBGA==}
 
   ansis@4.3.1:
     resolution: {integrity: sha512-BJ8/l4R5LRE7hW9WdSuGYrLSHi2ynxeFpDFbH0K/CgNeY/tyhk+vO6TYxXC5r5CpUhNVX310xzPsN/H9lCdfOA==}
@@ -997,10 +971,6 @@ packages:
 
 snapshots:
 
-  '@agentclientprotocol/sdk@1.2.1(zod@4.4.3)':
-    dependencies:
-      zod: 4.4.3
-
   '@codemirror/autocomplete@6.20.3':
     dependencies:
       '@codemirror/language': 6.12.4
@@ -1276,24 +1246,6 @@ snapshots:
 
   '@oxc-project/types@0.146.0': {}
 
-  '@planweave-ai/agent-host-protocol@0.4.0':
-    dependencies:
-      zod: 4.4.3
-
-  '@planweave-ai/collaboration-protocol@0.4.0':
-    dependencies:
-      '@planweave-ai/agent-host-protocol': 0.4.0
-      zod: 4.4.3
-
-  '@planweave-ai/runtime@0.4.0':
-    dependencies:
-      '@agentclientprotocol/sdk': 1.2.1(zod@4.4.3)
-      '@planweave-ai/agent-host-protocol': 0.4.0
-      '@planweave-ai/collaboration-protocol': 0.4.0
-      ajv: 8.20.0
-      ajv-formats: 3.0.1
-      zod: 4.4.3
-
   '@quansync/fs@1.0.0':
     dependencies:
       quansync: 1.0.0
@@ -1509,17 +1461,6 @@ snapshots:
     optional: true
 
   '@yuku-toolchain/types@0.8.7': {}
-
-  ajv-formats@3.0.1:
-    dependencies:
-      ajv: 8.20.0
-
-  ajv@8.20.0:
-    dependencies:
-      fast-deep-equal: 3.1.3
-      fast-uri: 3.1.5
-      json-schema-traverse: 1.0.0
-      require-from-string: 2.0.2
 
   ansis@4.3.1: {}
 

@@ -1,11 +1,11 @@
 /**
  * sidebar-nav — 侧边栏导航区共享挂载器（webui 插件内部）。
  *
- * 「用量/余额」与 PlanWeave 入口从 sidebar.footer.action 迁入侧边栏上部，
+ * 「用量/余额」与「团队」入口从 sidebar.footer.action 迁入侧边栏上部，
  * 排在「自动化」菜单项（#dsh-automation-menu-host）正下方：
  *  - 锚点 = `[data-slot="sidebar.workspaces"]`（slots 渲染器的稳定锚 div，
  *    与 automation mount.tsx 同一契约），host 插在浏览区容器之前；
- *  - host 内含固定顺序的槽位容器（usage / planweave）：各入口经 useNavSlot
+ *  - host 内含固定顺序的槽位容器（usage / team）：各入口经 useNavSlot
  *    轮询拿到自己的槽位后 portal 进去——顺序确定、互不覆盖；
  *  - 「技能」「记忆」两个入口的槽位（AUTO_ROW_SLOTS）由 AutomationApp 的
  *    React 树渲染在「自动化」host 内部，与自动化按钮合成一行（见 SHEET
@@ -29,8 +29,8 @@ const AUTO_HOST_ID = 'dsh-automation-menu-host'
 /** 侧边栏折叠观察：AutomationApp / sidebar-float 相同的框架容器选择器。 */
 const FRAME_SELECTOR = 'div:has(> [data-shell-overlay])'
 
-/** nav host 内槽位名 → 顺序即 DOM 顺序（用量一行，PlanWeave 一行，团队一行）。 */
-const SLOT_NAMES = ['usage', 'planweave', 'team'] as const
+/** nav host 内槽位名 → 顺序即 DOM 顺序（用量一行，团队一行）。 */
+const SLOT_NAMES = ['usage', 'team'] as const
 
 /** 「自动化」host 内的合并行槽位：技能/记忆与自动化按钮同行（顺序即 DOM 顺序）。 */
 const AUTO_ROW_SLOTS = ['skills', 'memory'] as const
@@ -90,7 +90,7 @@ export function ensureNavMount(): () => void {
 
 /** 轮询获取指定槽位容器（未就位时返回 null，组件据此暂不渲染）。
  *
- * 槽位可能位于 nav host（usage / planweave）或自动化 host（skills / memory
+ * 槽位可能位于 nav host（usage / team）或自动化 host（skills / memory
  * 合并行），因此全局按 data-nav-slot 查找——槽位名由本模块统一创建，唯一。
  *
  * **永不停止**：未就位时 100ms 阶梯快查（10 次后退 400ms）；找到后退化为
