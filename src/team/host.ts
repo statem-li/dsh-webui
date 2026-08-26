@@ -300,15 +300,24 @@ function handleActiveRuns(deps: RouteDeps, url: URL, res: ServerResponse): void 
   const { store } = deps
   const sessionId = url.searchParams.get('sessionId') ?? ''
   const runs = store.activeRuns(sessionId)
+  // 跨会话兜底：本会话查不到活跃运行（页面会话与运行会话错位、切会话、刷新后
+  // 会话身份为空等）但全局有团队在跑时，仍返回它们 —— HUD 不再"只在完成时才
+  // 冒出来"，运行一开始就能看到实时进度。
+  const ownOnly = runs.length > 0
+  const shown = ownOnly ? runs : (sessionId === '' ? runs : store.activeRuns(''))
+  const eager = shown.length > 0 && !ownOnly
   // 附带最近一次已结束的运行：HUD 结束后停留展示汇总。
-  const recent = sessionId !== ''
+  // 本会话优先；跨会话模式下退回全局最近一次完成的运行（与 shown 的口径一致）。
+  const recent = (sessionId !== '' || !ownOnly)
     ? store.listRuns({ limit: 12 }).filter(summary => summary.status !== 'running' && summary.status !== 'queued')
     : []
   const lastFinished = recent.length > 0 ? store.readRun(recent[0].id) : null
+  const lastMatches = lastFinished !== null && (sessionId === '' || lastFinished.sessionId === sessionId || eager)
   json(res, 200, {
     ok: true,
-    runs: runs.map(run => ({ ...run, progress: runProgress(run) })),
-    ...(lastFinished !== null && lastFinished.sessionId === sessionId
+    runs: shown.map(run => ({ ...run, progress: runProgress(run) })),
+    ...(eager ? { eager: true } : {}),
+    ...(lastMatches && lastFinished !== null
       ? { lastFinished: { ...lastFinished, progress: runProgress(lastFinished) } }
       : {}),
   })

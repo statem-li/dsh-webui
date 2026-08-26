@@ -296,6 +296,19 @@ html[${GLASS_ATTRIBUTE}] [class*="_composerSeat"] [class*="_card"] {
 html[${GLASS_ATTRIBUTE}] body[data-ds-dark-theme] [class*="_composerSeat"] [class*="_card"] {
   background-color: rgba(30,31,36,.38);
 }
+/* ===== 输入区指令菜单（斜杠命令 / 引用@ 菜单）========================
+ * 玻璃主题下 --dsw-specific-menu（引用 --dsw-alias-bg-layer-3）会被 token
+ * 覆盖层换成半透明（不透明度 40% 时菜单整体透出壁纸，观感磨砂且文字
+ * 对比度下降）。指令面板是对话输入的高频辅助，恢复官方实色菜单表面：
+ * 只重定义变量本身，保留官方边框/投影/圆角与行 hover 高亮；作用域限定
+ * conversation.input.overlay（输入框上方弹出的 // 与 @ 菜单本体即
+ * role=listbox 容器），设置面板等其他浮层仍保持玻璃。 */
+html[${GLASS_ATTRIBUTE}] [data-slot="conversation.input.overlay"] [role="listbox"] {
+  --dsw-specific-menu: #ffffff;
+}
+html[${GLASS_ATTRIBUTE}] body[data-ds-dark-theme] [data-slot="conversation.input.overlay"] [role="listbox"] {
+  --dsw-specific-menu: rgb(53, 54, 56);
+}
 /* composer 工具条弹出层（提示词优化 / 选择模型 / 推理等级）：
  * 这三个弹层的底色 token --dsw-specific-menu 引用 --dsw-alias-bg-layer-3，
  * 随玻璃覆盖层半透明（≈0.75 不透明度），但比记忆/技能面板的「完全透明 +

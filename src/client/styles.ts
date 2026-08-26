@@ -69,7 +69,7 @@ const SHEET = `
 .webui-provider-badge{display:inline-flex;align-items:center;height:22px;padding:0 10px;border:1px solid var(--dsw-alias-border-l2,#333);border-radius:11px;background:var(--dsw-alias-bg-layer-2,transparent);color:var(--dsw-alias-label-secondary,#bbb);font-size:12px;line-height:1;white-space:nowrap}
 /* 消息数量按钮（内联，仅数量徽标） */
 .webui-trigger{display:inline-flex;align-items:center;justify-content:center;height:28px;padding:0 2px;border:none;background:transparent;cursor:pointer}
-.webui-trigger-badge{flex:0 0 auto;min-width:20px;height:20px;padding:0 6px;border-radius:10px;background:var(--dsw-alias-state-business-primary,#4a9eff);color:#fff;font-size:11px;line-height:20px;text-align:center;font-weight:600;transition:transform 120ms, box-shadow 120ms}
+.webui-trigger-badge{flex:0 0 auto;min-width:22px;height:22px;padding:0 7px;border-radius:11px;background:var(--dsw-alias-state-business-primary,#4a9eff);color:#0d3b6e;font-size:13px;line-height:22px;text-align:center;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:.02em;transition:transform 120ms, box-shadow 120ms}
 .webui-trigger:hover .webui-trigger-badge{transform:scale(1.1);box-shadow:0 0 8px color-mix(in srgb,var(--dsw-alias-state-business-primary,#4a9eff) 60%,transparent)}
 .webui-trigger[aria-expanded="true"] .webui-trigger-badge{transform:scale(1.1)}
 .webui-popup{position:fixed;z-index:1200;width:min(420px, calc(100vw - 24px));max-height:min(480px, 60vh);display:flex;flex-direction:column;border:1px solid var(--dsw-alias-border-l2,#333);border-radius:10px;background:var(--dsw-specific-menu,var(--dsw-alias-bg-layer-2,#16181d));box-shadow:var(--dsw-shadow-lv3,0 8px 32px rgba(0,0,0,.45));overflow:hidden}

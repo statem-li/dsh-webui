@@ -128,7 +128,7 @@ export function listRuns(teamId?: string, limit = 50): Promise<{ runs: RunSummar
   return requestJson(`/runs?${query.toString()}`)
 }
 
-export function getActiveRuns(sessionId: string): Promise<{ runs: Run[], lastFinished?: Run }> {
+export function getActiveRuns(sessionId: string): Promise<{ runs: Run[], lastFinished?: Run, eager?: boolean }> {
   return requestJson(`/runs/active?sessionId=${encodeURIComponent(sessionId)}`)
 }
 

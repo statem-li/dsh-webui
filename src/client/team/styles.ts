@@ -9,10 +9,12 @@
  *
  * 布局：团队面板是**右侧全高抽屉**（占满右边可视区，宽度自适应），内部编制页为
  * 「左画布 + 右检视栏」双列，窄屏退化为上下单列。
- * 抽屉是浮层本体；HUD 与收起胶囊已去玻璃（用户要求）：底色改用不参与 glass.ts
+ * 抽屉是浮层本体；HUD 收起态与收起胶囊**默认去玻璃**（用户要求）：底色改用不参与 glass.ts
  * 玻璃覆盖的 static-neutral-bluish 不透明 token（否则玻璃质感开启时 alias 层的
  * specific-menu 会被整体替换成半透明值，光删 blur 挡不住透底），并显式声明
  * backdrop-filter 为 none；布局列容器不加 filter/transform。
+ * 例外：HUD **展开态**按新需求加磨砂玻璃包裹（blur + 半透明同色底 + 圆角），
+ * 详情见下方 HUD 段注释 —— 仅 [data-collapsed='false'] 生效，收起态/胶囊不变。
  */
 
 const STYLE_ID = 'dsh-webui-team-styles'
@@ -317,17 +319,18 @@ body[data-ds-dark-theme] .team-ask{background:var(--dsw-static-neutral-bluish-85
   background:color-mix(in srgb,var(--dsw-alias-state-business-primary,#4176e6) 16%,transparent);
   color:var(--dsw-alias-state-business-primary,#4176e6);
 }
-/* HUD 波次分隔条：一波开始时淡入并横向铺开 */
-.team-wave-sep{display:flex;align-items:center;gap:8px;padding:2px 2px 0;font-size:10.5px;color:var(--dsw-alias-label-dimmed,#777);animation:team-fade-in .26s ease}
-.team-wave-sep-line{flex:1;height:1px;background:linear-gradient(90deg,var(--dsw-alias-border-l2,rgba(255,255,255,.16)),transparent);transform-origin:left center;animation:team-wave-grow .42s cubic-bezier(.2,.8,.2,1)}
+/* 波次标签 + 划线：位于本波卡片列的**上方**，线长 = 本波卡宽（列式流内不再全幅）；
+   标签做足辨识度：胶囊底 + 600 字重 + 稍大字号。文字用 label-primary（浅色=近黑、
+   深色=近白，官方双主题生效），不能用 label-secondary/#bbb —— 浅色主题下会褪成
+   近乎白字（截图实测「第 1 波」灰到看不清）。运行中波次高亮为品牌蓝。 */
+.team-wave-sep{display:flex;align-items:center;gap:8px;padding:2px 2px 0;font-size:11px;font-weight:600;color:var(--dsw-alias-label-primary,#1f2328);animation:team-fade-in .26s ease}
+.team-wave-sep-line{flex:1;min-width:28px;height:1px;background:linear-gradient(90deg,var(--dsw-alias-border-l2,rgba(255,255,255,.16)),transparent);transform-origin:left center;animation:team-wave-grow .42s cubic-bezier(.2,.8,.2,1)}
 .team-wave-sep[data-live='true']{color:var(--dsw-alias-state-business-primary,#4176e6)}
 .team-wave-sep[data-live='true'] .team-wave-sep-line{background:linear-gradient(90deg,color-mix(in srgb,var(--dsw-alias-state-business-primary,#4176e6) 55%,transparent),transparent)}
-.team-wave-tag{flex:none;display:inline-flex;align-items:center;gap:5px}
+.team-wave-tag{flex:none;display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:10px;background:color-mix(in srgb,var(--dsw-alias-label-dimmed,#777) 10%,transparent);border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.14))}
+.team-wave-sep[data-live='true'] .team-wave-tag{background:color-mix(in srgb,var(--dsw-alias-state-business-primary,#4176e6) 14%,transparent);border-color:color-mix(in srgb,var(--dsw-alias-state-business-primary,#4176e6) 45%,transparent)}
 .team-wave-par{flex:none;padding:0 6px;border-radius:8px;border:1px solid color-mix(in srgb,var(--dsw-alias-state-business-primary,#4176e6) 40%,transparent);color:var(--dsw-alias-state-business-primary,#4176e6)}
 @keyframes team-wave-grow{from{transform:scaleX(0);opacity:0}to{transform:scaleX(1);opacity:1}}
-/* 波次整组入场：轻微上浮淡入（卡片随组一起就位，营造「一波到位」的节奏） */
-.team-wave{animation:team-wave-rise .34s cubic-bezier(.2,.8,.2,1)}
-@keyframes team-wave-rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 /* 并行进行中的角色卡：外圈脉冲光提示「这几张卡在同时跑」 */
 .team-card[data-parallel='true'][data-status='running']{animation:team-par-pulse 2.2s ease-in-out infinite}
 @keyframes team-par-pulse{
@@ -338,7 +341,7 @@ body[data-ds-dark-theme] .team-ask{background:var(--dsw-static-neutral-bluish-85
   .team-step[data-parallel='true']::before,
   .team-step[data-group-head='true']::before,
   .team-card[data-parallel='true'][data-status='running'],
-  .team-wave-sep-line{animation:none}
+  .team-wave-sep,.team-wave-sep-line{animation:none}
 }
 
 /* 状态灯 */
@@ -528,15 +531,31 @@ body[data-ds-dark-theme] .team-gen-card{background:var(--dsw-static-neutral-blui
 .team-check input{accent-color:var(--dsw-alias-state-business-primary,#4176e6)}
 
 /* ══ 对话流执行 HUD ══
-   分离式布局：外层 .team-hud 只是**透明的定位/排版容器**（无边框、无底色、
+   分离式布局：外层 .team-hud 收起态是**透明的定位/排版容器**（无边框、无底色、
    无阴影、不裁剪），真正有视觉实体的是内部两类独立卡片 —— 顶部概览条
    .team-hud-bar 与每张角色卡 .team-card。这样角色卡不再被一个大外框"包裹"，
-   视觉上是一组并列的独立卡片（用户明确要求：卡片不要被主卡片套住）。 */
-.team-hud{position:fixed;z-index:900;display:flex;flex-direction:column;gap:8px;box-sizing:border-box;border:none;background:none;box-shadow:none;overflow:visible;animation:team-fade-in .24s ease}
+   视觉上是一组并列的独立卡片（用户明确要求：卡片不要被主卡片套住）。
+   展开态在容器上追加一层**磨砂玻璃包裹**（blur 背景 + 半透明同色底 + 圆角），
+   卡片缝隙间透出的对话流被高斯模糊糊掉，卡片仍是浮在磨砂上的独立个体。 */
+.team-hud{position:fixed;z-index:900;display:flex;flex-direction:column;gap:8px;box-sizing:border-box;border:none;background:none;box-shadow:none;overflow:visible;animation:team-fade-in .24s ease;transition:backdrop-filter .38s ease,-webkit-backdrop-filter .38s ease,background-color .38s ease,box-shadow .38s ease,border-radius .38s ease}
 /* 折叠态用 translateX(-50%) 做水平居中，但入场动画 dsh-modal-slide-in 也写 transform，
    动画终态会把内联的 translateX 覆盖掉（实测被解析成 translateY(24px)、居中失效）。
-   折叠态改用 margin-inline:auto + inset 定位居中，并关掉该动画，彻底避开 transform 冲突。 */
-.team-hud[data-collapsed='true']{animation:none;align-items:center;justify-content:flex-end}
+   折叠态改用 margin-inline:auto + inset 定位居中，并关掉该动画，彻底避开 transform 冲突。
+   折叠态 blur(0)（而非 none）：backdrop-filter none→blur(x) 不可插值，blur(0)→blur(x) 可，
+   保证展开/收起时磨砂层平滑淡入淡出而非瞬跳。 */
+.team-hud[data-collapsed='true']{animation:none;align-items:center;justify-content:flex-end;backdrop-filter:blur(0px);-webkit-backdrop-filter:blur(0px)}
+/* 展开态：高斯模糊包裹（backdrop 边缘按 border-radius 裁剪，圆角磨砂托盘） */
+.team-hud[data-collapsed='false']{
+  backdrop-filter:blur(15px) saturate(1.15);
+  -webkit-backdrop-filter:blur(15px) saturate(1.15);
+  background:color-mix(in srgb,var(--dsw-static-neutral-bluish-00,#fff) 58%,transparent);
+  border-radius:14px;
+  box-shadow:0 14px 44px -10px rgba(0,0,0,.3),0 2px 12px rgba(0,0,0,.14);
+}
+body[data-ds-dark-theme] .team-hud[data-collapsed='false']{
+  background:color-mix(in srgb,var(--dsw-static-neutral-bluish-950,rgb(21,21,23)) 58%,transparent);
+  box-shadow:0 14px 44px -10px rgba(0,0,0,.65),0 2px 12px rgba(0,0,0,.4);
+}
 
 /* 卡面通用皮肤：不透明底 + 细边 + 轻阴影（去玻璃，浅 00 白 / 深 950 近原深灰）。 */
 .team-surface{box-sizing:border-box;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.14));border-radius:12px;background:var(--dsw-static-neutral-bluish-00,#fff);backdrop-filter:none;-webkit-backdrop-filter:none;box-shadow:var(--dsw-shadow-lv2,0 6px 24px rgba(0,0,0,.35))}
@@ -555,6 +574,7 @@ body[data-ds-dark-theme] .team-surface{background:var(--dsw-static-neutral-bluis
 .team-hud-bar[data-state='done']{border-color:color-mix(in srgb,var(--dsw-alias-state-success-primary,#3fb96b) 50%,transparent)}
 .team-hud-bar[data-state='error']{border-color:color-mix(in srgb,var(--dsw-alias-state-error-primary,#e0434b) 55%,transparent)}
 .team-hud-title{flex:none;display:flex;align-items:center;gap:6px;font-size:14px;font-weight:600;color:var(--dsw-alias-label-primary,#eee)}
+.team-hud-cross{font-size:11px;font-weight:400;color:var(--dsw-alias-label-tertiary,#888);animation:team-fade-in .3s ease}
 .team-hud-chain{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--dsw-alias-label-secondary,#bbb)}
 .team-hud-pips{flex:none;display:flex;align-items:center;gap:4px}
 .team-hud-pip{width:7px;height:7px;border-radius:50%;background:var(--dsw-alias-border-l2,rgba(255,255,255,.2))}
@@ -582,9 +602,13 @@ body[data-ds-dark-theme] .team-surface{background:var(--dsw-static-neutral-bluis
 /* 包围卡内的成员卡：浅填充底替代白底+投影，与外层白卡形成「面板→成员」层级 */
 .team-cards-wrap .team-card{background:var(--dsw-alias-bg-module-platform,rgba(0,0,0,.03));box-shadow:none}
 body[data-ds-dark-theme] .team-cards-wrap .team-card{background:var(--dsw-alias-bg-module-platform,rgba(255,255,255,.04))}
-/* auto-fit（而非 auto-fill）：波次里只有 1~2 张卡时，空轨道自动塌缩，
-   卡片吃满整行 —— 不会出现「卡片缩在左边 + 右半屏空白」的稀疏排布。 */
-.team-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(168px,1fr));gap:8px}
+/* 波次列式流：每波一列（「第 N 波」标签+划线在上、卡片在下），列宽随卡自适应；
+   列与列在同一个 flex 流里并排换行 —— 前一步列占位不大时后一步列自动并到同一排，
+   划线分割恢复但不再全幅断行（全幅断行 + 小卡 → 右侧大空洞）。 */
+.team-cards{display:flex;flex-wrap:wrap;gap:10px;justify-content:center;align-items:flex-start}
+.team-wave-col{flex:0 1 auto;min-width:0;max-width:100%;display:flex;flex-direction:column;gap:6px}
+.team-wave-cards{display:flex;flex-wrap:wrap;gap:8px;justify-content:center}
+.team-wave-cards>.team-card{flex:1 1 280px;max-width:400px}
 .team-card{display:flex;flex-direction:column;gap:6px;padding:11px 12px;box-sizing:border-box;border-radius:12px;cursor:pointer;transition:border-color .2s ease,box-shadow .2s ease,transform .12s ease}
 .team-card:hover{border-color:var(--dsw-alias-border-l3,rgba(255,255,255,.22));transform:translateY(-1px)}
 .team-card[data-status='running']{border-color:color-mix(in srgb,var(--dsw-alias-state-business-primary,#4176e6) 60%,transparent);box-shadow:0 0 0 1px color-mix(in srgb,var(--dsw-alias-state-business-primary,#4176e6) 22%,transparent),var(--dsw-shadow-lv2,0 6px 24px rgba(0,0,0,.35))}
@@ -622,9 +646,9 @@ body[data-ds-dark-theme] .team-cards-wrap .team-card{background:var(--dsw-alias-
 
 @media (prefers-reduced-motion:reduce){
   .team-toast,.team-hud,.team-pop,.team-pill,.team-drawer,.team-mask,.team-gen-card,.team-gen-mask,
-  .team-canvas-layer,.team-editor-card,.team-editor-mask,.team-ask,.team-ask-mask,.team-wave{animation:none}
+  .team-canvas-layer,.team-editor-card,.team-editor-mask,.team-ask,.team-ask-mask{animation:none}
   .team-dot[data-status='running'],.team-hud-pip[data-status='running']{animation:none}
-  .team-toggle-btn,.team-toggle-chevron,.team-pop-item,.team-pop-check,.team-chevron,.team-progress-fill,.team-role-card-grid{transition:none!important}
+  .team-toggle-btn,.team-toggle-chevron,.team-pop-item,.team-pop-check,.team-chevron,.team-progress-fill,.team-role-card-grid,.team-hud{transition:none!important}
   .team-pop,.team-pop-check{animation:none!important}
   /* 中心光晕过场退化为硬切换 */
   .team-aura,.team-aura-blob,.team-aura-ring,.team-aura-wash{animation:none!important}
