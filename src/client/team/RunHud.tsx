@@ -21,7 +21,7 @@ import { ensureTeamStyles } from './styles.ts'
 import { RoleRunCard } from './RoleRunCard.tsx'
 import { MarkstreamMarkdown } from '../markdown/renderer.tsx'
 import { SOURCE_LABEL, type Run, type RunStep } from './types.ts'
-import { elapsedOf, formatDuration, runStatusText, shortModel, stepIcon, stepStatusText } from './util.ts'
+import { elapsedOf, formatClock, formatDuration, runStatusText, shortModel, stepIcon, stepStatusText } from './util.ts'
 
 /** 轮询间隔。 */
 const POLL_ACTIVE_MS = 1200
@@ -162,7 +162,7 @@ function dockRect(): DockLayout | null {
 }
 
 /** 当前会话 id（sessions.currentProvideInfo 快照，与 automation/models.ts 同源）。 */
-function useSessionId(ctx: ClientContext): string {
+export function useSessionId(ctx: ClientContext): string {
   const [sessionId, setSessionId] = useState('')
   useEffect(() => {
     let dispose: (() => void) | null = null
@@ -193,8 +193,6 @@ export function RunHud({ ctx }: { ctx: ClientContext }): JSX.Element | null {
   const sessionId = useSessionId(ctx)
   const [runs, setRuns] = useState<Run[]>([])
   const [finished, setFinished] = useState<Run | null>(null)
-  /** 跨会话视图：本会话无活跃运行但全局有团队在跑（页面会话错位/切会话也能看到）。 */
-  const [eager, setEager] = useState(false)
   const [expanded, setExpanded] = useState<boolean>(() => readExpanded())
   const [now, setNow] = useState(() => Date.now())
   const [layout, setLayout] = useState<DockLayout | null>(null)
@@ -216,9 +214,9 @@ export function RunHud({ ctx }: { ctx: ClientContext }): JSX.Element | null {
     setViewing(null)
   }, [sessionId])
 
-  // 轮询活跃运行：本会话优先；服务端在本会话无活跃运行时兜底返回全局活跃运行
-  // （eager 跨会话视图）—— 只要有任何团队运行在进行，HUD 就实时可见，不会
-  // 只在运行结束时才冒出来。sessionId 为空也照常轮询（走全局兜底）。
+  // 轮询活跃运行：服务端已按会话严格隔离（本会话无运行就返回空）。
+  // 二次校验会话归属：轮询响应可能是切会话前发出的（in-flight），不校验会把
+  // 上一个会话的运行回填到新会话的 HUD 上。
   useEffect(() => {
     let alive = true
     let timer = 0
@@ -226,7 +224,6 @@ export function RunHud({ ctx }: { ctx: ClientContext }): JSX.Element | null {
       try {
         const data = await api.getActiveRuns(sessionId)
         if (!alive) return
-        setEager(data.eager === true)
         setRuns(data.runs)
         if (data.runs.length > 0) {
           setFinished(null)
@@ -234,11 +231,8 @@ export function RunHud({ ctx }: { ctx: ClientContext }): JSX.Element | null {
           window.clearTimeout(lingerTimer.current)
         } else if (data.lastFinished !== undefined) {
           // 刚结束的运行：停留 LINGER_MS 后收成胶囊。
-          // 二次校验会话归属：轮询响应可能是切会话前发出的（in-flight），
-          // 不校验会把上一个会话的运行回填到新会话的 HUD 上；
-          // 跨会话视图（eager）下服务端已按全局口径返回，直接采信。
           const next = data.lastFinished as Run
-          if (data.eager !== true && next.sessionId !== undefined && next.sessionId !== sessionId) return
+          if (next.sessionId !== undefined && next.sessionId !== sessionId) return
           setFinished((previous) => {
             if (previous !== null && previous.id === next.id) return previous
             window.clearTimeout(lingerTimer.current)
@@ -377,7 +371,6 @@ export function RunHud({ ctx }: { ctx: ClientContext }): JSX.Element | null {
         <div className="team-hud-bar team-surface" data-state={state} role="button" onClick={toggle} aria-expanded={expanded}>
           <span className="team-hud-title">
             👥 {shown.length > 1 ? `${shown.length} 个团队运行中` : primary.teamName}
-            {active && eager ? <span className="team-hud-cross">• 其他会话</span> : null}
           </span>
           {shown.length === 1 ? <span className="team-hud-chain">{primary.chainName}</span> : null}
           <span className="team-hud-pips">
@@ -406,7 +399,7 @@ export function RunHud({ ctx }: { ctx: ClientContext }): JSX.Element | null {
                 multi={shown.length > 1}
                 onOpenStep={step => void openStep(run, step)}
                 onOpenFinal={() => void openFinal(run)}
-                onCancel={() => { void api.cancelRun(run.id).catch(() => {}) }}
+                onCancel={() => { void api.cancelRun(run.id, sessionId).catch(() => {}) }}
               />
             ))}
           </div>
@@ -519,11 +512,17 @@ function StepDetailCard({ viewing, shown, now, onClose }: {
               {step.channel !== undefined ? (
                 <span className="team-step-badge">{step.channel === 'subagent' ? 'subagent · 继承会话模型' : 'llm 直跑'}</span>
               ) : null}
-              <span className="team-step-badge team-step-time">
-                ⏱ {step.startedAt !== undefined
-                  ? formatDuration(elapsedOf(step.startedAt, step.finishedAt, now))
-                  : '未开始'}
-                {step.status === 'running' ? ' · 输出中…' : ''}
+              <span className="team-step-badge team-step-time" data-state={step.status}>
+                {/* 与运行卡一致：执行中显示执行时间走秒，完成后显示完成时刻（不再显示耗时） */}
+                {step.status === 'running'
+                  ? `⏱ ${step.startedAt !== undefined ? formatDuration(elapsedOf(step.startedAt, step.finishedAt, now)) : '--:--'} · 输出中…`
+                  : step.status === 'done'
+                    ? `✓ ${formatClock(step.finishedAt) || formatClock(new Date(now).toISOString())} 完成`
+                    : step.status === 'error'
+                      ? `✕ ${formatClock(step.finishedAt) || formatClock(new Date(now).toISOString())}`
+                      : step.status === 'skipped'
+                        ? '已跳过'
+                        : '待办'}
               </span>
             </div>
 

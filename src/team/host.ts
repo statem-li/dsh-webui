@@ -142,23 +142,33 @@ interface RouteDeps {
   engine: TeamEngine
 }
 
-async function handleTeams(deps: RouteDeps, req: IncomingMessage, res: ServerResponse): Promise<void> {
+async function handleTeams(deps: RouteDeps, req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
   const { store } = deps
+  const querySession = (url.searchParams.get('sessionId') ?? '').trim()
   if (req.method === 'POST') {
     const body = await readBody(req)
     const action = typeof body.action === 'string' ? body.action : ''
     const name = typeof body.name === 'string' ? body.name.trim() : ''
     const id = typeof body.id === 'string' ? body.id.trim() : ''
+    const session = typeof body.sessionId === 'string' ? body.sessionId.trim() : ''
+    /**
+     * 「设为当前团队」的目标会话：带 sessionId 只写会话级（不污染其它会话与全局默认）；
+     * 不带（旧调用方/工具）回退写全局默认。
+     */
+    const setCurrent = (teamId: string): void => {
+      if (session !== '') store.setSessionActiveTeam(session, teamId)
+      else store.patchGlobals({ activeTeamId: teamId })
+    }
     if (action === 'create') {
       const team = store.createTeam(name !== '' ? name : '新团队', { seed: body.seed === true })
-      store.patchGlobals({ activeTeamId: team.id })
-      json(res, 200, { ok: true, team, teams: store.listTeams(), activeTeamId: team.id })
+      setCurrent(team.id)
+      json(res, 200, { ok: true, team, teams: store.listTeams(), activeTeamId: store.sessionActiveTeamId(session) })
       return
     }
     if (action === 'duplicate') {
       const team = store.duplicateTeam(id, name !== '' ? name : undefined)
-      store.patchGlobals({ activeTeamId: team.id })
-      json(res, 200, { ok: true, team, teams: store.listTeams(), activeTeamId: team.id })
+      setCurrent(team.id)
+      json(res, 200, { ok: true, team, teams: store.listTeams(), activeTeamId: store.sessionActiveTeamId(session) })
       return
     }
     if (action === 'remove') {
@@ -173,8 +183,12 @@ async function handleTeams(deps: RouteDeps, req: IncomingMessage, res: ServerRes
       return
     }
     if (action === 'activate') {
-      const globals = store.patchGlobals({ activeTeamId: id })
-      json(res, 200, { ok: true, activeTeamId: globals.activeTeamId, teams: store.listTeams() })
+      setCurrent(id)
+      json(res, 200, {
+        ok: true,
+        activeTeamId: store.sessionActiveTeamId(session),
+        teams: store.listTeams(),
+      })
       return
     }
     if (action === 'reset') {
@@ -193,14 +207,13 @@ async function handleTeams(deps: RouteDeps, req: IncomingMessage, res: ServerRes
         ...(model !== '' ? { model } : {}),
         ...(teamModel !== null ? { teamModel } : {}),
       })
-      store.patchGlobals({ activeTeamId: team.id })
-      json(res, 200, { ok: true, team, teams: store.listTeams(), activeTeamId: team.id })
+      setCurrent(team.id)
+      json(res, 200, { ok: true, team, teams: store.listTeams(), activeTeamId: store.sessionActiveTeamId(session) })
       return
     }
     throw new TeamError(`未知动作：${action}`, 'unknown_action', 400)
   }
-  const globals = store.readGlobals()
-  json(res, 200, { ok: true, teams: store.listTeams(), activeTeamId: globals.activeTeamId })
+  json(res, 200, { ok: true, teams: store.listTeams(), activeTeamId: store.sessionActiveTeamId(querySession) })
 }
 
 async function handleTeamDetail(
@@ -288,10 +301,11 @@ async function handleRuns(deps: RouteDeps, url: URL, req: IncomingMessage, res: 
     return
   }
   const teamId = url.searchParams.get('teamId') ?? ''
+  const sessionId = url.searchParams.get('sessionId') ?? ''
   const limit = Number.parseInt(url.searchParams.get('limit') ?? '50', 10)
   json(res, 200, {
     ok: true,
-    runs: store.listRuns({ ...(teamId !== '' ? { teamId } : {}), limit: Number.isFinite(limit) ? limit : 50 }),
+    runs: store.listRuns({ ...(teamId !== '' ? { teamId } : {}), ...(sessionId !== '' ? { sessionId } : {}), limit: Number.isFinite(limit) ? limit : 50 }),
     activeRunIds: engine.activeRunIds(),
   })
 }
@@ -299,40 +313,45 @@ async function handleRuns(deps: RouteDeps, url: URL, req: IncomingMessage, res: 
 function handleActiveRuns(deps: RouteDeps, url: URL, res: ServerResponse): void {
   const { store } = deps
   const sessionId = url.searchParams.get('sessionId') ?? ''
-  const runs = store.activeRuns(sessionId)
-  // 跨会话兜底：本会话查不到活跃运行（页面会话与运行会话错位、切会话、刷新后
-  // 会话身份为空等）但全局有团队在跑时，仍返回它们 —— HUD 不再"只在完成时才
-  // 冒出来"，运行一开始就能看到实时进度。
-  const ownOnly = runs.length > 0
-  const shown = ownOnly ? runs : (sessionId === '' ? runs : store.activeRuns(''))
-  const eager = shown.length > 0 && !ownOnly
-  // 附带最近一次已结束的运行：HUD 结束后停留展示汇总。
-  // 本会话优先；跨会话模式下退回全局最近一次完成的运行（与 shown 的口径一致）。
-  const recent = (sessionId !== '' || !ownOnly)
-    ? store.listRuns({ limit: 12 }).filter(summary => summary.status !== 'running' && summary.status !== 'queued')
+  // 会话严格隔离：只返回本会话的活跃运行。
+  const shown = sessionId !== '' ? store.activeRuns(sessionId) : []
+  // 最近一次已结束的运行：同样只取本会话的（HUD 结束后停留展示汇总）。
+  const recent = sessionId !== ''
+    ? store.listRuns({ limit: 12 }).filter(summary =>
+        summary.status !== 'running' && summary.status !== 'queued' && summary.sessionId === sessionId)
     : []
   const lastFinished = recent.length > 0 ? store.readRun(recent[0].id) : null
-  const lastMatches = lastFinished !== null && (sessionId === '' || lastFinished.sessionId === sessionId || eager)
   json(res, 200, {
     ok: true,
     runs: shown.map(run => ({ ...run, progress: runProgress(run) })),
-    ...(eager ? { eager: true } : {}),
-    ...(lastMatches && lastFinished !== null
+    ...(lastFinished !== null
       ? { lastFinished: { ...lastFinished, progress: runProgress(lastFinished) } }
       : {}),
   })
+}
+
+/** 校验调用方对本运行的会话归属；无归属的旧运行放行（跨会话禁止操作）。 */
+function assertRunOwnership(store: TeamStore, runId: string, sessionId: string): void {
+  const run = store.readRun(runId)
+  if (run === null) throw new TeamError(`找不到运行：${runId}`, 'run_not_found', 404)
+  if (sessionId !== '' && run.sessionId !== undefined && run.sessionId !== '' && run.sessionId !== sessionId) {
+    throw new TeamError('该运行不是本会话发起的，无法操作', 'run_foreign', 403)
+  }
 }
 
 async function handleRunDetail(
   deps: RouteDeps, runId: string, tail: string, url: URL, req: IncomingMessage, res: ServerResponse,
 ): Promise<void> {
   const { store, engine } = deps
+  const sessionId = url.searchParams.get('sessionId') ?? ''
   if (tail === 'cancel' && req.method === 'POST') {
+    assertRunOwnership(store, runId, sessionId)
     const hit = engine.cancel(runId)
     json(res, 200, { ok: true, cancelled: hit })
     return
   }
   if (tail === 'remove' && req.method === 'POST') {
+    assertRunOwnership(store, runId, sessionId)
     store.removeRun(runId)
     json(res, 200, { ok: true })
     return
@@ -388,7 +407,7 @@ export function applyTeamHost(ctx: AnyContext): void {
         const parts = rest === '' ? [] : rest.split('/')
 
         if (parts[0] === 'teams') {
-          if (parts.length === 1) return await handleTeams(deps, req, res)
+          if (parts.length === 1) return await handleTeams(deps, req, res, url)
           return await handleTeamDetail(deps, parts[1], req, res)
         }
         if (parts[0] === 'globals') return await handleGlobals(deps, req, res)

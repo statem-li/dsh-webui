@@ -68,6 +68,12 @@ export declare class TeamStore {
     readChatMode(sessionId: string): ChatModeState;
     /** 写单会话开关（LRU 淘汰到 CHAT_MODE_MAX 条）。 */
     writeChatMode(sessionId: string, patch: Partial<ChatModeState>): ChatModeState;
+    /** 会话当前团队 id：会话级 teamId 优先，未选过时回退全局默认。 */
+    sessionActiveTeamId(sessionId: string): string;
+    /** 设置会话当前团队（仅写会话级，不动全局默认）。 */
+    setSessionActiveTeam(sessionId: string, teamId: string): void;
+    /** 按会话解析有效团队：会话当前团队 → 全局默认 → 第一个可用。 */
+    resolveTeamForSession(id: string | undefined, sessionId: string): Team;
     /** 某次运行的目录。 */
     runDir(runId: string): string;
     /** 某次运行的 run.json 路径。 */
@@ -80,9 +86,10 @@ export declare class TeamStore {
     readRun(runId: string): Run | null;
     /** 运行 id 列表（新→旧）。 */
     listRunIds(): string[];
-    /** 运行清单（可按团队过滤）。 */
+    /** 运行清单（可按团队/会话过滤）。 */
     listRuns(options?: {
         teamId?: string;
+        sessionId?: string;
         limit?: number;
     }): RunSummary[];
     /** 某会话的活跃运行（queued / running），新→旧。 */

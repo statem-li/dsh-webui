@@ -32,6 +32,16 @@ export function formatTime(iso: string | undefined): string {
   return new Date(value).toLocaleString(undefined, { hour12: false })
 }
 
+/** 本地时钟串 HH:mm:ss（完成时间戳用）。 */
+export function formatClock(iso: string | undefined): string {
+  if (iso === undefined || iso === '') return ''
+  const value = Date.parse(iso)
+  if (!Number.isFinite(value)) return ''
+  const d = new Date(value)
+  const pad = (n: number): string => String(n).padStart(2, '0')
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+}
+
 /** 模型绑定 → "provider/model"。 */
 export function bindingValue(binding: ModelBinding | null): string {
   if (binding === null || binding.provider === '' || binding.model === '') return ''

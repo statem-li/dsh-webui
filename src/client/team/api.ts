@@ -27,8 +27,9 @@ function post<T>(path: string, body: unknown): Promise<T> {
 
 // ── 团队 ──
 
-export function listTeams(): Promise<{ teams: TeamSummary[], activeTeamId: string }> {
-  return requestJson('/teams')
+export function listTeams(sessionId = ''): Promise<{ teams: TeamSummary[], activeTeamId: string }> {
+  const query = sessionId !== '' ? `?sessionId=${encodeURIComponent(sessionId)}` : ''
+  return requestJson(`/teams${query}`)
 }
 
 export function getTeam(id: string): Promise<{ team: Team }> {
@@ -39,8 +40,8 @@ export function saveTeam(team: Team): Promise<{ team: Team, teams: TeamSummary[]
   return post(`/teams/${encodeURIComponent(team.id)}`, { team })
 }
 
-export function createTeam(name: string, seed: boolean): Promise<{ team: Team, teams: TeamSummary[], activeTeamId: string }> {
-  return post('/teams', { action: 'create', name, seed })
+export function createTeam(name: string, seed: boolean, sessionId = ''): Promise<{ team: Team, teams: TeamSummary[], activeTeamId: string }> {
+  return post('/teams', { action: 'create', name, seed, ...(sessionId !== '' ? { sessionId } : {}) })
 }
 
 /** 一句话生成团队（host 用 ctx.llm 设计编制并落盘）。 */
@@ -49,12 +50,13 @@ export function generateTeam(payload: {
   provider?: string
   model?: string
   teamModel?: { provider: string, model: string }
+  sessionId?: string
 }): Promise<{ team: Team, teams: TeamSummary[], activeTeamId: string }> {
   return post('/teams', { action: 'generate', ...payload })
 }
 
-export function duplicateTeam(id: string, name?: string): Promise<{ team: Team, teams: TeamSummary[], activeTeamId: string }> {
-  return post('/teams', { action: 'duplicate', id, ...(name !== undefined ? { name } : {}) })
+export function duplicateTeam(id: string, name?: string, sessionId = ''): Promise<{ team: Team, teams: TeamSummary[], activeTeamId: string }> {
+  return post('/teams', { action: 'duplicate', id, ...(name !== undefined ? { name } : {}), ...(sessionId !== '' ? { sessionId } : {}) })
 }
 
 export function removeTeam(id: string): Promise<{ teams: TeamSummary[], activeTeamId: string }> {
@@ -65,8 +67,8 @@ export function renameTeam(id: string, name: string): Promise<{ team: Team, team
   return post('/teams', { action: 'rename', id, name })
 }
 
-export function activateTeam(id: string): Promise<{ activeTeamId: string, teams: TeamSummary[] }> {
-  return post('/teams', { action: 'activate', id })
+export function activateTeam(id: string, sessionId = ''): Promise<{ activeTeamId: string, teams: TeamSummary[] }> {
+  return post('/teams', { action: 'activate', id, ...(sessionId !== '' ? { sessionId } : {}) })
 }
 
 export function resetTeam(id: string): Promise<{ team: Team, teams: TeamSummary[] }> {
@@ -122,9 +124,10 @@ export function startRun(payload: StartRunPayload): Promise<{ run: Run }> {
   return post('/runs', payload)
 }
 
-export function listRuns(teamId?: string, limit = 50): Promise<{ runs: RunSummary[], activeRunIds: string[] }> {
+export function listRuns(teamId?: string, limit = 50, sessionId = ''): Promise<{ runs: RunSummary[], activeRunIds: string[] }> {
   const query = new URLSearchParams({ limit: String(limit) })
   if (teamId !== undefined && teamId !== '') query.set('teamId', teamId)
+  if (sessionId !== '') query.set('sessionId', sessionId)
   return requestJson(`/runs?${query.toString()}`)
 }
 
@@ -140,10 +143,12 @@ export function getRunOutput(id: string, name: string): Promise<{ content: strin
   return requestJson(`/runs/${encodeURIComponent(id)}/output?name=${encodeURIComponent(name)}`)
 }
 
-export function cancelRun(id: string): Promise<{ cancelled: boolean }> {
-  return post(`/runs/${encodeURIComponent(id)}/cancel`, {})
+export function cancelRun(id: string, sessionId = ''): Promise<{ cancelled: boolean }> {
+  const query = sessionId !== '' ? `?sessionId=${encodeURIComponent(sessionId)}` : ''
+  return post(`/runs/${encodeURIComponent(id)}/cancel${query}`, {})
 }
 
-export function removeRun(id: string): Promise<unknown> {
-  return post(`/runs/${encodeURIComponent(id)}/remove`, {})
+export function removeRun(id: string, sessionId = ''): Promise<unknown> {
+  const query = sessionId !== '' ? `?sessionId=${encodeURIComponent(sessionId)}` : ''
+  return post(`/runs/${encodeURIComponent(id)}/remove${query}`, {})
 }

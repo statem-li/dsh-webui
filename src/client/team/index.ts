@@ -27,7 +27,7 @@ export function applyTeamClient(ctx: ClientContext): void {
     ensureNavMount()
     const holder = document.createElement('div')
     const root = createRoot(holder)
-    root.render(createElement(TeamNavApp))
+    root.render(createElement(TeamNavApp, { ctx }))
     return () => { root.unmount() }
   }, 'webui: team nav entry')
 

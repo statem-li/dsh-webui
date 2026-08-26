@@ -19,10 +19,12 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import { ensureShellStyles } from '../popover-shell.js'
 import { NavButton, ensureNavMount, ensureNavStyles, useNavSlot, useRail } from '../sidebar-nav.js'
 import { ensureTeamStyles } from './styles.ts'
 import * as api from './api.ts'
+import { useSessionId } from './RunHud.tsx'
 import { RoleCard } from './RoleCard.tsx'
 import { TeamBoard } from './TeamBoard.tsx'
 import { ChainEditor } from './ChainEditor.tsx'
@@ -48,7 +50,7 @@ const DRAWER_EXIT_MS = 220
 type PanelTab = 'roster' | 'run' | 'history' | 'settings'
 
 /** 团队入口按钮 + 右侧全高抽屉（贴侧边栏右缘铺满到屏幕右缘）。 */
-export function TeamNavApp(): JSX.Element | null {
+export function TeamNavApp({ ctx }: { ctx: ClientContext }): JSX.Element | null {
   const slot = useNavSlot('team')
   const [open, setOpen] = useState(false)
   const [closing, setClosing] = useState(false)
@@ -173,7 +175,7 @@ export function TeamNavApp(): JSX.Element | null {
             aria-modal="true"
             aria-label="团队编排"
           >
-            <TeamPanel onClose={close} />
+            <TeamPanel onClose={close} ctx={ctx} />
           </div>
         </>,
         document.body,
@@ -183,7 +185,9 @@ export function TeamNavApp(): JSX.Element | null {
 }
 
 /** 面板主体。 */
-function TeamPanel({ onClose }: { onClose: () => void }): JSX.Element {
+function TeamPanel({ onClose, ctx }: { onClose: () => void, ctx: ClientContext }): JSX.Element {
+  // 当前活跃会话：团队的「当前选中」按会话隔离（会话 A 的切换不影响会话 B）。
+  const sessionId = useSessionId(ctx)
   const [tab, setTab] = useState<PanelTab>('roster')
   const [teams, setTeams] = useState<TeamSummary[]>([])
   const [activeId, setActiveId] = useState('')
@@ -229,10 +233,10 @@ function TeamPanel({ onClose }: { onClose: () => void }): JSX.Element {
   }, [])
 
   /** 拉团队清单 + 当前团队 + providers + globals。 */
-  const loadAll = useCallback(async (preferId?: string): Promise<void> => {
+  const loadAll = useCallback(async (preferId?: string, resetActive = false): Promise<void> => {
     try {
       const [teamList, providerList, globalsData] = await Promise.all([
-        api.listTeams(), api.getProviders(), api.getGlobals(),
+        api.listTeams(sessionId), api.getProviders(), api.getGlobals(),
       ])
       setTeams(teamList.teams)
       setProviders(providerList.providers)
@@ -241,7 +245,8 @@ function TeamPanel({ onClose }: { onClose: () => void }): JSX.Element {
         if (previous === null) setDispatch(globalsData.globals.autoPlan ? 'auto' : 'chain')
         return globalsData.globals
       })
-      const wanted = preferId ?? (activeId !== '' ? activeId : teamList.activeTeamId)
+      // 会话切换（resetActive）时忽略旧会话的选中，用新会话的当前团队。
+      const wanted = preferId ?? (!resetActive && activeId !== '' ? activeId : teamList.activeTeamId)
       const exists = teamList.teams.some(t => t.id === wanted && t.readonly !== true)
       const target = exists ? wanted : (teamList.teams.find(t => t.readonly !== true)?.id ?? '')
       setActiveId(target)
@@ -256,7 +261,7 @@ function TeamPanel({ onClose }: { onClose: () => void }): JSX.Element {
     } catch (err) {
       fail(err)
     }
-  }, [activeId, fail])
+  }, [activeId, sessionId, fail])
 
   // 能力目录（工具/技能/技能包）独立拉取：失败不阻塞面板，角色编辑里显示"读不到"。
   const loadCatalog = useCallback(async (): Promise<void> => {
@@ -267,7 +272,9 @@ function TeamPanel({ onClose }: { onClose: () => void }): JSX.Element {
     }
   }, [])
 
-  useEffect(() => { void loadAll() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  // 拉清单 + 当前团队：跟随当前会话（mount 时 sessionId 可能尚为空串，
+  // 订阅回调拿到真实会话 id 后会再次加载，首次按全局默认加载可接受）。
+  useEffect(() => { void loadAll(undefined, true) }, [sessionId]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { void loadCatalog() }, [loadCatalog])
 
   // 秒级 tick（运行计时）。
@@ -290,15 +297,15 @@ function TeamPanel({ onClose }: { onClose: () => void }): JSX.Element {
     return () => { alive = false; window.clearInterval(timer) }
   }, [currentRun])
 
-  // 历史列表（切到 history tab 时拉取）。
+  // 历史列表（切到 history tab 时拉取；按会话隔离，只显示本会话的运行）。
   const loadHistory = useCallback(async (): Promise<void> => {
     try {
-      const data = await api.listRuns(activeId !== '' ? activeId : undefined, 50)
+      const data = await api.listRuns(activeId !== '' ? activeId : undefined, 50, sessionId)
       setHistory(data.runs)
     } catch (err) {
       fail(err)
     }
-  }, [activeId, fail])
+  }, [activeId, sessionId, fail])
 
   useEffect(() => {
     if (tab !== 'history') return
@@ -323,7 +330,7 @@ function TeamPanel({ onClose }: { onClose: () => void }): JSX.Element {
 
   const switchTeam = async (id: string): Promise<void> => {
     try {
-      await api.activateTeam(id)
+      await api.activateTeam(id, sessionId)
       await loadAll(id)
     } catch (err) {
       fail(err)
@@ -340,7 +347,7 @@ function TeamPanel({ onClose }: { onClose: () => void }): JSX.Element {
     })
     if (name === null) return
     try {
-      const data = await api.createTeam(name, seed)
+      const data = await api.createTeam(name, seed, sessionId)
       await loadAll(data.team.id)
       notify(`已创建团队「${data.team.name}」`)
     } catch (err) {
@@ -351,7 +358,7 @@ function TeamPanel({ onClose }: { onClose: () => void }): JSX.Element {
   const duplicateTeam = async (): Promise<void> => {
     if (team === null) return
     try {
-      const data = await api.duplicateTeam(team.id)
+      const data = await api.duplicateTeam(team.id, undefined, sessionId)
       await loadAll(data.team.id)
       notify(`已复制为「${data.team.name}」`)
     } catch (err) {
@@ -382,8 +389,8 @@ function TeamPanel({ onClose }: { onClose: () => void }): JSX.Element {
     })
     if (!ok) return
     try {
-      const data = await api.removeTeam(team.id)
-      await loadAll(data.activeTeamId)
+      await api.removeTeam(team.id)
+      await loadAll(undefined, true)
       notify('团队已删除')
     } catch (err) {
       fail(err)
@@ -574,6 +581,8 @@ function TeamPanel({ onClose }: { onClose: () => void }): JSX.Element {
         task: task.trim(),
         // 派发方式：链（按链内并行组执行）/ 主脑自主编排并行计划。
         ...(dispatch === 'auto' ? { autoPlan: true } : chainId !== '' ? { chainId } : {}),
+        // 归属当前会话：HUD / runs/active 按会话隔离，不会串到其它会话。
+        ...(sessionId !== '' ? { sessionId } : {}),
       }
       const picked: Record<string, { provider: string, model: string }> = {}
       for (const [roleId, binding] of Object.entries(overrides)) {
@@ -594,7 +603,7 @@ function TeamPanel({ onClose }: { onClose: () => void }): JSX.Element {
   const cancelRun = async (): Promise<void> => {
     if (currentRun === null) return
     try {
-      await api.cancelRun(currentRun.id)
+      await api.cancelRun(currentRun.id, sessionId)
       notify('已请求取消')
     } catch (err) {
       fail(err)
@@ -994,6 +1003,7 @@ function TeamPanel({ onClose }: { onClose: () => void }): JSX.Element {
         open={genOpen}
         providers={providers}
         defaultGenModel={globals !== null && globals.defaultModel.provider !== '' ? globals.defaultModel : null}
+        sessionId={sessionId}
         onClose={() => setGenOpen(false)}
         onDone={(created) => {
           setGenOpen(false)

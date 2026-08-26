@@ -95,9 +95,10 @@ export function TeamToggle({ available, sessionId }: TeamToggleInjected): JSX.El
   }, [])
 
   // 拉团队清单：挂载即拉（横幅/按钮都需要团队名），open 时刷新兜底。
+  // 按当前会话拉取：activeTeamId 已是会话级（会话 A 的选中不影响会话 B）。
   useEffect(() => {
     let alive = true
-    void api.listTeams().then((data) => {
+    void api.listTeams(sid).then((data) => {
       if (!alive) return
       setTeams(data.teams.filter(team => team.readonly !== true))
       if (state.teamId === '' && data.activeTeamId !== '') {

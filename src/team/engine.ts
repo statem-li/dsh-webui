@@ -188,7 +188,8 @@ export class TeamEngine {
    */
   start(input: StartRunInput, context: RunContext = {}): Run {
     const globals = this.store.readGlobals()
-    const team = this.store.resolveTeam(input.teamId)
+    // 当前团队：显式 teamId 优先；为空时按发起会话的「当前团队」解析（会话级）。
+    const team = this.store.resolveTeamForSession(input.teamId, input.sessionId ?? '')
     const merged = effectiveGlobals(globals, team)
     const autoPlan = input.autoPlan === true
 

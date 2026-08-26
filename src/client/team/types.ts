@@ -230,6 +230,8 @@ export interface RunSummary {
   task: string
   status: RunStatus
   origin: RunOrigin
+  /** 发起会话 id（按会话隔离展示）。 */
+  sessionId?: string
   startedAt: string
   finishedAt?: string
   doneSteps: number

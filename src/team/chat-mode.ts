@@ -145,7 +145,7 @@ export function applyTeamChatMode(ctx: AnyContext, store: TeamStore): () => void
         const result = mode.teamId !== ''
           ? store.tryReadTeam(mode.teamId)
           : (() => {
-              try { return { team: store.resolveTeam() } } catch { return { issue: 'no team' } }
+              try { return { team: store.resolveTeamForSession(undefined, sessionId) } } catch { return { issue: 'no team' } }
             })()
         const team = 'team' in result ? result.team : null
         text = buildInstruction([{ sessionId, mode, team }])

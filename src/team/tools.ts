@@ -152,19 +152,19 @@ export function registerTeamTools({ ctx, store, engine }: TeamToolDeps): () => v
     parameters: {
       teamId: { type: 'string', description: '只看某个团队时传它的 id；留空列出全部。' },
     },
-    async execute(args) {
+    async execute(args, exec) {
       const params = args as unknown as Record<string, unknown>
       const teamId = typeof params.teamId === 'string' ? params.teamId.trim() : ''
       if (teamId !== '') {
         return JSON.stringify(presentTeam(store.readTeam(teamId)), null, 2)
       }
-      const globals = store.readGlobals()
+      const sessionId = execSessionId(exec)
       const teams = store.listTeamIds()
         .map(id => store.tryReadTeam(id))
         .filter((r): r is { team: Team } => 'team' in r)
         .map(r => presentTeam(r.team))
       if (teams.length === 0) return '尚无可用团队，请让用户在团队面板新建一个团队。'
-      return JSON.stringify({ activeTeamId: globals.activeTeamId, teams }, null, 2)
+      return JSON.stringify({ activeTeamId: store.sessionActiveTeamId(sessionId), teams }, null, 2)
     },
     output: {
       schema: { type: 'string' },
@@ -220,7 +220,8 @@ export function registerTeamTools({ ctx, store, engine }: TeamToolDeps): () => v
       const task = typeof params.task === 'string' ? params.task.trim() : ''
       if (task === '') throw new Error('task 不能为空')
       const teamId = typeof params.teamId === 'string' ? params.teamId.trim() : ''
-      const team = store.resolveTeam(teamId !== '' ? teamId : undefined)
+      // 当前团队按会话解析：本会话选过的优先，未选过回退全局默认。
+      const team = store.resolveTeamForSession(teamId !== '' ? teamId : undefined, sessionId)
 
       const roles = Array.isArray(params.roles)
         ? params.roles.filter((r): r is string => typeof r === 'string' && r.trim() !== '').map(r => r.trim())
@@ -308,18 +309,27 @@ export function registerTeamTools({ ctx, store, engine }: TeamToolDeps): () => v
   // ── team_status ──
   disposers.push(ctx.tools.register(defineTool({
     name: 'team_status',
-    description: '查看团队运行状态：指定 runId 查该次运行，留空查最近一次运行。返回每步状态、实际使用的模型与来源层、产物路径。',
+    description: '查看团队运行状态：指定 runId 查该次运行，留空查本会话最近一次运行。返回每步状态、实际使用的模型与来源层、产物路径。',
     parameters: {
-      runId: { type: 'string', description: '运行 id；留空取最近一次。' },
+      runId: { type: 'string', description: '运行 id；留空取本会话最近一次。' },
       full: { type: 'boolean', description: 'true 时附带最终交付物全文。' },
     },
-    async execute(args) {
+    async execute(args, exec) {
       const params = args as unknown as Record<string, unknown>
       const runId = typeof params.runId === 'string' ? params.runId.trim() : ''
+      const sessionId = execSessionId(exec)
       const run = runId !== ''
         ? store.readRun(runId)
         : (() => {
             const ids = store.listRunIds()
+            for (const id of ids) {
+              const snapshot = store.readRun(id)
+              if (snapshot === null) continue
+              // 本会话优先；本会话没有运行时回退全局最近一次（避免新会话一片空）。
+              if (sessionId !== '' && snapshot.sessionId === sessionId) return snapshot
+              if (sessionId === '') return snapshot
+            }
+            // 全都不属于本会话时，回退全局最近一次（有会话 id 但找不到 → 全局兜底）。
             for (const id of ids) {
               const snapshot = store.readRun(id)
               if (snapshot !== null) return snapshot
@@ -367,7 +377,10 @@ export function registerTeamTools({ ctx, store, engine }: TeamToolDeps): () => v
         ...(model !== '' ? { model } : {}),
         ...(signal !== undefined ? { signal } : {}),
       })
-      store.patchGlobals({ activeTeamId: team.id })
+      // 设为「本会话」的当前团队，不污染其它会话与全局默认。
+      const sessionId = execSessionId(exec)
+      if (sessionId !== '') store.setSessionActiveTeam(sessionId, team.id)
+      else store.patchGlobals({ activeTeamId: team.id })
       const lines: string[] = [
         `已生成团队「${team.name}」（id: ${team.id}），共 ${team.roles.length} 个角色、${team.chains.length} 条协作链，并设为当前团队。`,
         '',

@@ -24,12 +24,14 @@ export interface GenerateModalProps {
   providers: readonly ProviderView[]
   /** 生成用模型（缺省用全局默认）。 */
   defaultGenModel: ModelBinding | null
+  /** 当前会话 id：生成的团队设为该会话的当前团队（不影响其它会话）。 */
+  sessionId?: string
   onClose: () => void
   onDone: (team: Team) => void
 }
 
 /** 一句话生成团队弹窗。 */
-export function GenerateModal({ open, providers, defaultGenModel, onClose, onDone }: GenerateModalProps): JSX.Element | null {
+export function GenerateModal({ open, providers, defaultGenModel, sessionId, onClose, onDone }: GenerateModalProps): JSX.Element | null {
   const [brief, setBrief] = useState('')
   const [genModel, setGenModel] = useState<ModelBinding | null>(null)
   const [busy, setBusy] = useState(false)
@@ -69,6 +71,7 @@ export function GenerateModal({ open, providers, defaultGenModel, onClose, onDon
       const data = await api.generateTeam({
         brief: brief.trim(),
         ...(genModel !== null ? { provider: genModel.provider, model: genModel.model } : {}),
+        ...(sessionId !== undefined && sessionId !== '' ? { sessionId } : {}),
       })
       onDone(data.team)
       setBrief('')

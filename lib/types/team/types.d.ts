@@ -277,6 +277,8 @@ export interface RunSummary {
     task: string;
     status: RunStatus;
     origin: RunOrigin;
+    /** 发起会话 id（面板/工具触发时写入；用于按会话隔离展示）。 */
+    sessionId?: string;
     startedAt: string;
     finishedAt?: string;
     /** 完成步数 / 总步数。 */
@@ -325,6 +327,7 @@ export declare function normalizePlan(input: unknown, knownRoleIds: ReadonlySet<
 /** 一个会话的团队模式状态。 */
 export interface ChatModeState {
     enabled: boolean;
+    /** 团队模式选定的团队（面板 + 开关共用的会话级当前团队）。 */
     teamId: string;
     /** '' = 自动选择链 / 由主脑判断。 */
     chainId: string;

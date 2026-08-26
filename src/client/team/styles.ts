@@ -632,6 +632,18 @@ body[data-ds-dark-theme] .team-cards-wrap .team-card{background:var(--dsw-alias-
 .team-card-todos-fill{position:absolute;inset:0 auto 0 0;background:color-mix(in srgb,var(--dsw-alias-state-success-primary,#3fb96b) 60%,transparent);border-radius:8px;transition:width .3s ease}
 .team-card-todos-text{position:relative;display:flex;align-items:center;justify-content:center;height:16px;font-size:10px;line-height:16px;color:var(--dsw-alias-label-secondary,#bbb)}
 .team-card-time{font-size:11px;line-height:16px;color:var(--dsw-alias-label-dimmed,#777);font-family:ui-monospace,SFMono-Regular,monospace}
+/* 执行中计时：品牌蓝，区别于完成态的时刻戳 */
+.team-card-time[data-live='true']{color:var(--dsw-alias-state-business-primary,#4176e6)}
+.team-card-time[data-state='done']{color:var(--dsw-alias-state-success-primary,#3fb96b)}
+.team-card-time[data-state='error']{color:var(--dsw-alias-state-error-primary,#e0434b)}
+/* 执行中聚焦态：正在思考 + 当前任务（只留过程焦点） */
+.team-card-live{display:flex;align-items:center;gap:7px;font-size:12.5px;line-height:19px;color:var(--dsw-alias-state-business-primary,#4176e6);animation:team-fade-in .24s ease}
+.team-card-live-dot{flex:none;width:7px;height:7px;border-radius:50%;background:currentColor;animation:team-breathe 1.4s ease-in-out infinite}
+.team-card-live-text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.team-card-todo-now{font-size:12px;line-height:17px;color:var(--dsw-alias-label-secondary,#bbb);word-break:break-word;border-top:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.08));padding-top:6px;max-height:34px;overflow:hidden}
+/* 详情卡时间徽标：完成后回到时刻戳（绿色） */
+.team-step-time[data-state='done']{border-color:color-mix(in srgb,var(--dsw-alias-state-success-primary,#3fb96b) 50%,transparent);color:var(--dsw-alias-state-success-primary,#3fb96b)}
+.team-step-time[data-state='error']{border-color:color-mix(in srgb,var(--dsw-alias-state-error-primary,#e0434b) 55%,transparent);color:var(--dsw-alias-state-error-primary,#e0434b)}
 .team-card-out{font-size:12px;line-height:17px;color:var(--dsw-alias-label-secondary,#aaa);white-space:pre-wrap;word-break:break-word;max-height:51px;overflow:hidden;border-top:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.08));padding-top:6px}
 .team-card-err{font-size:12px;line-height:17px;color:var(--dsw-alias-state-error-primary,#e0434b);word-break:break-word;max-height:51px;overflow:hidden}
 
@@ -647,7 +659,7 @@ body[data-ds-dark-theme] .team-cards-wrap .team-card{background:var(--dsw-alias-
 @media (prefers-reduced-motion:reduce){
   .team-toast,.team-hud,.team-pop,.team-pill,.team-drawer,.team-mask,.team-gen-card,.team-gen-mask,
   .team-canvas-layer,.team-editor-card,.team-editor-mask,.team-ask,.team-ask-mask{animation:none}
-  .team-dot[data-status='running'],.team-hud-pip[data-status='running']{animation:none}
+  .team-dot[data-status='running'],.team-hud-pip[data-status='running'],.team-card-live-dot{animation:none}
   .team-toggle-btn,.team-toggle-chevron,.team-pop-item,.team-pop-check,.team-chevron,.team-progress-fill,.team-role-card-grid,.team-hud{transition:none!important}
   .team-pop,.team-pop-check{animation:none!important}
   /* 中心光晕过场退化为硬切换 */
