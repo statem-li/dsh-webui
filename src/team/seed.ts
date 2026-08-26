@@ -247,6 +247,18 @@ const SEED_CHAINS: readonly Chain[] = [
       { kind: 'role', roleId: 'bo', taskNote: '审稿：挑事实与逻辑漏洞，给必改项。' },
     ],
   },
+  {
+    // 并行示例链：察与策互不依赖，同波次并发跑完再交给驳审查。
+    // parallel:true = 与上一步同波次（同时开跑，彼此看不到对方产出）。
+    id: 'fanout',
+    name: '察‖策 并行 → 驳 → 主脑整合',
+    finalSynthesize: true,
+    steps: [
+      { kind: 'role', roleId: 'cha', taskNote: '并行支线 A：深度调研取证，输出事实清单。' },
+      { kind: 'role', roleId: 'ce', parallel: true, taskNote: '并行支线 B：独立发散并收敛出可落地方案（不要等调研结论，缺事实处标注待确认）。' },
+      { kind: 'role', roleId: 'bo', taskNote: '汇合审查：用事实清单校验方案，标注严重度与必改项。' },
+    ],
+  },
 ]
 
 /** 出厂直连（图上「按需直连」）。 */

@@ -28,19 +28,27 @@ function describeTeam(team: Team, mode: ChatModeState): string[] {
     lines.push(`- \`${role.id}\` ${role.name}（${role.en}）：${role.tagline}`)
   }
   if (team.chains.length > 0) {
-    lines.push('可用协作链：')
+    lines.push('可用协作链（`‖` = 该组角色并行同时执行）：')
     for (const chain of team.chains) {
-      const path = chain.steps
-        .map(step => (step.kind === 'synthesize' ? '主脑整合' : (team.roles.find(r => r.id === step.roleId)?.name ?? step.roleId)))
-        .join(' → ')
+      const parts: string[] = []
+      for (const step of chain.steps) {
+        const label = step.kind === 'synthesize'
+          ? '主脑整合'
+          : (team.roles.find(r => r.id === step.roleId)?.name ?? step.roleId)
+        if (step.kind === 'role' && step.parallel === true && parts.length > 0) {
+          parts[parts.length - 1] = `${parts[parts.length - 1]}‖${label}`
+          continue
+        }
+        parts.push(label)
+      }
       const tail = chain.finalSynthesize && !chain.steps.some(s => s.kind === 'synthesize') ? ' → 主脑整合' : ''
-      lines.push(`- \`${chain.id}\` ${chain.name}：${path}${tail}`)
+      lines.push(`- \`${chain.id}\` ${chain.name}：${parts.join(' → ')}${tail}`)
     }
   }
   if (mode.chainId !== '') {
     lines.push(`本会话已指定链：\`${mode.chainId}\`（调用 team_run 时优先用它）。`)
   } else {
-    lines.push('本会话未指定链：由你根据任务性质选择最合适的链，或用 roles 参数临时点兵。')
+    lines.push('本会话未指定链：由你根据任务性质选择最合适的链，或用 plan 参数自行编排并行波次。')
   }
   return lines
 }
@@ -67,9 +75,14 @@ function buildInstruction(entries: Array<{ sessionId: string, mode: ChatModeStat
     )
   }
   head.push(
-    '调用约定：`team_run { teamId, task, chainId?, roles? }`——task 写清完整目标与验收标准；'
-    + '选定链用 chainId，需要自定义分工时用 roles 传角色 id 序列。运行产物会落盘，'
-    + '运行进度在对话流上方的团队 HUD 与团队面板中实时可见。',
+    '调用约定：`team_run { teamId, task, plan? | chainId? | roles?, autoPlan? }`——task 写清完整目标与验收标准。',
+    '**并行派发（省时关键）**：`plan` 是波次数组，同一波次里的角色**同时开跑**，波次之间串行（后一波能看到前面全部产出）。'
+    + '把互不依赖的工作放进同一波次，例如 `plan: [["cha","ping"],["jiang"]]` = 察与评并行调研/审查，完成后匠再落地。'
+    + '有依赖关系的工作（先取证再成稿、先实现再评审）必须排进后续波次。',
+    '同一波次的角色彼此看不到对方产出，所以「需要引用同伴结论」的工作不要排进同一波。',
+    '不确定怎么分工时传 `autoPlan: true`，让主脑先自主编排一份并行计划再执行；'
+    + '想按预设流程走就用 `chainId`；只需要简单串行接力用 `roles`。',
+    '运行产物会落盘，运行进度在对话流上方的团队 HUD 与团队面板中实时可见。',
     '运行结束后用 `team_status` 取回结果摘要，再基于最终交付物回答用户。',
     '',
   )

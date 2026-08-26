@@ -28,8 +28,8 @@ export function applyPromptOptimize(ctx: ClientContext): void {
     scope.slots.inject('conversation.input.right', () => scope.slots.register({
       name: 'conversation.input.right',
       id: 'webui-prompt-optimize',
-      // 供应商标签 order 10、模型座位 order 20；本图标 order 5 位于供应商左侧。
-      order: 5,
+      // 供应商标签 order 10、模型座位 order 20；本图标 order 4 位于团队按钮（order 5）左侧。
+      order: 4,
       inject: (sessionId: SessionId): PromptOptimizeInjected => {
         const directory = models.directoryFor(sessionId)
         return {

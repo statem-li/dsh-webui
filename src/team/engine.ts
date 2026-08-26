@@ -1,12 +1,16 @@
 /**
  * team — 运行引擎（host 半身）。
  *
- * 一次 Run = 把链条展开成线性步骤，逐步执行并把快照写回 run.json：
+ * 一次 Run = 把链条/计划展开成**波次**（wave）序列，逐波推进并把快照写回 run.json：
  *   queued → running ─(全部步骤 done)→ done
  *                    ─(某步 error 且 stopOnError)→ error
  *                    ─(取消)→ cancelled（当前步 abort，后续 pending → skipped）
  *
- * 两条执行通道：
+ * 并行语义：同一波次里的步骤**并发执行**（受 maxParallel 限制），波次之间严格串行。
+ * 一个步骤的上游上下文只包含**更早波次**的产出——同波伙伴彼此看不到对方结果，
+ * 所以提示词里会显式告知「谁在与你同时干活」，避免重复劳动与互相假设。
+ *
+ * 两条执行通道（并行时按角色 executor 各自选择）：
  *  - llm 直跑：ctx.llm.stream，可精确指定 provider/model；无工具。
  *  - subagent：ctx.subagents.start（需要 agent 上下文），有完整工具能力；模型继承父会话。
  *
@@ -18,7 +22,9 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import {
   TeamError,
   effectiveGlobals,
+  normalizePlan,
   type ModelBinding,
+  type PlanWaveItem,
   type Run,
   type RunStep,
   type StartRunInput,
@@ -27,14 +33,25 @@ import {
 } from './types.js'
 import {
   assertTeamRunnable,
+  describePlan,
+  findCoreRole,
   listProviders,
   planChain,
   planRoles,
+  planWaves,
   resolveModelChecked,
+  waveCountOf,
   type PlannedStep,
   type ProviderView,
 } from './roster.js'
-import { buildSystem, buildUserPrompt, renderFinalDocument, renderStepDocument } from './prompts.js'
+import {
+  PLAN_SYSTEM,
+  buildPlanPrompt,
+  buildSystem,
+  buildUserPrompt,
+  renderFinalDocument,
+  renderStepDocument,
+} from './prompts.js'
 import {
   capabilityCatalog,
   renderCapabilityNotice,
@@ -112,6 +129,9 @@ const SNAPSHOT_INTERVAL_MS = 500
 const SNAPSHOT_OUTPUT_MAX = 4000
 /** 输入快照截断长度。 */
 const INPUT_SNAPSHOT_MAX = 2000
+/** 主脑自主编排的输出预算与超时（只要一小段 JSON，不需要大预算）。 */
+const PLAN_MAX_TOKENS = 1200
+const PLAN_TIMEOUT_MS = 90_000
 
 /** 运行中的句柄（内存态，用于取消）。 */
 interface ActiveRun {
@@ -161,11 +181,16 @@ export class TeamEngine {
   /**
    * 启动一次运行：同步创建 run.json（status=queued）并返回快照，
    * 执行在后台推进（调用方无需等待）。
+   *
+   * 计划来源优先级：input.plan（显式并行波次）> chainId（链，含链内并行组）
+   * > roles（临时点兵）。autoPlan=true 时先落一个「编排中」的空壳 run，
+   * 由后台先问主脑要计划再填充步骤。
    */
   start(input: StartRunInput, context: RunContext = {}): Run {
     const globals = this.store.readGlobals()
     const team = this.store.resolveTeam(input.teamId)
     const merged = effectiveGlobals(globals, team)
+    const autoPlan = input.autoPlan === true
 
     const chain = input.chainId !== undefined && input.chainId !== ''
       ? team.chains.find(c => c.id === input.chainId) ?? null
@@ -173,17 +198,33 @@ export class TeamEngine {
     if (input.chainId !== undefined && input.chainId !== '' && chain === null) {
       throw new TeamError(`链条不存在：${input.chainId}`, 'chain_not_found', 404)
     }
-    assertTeamRunnable(team, chain)
+    if (!autoPlan) assertTeamRunnable(team, chain)
+    else if (team.roles.length === 0) {
+      throw new TeamError(`团队「${team.name}」还没有角色，请先添加角色`, 'team_empty', 409)
+    }
 
-    const planned = chain !== null
-      ? planChain(team, chain)
-      : planRoles(team, input.roles ?? [], input.synthesize !== false)
-    if (planned.length === 0) {
+    const roleIds = new Set(team.roles.map(role => role.id))
+    const explicitPlan = input.plan !== undefined
+      ? normalizePlan(input.plan, roleIds, { maxPerWave: Math.max(1, merged.maxParallel) })
+      : []
+
+    const planned = autoPlan
+      ? []
+      : explicitPlan.length > 0
+        ? planWaves(team, explicitPlan, input.synthesize !== false, merged.maxParallel)
+        : chain !== null
+          ? planChain(team, chain, merged.maxParallel)
+          : planRoles(team, input.roles ?? [], input.synthesize !== false)
+    if (!autoPlan && planned.length === 0) {
       throw new TeamError('没有可执行的步骤（链条为空或角色 id 都不存在）', 'plan_empty', 409)
     }
 
     const task = input.task.trim()
     if (task === '') throw new TeamError('任务描述不能为空', 'task_required', 400)
+
+    const planMode: Run['planMode'] = autoPlan
+      ? 'auto'
+      : explicitPlan.length > 0 ? 'plan' : chain !== null ? 'chain' : 'roles'
 
     const runId = this.store.allocRunId()
     const now = new Date().toISOString()
@@ -193,33 +234,26 @@ export class TeamEngine {
       teamId: team.id,
       teamName: team.name,
       chainId: chain?.id ?? null,
-      chainName: chain?.name ?? (planned.map(p => p.role.name).join('→')),
+      chainName: chain?.name ?? (autoPlan ? '主脑自主派发' : describePlan(planned)),
       task,
       status: 'queued',
       origin: input.origin ?? 'panel',
+      planMode,
       ...(input.sessionId !== undefined && input.sessionId !== '' ? { sessionId: input.sessionId } : {}),
       ...(input.modelOverrides !== undefined ? { modelOverrides: input.modelOverrides } : {}),
       startedAt: now,
-      steps: planned.map(step => ({
-        index: step.index,
-        roleId: step.role.id,
-        roleName: step.synthesize ? `${step.role.name}（整合）` : step.role.name,
-        tagline: step.role.tagline,
-        group: step.role.group,
-        synthesize: step.synthesize,
-        status: 'pending' as const,
-        inputSnapshot: '',
-        output: '',
-        modelUsed: { provider: '', model: '' },
-        modelSource: 'team' as const,
-      })),
+      waveCount: waveCountOf(planned),
+      steps: planned.map(step => stepSnapshot(step)),
     }
     this.store.saveRun(run)
     this.store.trimRuns()
 
     // 后台推进（受 maxConcurrentRuns 限制）。
     void this.enqueue(merged.maxConcurrentRuns, async () => {
-      await this.execute(runId, team, planned, merged, context)
+      await this.execute(runId, team, planned, merged, context, {
+        autoPlan,
+        synthesize: input.synthesize !== false,
+      })
     })
     return run
   }
@@ -239,13 +273,14 @@ export class TeamEngine {
     }
   }
 
-  /** 执行整个 Run（每步落盘快照）。 */
+  /** 执行整个 Run（按波次推进，波次内并发；每步落盘快照）。 */
   private async execute(
     runId: string,
     team: Team,
-    planned: readonly PlannedStep[],
+    initialPlan: readonly PlannedStep[],
     globals: TeamGlobals,
     context: RunContext,
+    options: { autoPlan: boolean, synthesize: boolean },
   ): Promise<void> {
     let run = this.store.readRun(runId)
     if (run === null) return
@@ -263,17 +298,64 @@ export class TeamEngine {
     run = { ...run, status: 'running' }
     this.store.saveRun(run)
 
+    let planned = initialPlan
     let failed = false
     /** run 级异常信息（不能只写进局部 run：后续会重读磁盘，会把它覆盖掉）。 */
     let runError = ''
-    try {
-      for (const step of planned) {
-        if (controller.signal.aborted) break
-        const outcome = await this.runStep({
-          runId, team, planned: step, globals, providers, controller, context,
+
+    // ── autoPlan：先让主脑给出派发计划，再据此填充步骤 ──
+    if (options.autoPlan) {
+      try {
+        const decided = await this.askForPlan(team, run.task, globals, controller.signal, providers)
+        planned = planWaves(team, decided.waves, options.synthesize, globals.maxParallel)
+        if (planned.length === 0) {
+          // 主脑没给出可用分工：退回「全体非主脑角色串行 + 整合」，不让运行空转。
+          planned = planRoles(
+            team,
+            team.roles.filter(role => role.group !== 'core').map(role => role.id),
+            options.synthesize,
+          )
+        }
+        run = {
+          ...(this.store.readRun(runId) ?? run),
+          chainName: describePlan(planned),
+          waveCount: waveCountOf(planned),
+          ...(decided.note !== '' ? { planNote: decided.note } : {}),
+          steps: planned.map(step => stepSnapshot(step)),
+        }
+        this.store.saveRun(run)
+      } catch (error) {
+        runError = `主脑编排失败：${error instanceof Error ? error.message : String(error)}`
+        this.store.saveRun({
+          ...(this.store.readRun(runId) ?? run),
+          status: 'error',
+          finishedAt: new Date().toISOString(),
+          error: runError,
         })
+        this.active.delete(runId)
+        return
+      }
+    }
+
+    try {
+      for (const wave of groupByWave(planned)) {
+        if (controller.signal.aborted) break
+        const outcomes = wave.length === 1
+          ? [await this.runStep({
+              runId, team, planned: wave[0], globals, providers, controller, context, peers: [],
+            })]
+          : await Promise.all(wave.map(step => this.runStep({
+            runId,
+            team,
+            planned: step,
+            globals,
+            providers,
+            controller,
+            context,
+            peers: wave.filter(other => other.index !== step.index).map(other => other.role.name),
+          })))
         run = this.store.readRun(runId) ?? run
-        if (outcome === 'error') {
+        if (outcomes.includes('error')) {
           failed = true
           if (globals.stopOnError) break
         }
@@ -347,8 +429,10 @@ export class TeamEngine {
     providers: readonly ProviderView[]
     controller: AbortController
     context: RunContext
+    /** 同波次并行伙伴的展示名（写进提示词，避免重复劳动）。 */
+    peers: readonly string[]
   }): Promise<'done' | 'error' | 'skipped'> {
-    const { runId, team, planned, globals, providers, controller, context } = args
+    const { runId, team, planned, globals, providers, controller, context, peers } = args
     const startedAt = new Date().toISOString()
 
     let run = this.store.readRun(runId)
@@ -375,9 +459,11 @@ export class TeamEngine {
     }
 
     // 2) 装配 prompt。
-    const previous = run.steps.slice(0, planned.index)
+    // 上游只取**更早波次**的产出：同波伙伴与自己同时开跑，产出尚不存在，
+    // 也不该被引用（否则会读到别人半截的流式快照）。
+    const previous = run.steps.filter(step => waveOf(step) < planned.wave)
     let system = buildSystem(team, planned.role, planned.synthesize)
-    const userPrompt = buildUserPrompt(team, planned, run.task, previous, globals, run.chainName)
+    const userPrompt = buildUserPrompt(team, planned, run.task, previous, globals, run.chainName, peers)
 
     // 3) 选通道。
     const channel = this.pickChannel(planned.role.executor, context)
@@ -482,8 +568,7 @@ export class TeamEngine {
   }
 
   /** 通道选择（docs §4.3）。 */
-  private pickChannel(pref: string, context: RunContext): 'llm' | 'subagent' {
-    const hasAgent = context.exec?.agent !== undefined
+  private pickChannel(pref: string, context: RunContext): 'llm' | 'subagent' {    const hasAgent = context.exec?.agent !== undefined
     const runtime = this.subagents()
     const canSubagent = hasAgent && runtime !== null && runtime.list().length > 0
     if (pref === 'llm') return 'llm'
@@ -508,6 +593,52 @@ export class TeamEngine {
       return null
     }
     return runtime !== undefined && runtime !== null && typeof runtime.list === 'function' ? runtime : null
+  }
+
+  /**
+   * 主脑自主派发：问一次模型要「波次计划」。
+   *
+   * 走 llm 直跑通道（要的是结构化 JSON，不需要工具），模型按主脑角色解析
+   * （core 角色覆盖 → 团队默认 → 全局默认）。解析失败/角色名不合法的项被丢弃，
+   * 全部无效时返回空波次由调用方兜底。
+   */
+  private async askForPlan(
+    team: Team,
+    task: string,
+    globals: TeamGlobals,
+    signal: AbortSignal,
+    providers: readonly ProviderView[],
+  ): Promise<{ waves: PlanWaveItem[][], note: string }> {
+    const core = findCoreRole(team)
+    if (core === null) throw new TeamError('团队没有主脑角色（core 分组），无法自主编排', 'no_core_role', 409)
+    const { binding } = resolveModelChecked({ ctx: this.ctx, team, role: core, globals }, providers)
+
+    const stepController = new AbortController()
+    const onAbort = (): void => stepController.abort()
+    signal.addEventListener('abort', onAbort, { once: true })
+    const timer = setTimeout(() => stepController.abort(), PLAN_TIMEOUT_MS)
+    let text = ''
+    try {
+      text = await this.invokeLlm(
+        { ...binding, maxTokens: PLAN_MAX_TOKENS },
+        PLAN_SYSTEM,
+        buildPlanPrompt(team, task, globals.maxParallel),
+        stepController.signal,
+        () => {},
+      )
+    } finally {
+      clearTimeout(timer)
+      signal.removeEventListener('abort', onAbort)
+    }
+
+    const parsed = extractJsonObject(text)
+    const roleIds = new Set(team.roles.filter(role => role.id !== core.id).map(role => role.id))
+    const waves = normalizePlan(parsed.waves, roleIds, {
+      maxWaves: 4,
+      maxPerWave: Math.max(1, globals.maxParallel),
+    })
+    const note = typeof parsed.note === 'string' ? parsed.note.trim().slice(0, 300) : ''
+    return { waves, note }
   }
 
   /** 调用一次通道（统一超时 + 取消语义）。 */
@@ -747,7 +878,13 @@ export class TeamEngine {
     return () => { stopped = true }
   }
 
-  /** 原子更新某步字段（读—改—写 run.json）。 */
+  /**
+   * 原子更新某步字段（读—改—写 run.json）。
+   *
+   * 并行波次里多个步骤会交替调用本方法：readRun/saveRun 都是同步 fs 调用，
+   * Node 单线程下这段读—改—写不会被其它 JS 打断，所以并发步骤各自只改自己
+   * 那一项、互不覆盖（写盘本身也是 tmp+rename 原子替换）。
+   */
   private patchStep(runId: string, index: number, patch: Partial<RunStep>): void {
     const run = this.store.readRun(runId)
     if (run === null) return
@@ -756,6 +893,58 @@ export class TeamEngine {
       this.store.saveRun({ ...run, steps })
     } catch { /* 写盘失败不打断执行 */ }
   }
+}
+
+/** 计划步 → 初始快照。 */
+function stepSnapshot(step: PlannedStep): RunStep {
+  return {
+    index: step.index,
+    wave: step.wave,
+    roleId: step.role.id,
+    roleName: step.synthesize ? `${step.role.name}（整合）` : step.role.name,
+    tagline: step.role.tagline,
+    group: step.role.group,
+    synthesize: step.synthesize,
+    status: 'pending',
+    inputSnapshot: '',
+    output: '',
+    modelUsed: { provider: '', model: '' },
+    modelSource: 'team',
+  }
+}
+
+/** 读快照的波次（旧快照没有 wave 字段时按 index 兜底 = 全串行）。 */
+function waveOf(step: RunStep): number {
+  return typeof step.wave === 'number' ? step.wave : step.index
+}
+
+/** 把计划按 wave 分组（升序），同组内保持 index 顺序。 */
+function groupByWave(planned: readonly PlannedStep[]): PlannedStep[][] {
+  const buckets = new Map<number, PlannedStep[]>()
+  for (const step of planned) {
+    const list = buckets.get(step.wave)
+    if (list === undefined) buckets.set(step.wave, [step])
+    else list.push(step)
+  }
+  return [...buckets.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([, steps]) => steps.sort((a, b) => a.index - b.index))
+}
+
+/** 从模型输出里稳健提取 JSON 对象（容忍 markdown 围栏与前后缀噪声）。 */
+function extractJsonObject(text: string): Record<string, unknown> {
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i)
+  const candidate = fenced?.[1] ?? text
+  const start = candidate.indexOf('{')
+  const end = candidate.lastIndexOf('}')
+  if (start === -1 || end <= start) {
+    throw new TeamError('主脑没有返回合法的计划 JSON', 'plan_bad_json', 502)
+  }
+  const parsed = JSON.parse(candidate.slice(start, end + 1)) as unknown
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new TeamError('主脑返回的计划不是 JSON 对象', 'plan_bad_json', 502)
+  }
+  return parsed as Record<string, unknown>
 }
 
 /** 快照输出：保留尾部（流式进行中看最新内容最有用）。 */

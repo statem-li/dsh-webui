@@ -10,7 +10,7 @@
  */
 
 /** 存储契约版本：读到更高版本的团队文件时降级为只读。 */
-export const TEAM_SCHEMA_VERSION = 1
+export const TEAM_SCHEMA_VERSION = 1 
 
 // ── 模型绑定 ────────────────────────────────────────────────────────────────
 
@@ -116,9 +116,15 @@ export interface Role {
 
 // ── 链条与直连 ──────────────────────────────────────────────────────────────
 
-/** 链步骤：执行某角色，或显式的主脑整合步。 */
+/**
+ * 链步骤：执行某角色，或显式的主脑整合步。
+ *
+ * `parallel: true` 表示「与上一步同批并行执行」——引擎把连续的并行步归入同一个
+ * 波次（wave），一个波次内的角色同时开跑，波次之间仍严格串行（后一波看得到前
+ * 面所有波次的产出）。首步的 parallel 无意义（自成一波）。
+ */
 export type ChainStep =
-  | { kind: 'role', roleId: string, taskNote?: string }
+  | { kind: 'role', roleId: string, taskNote?: string, parallel?: boolean }
   | { kind: 'synthesize', roleId?: string }
 
 /** 协作接力链（串行）。 */
@@ -154,6 +160,10 @@ export interface TeamGlobals {
   upstreamWindow: 'last' | 'all-summary'
   /** 最大并发运行数。 */
   maxConcurrentRuns: number
+  /** 单个 Run 内「同一波次」的最大并发角色数（1 = 退回全串行）。 */
+  maxParallel: number
+  /** 允许主脑在运行开始时自主编排派发计划（并行分组由模型决定）。 */
+  autoPlan: boolean
   /** 步骤输出注入上游时的截断长度（字符）。 */
   outputChunkChars: number
   /** 某步失败是否终止整链。 */
@@ -171,6 +181,8 @@ export const DEFAULT_GLOBALS: TeamGlobals = {
   maxRetries: 1,
   upstreamWindow: 'last',
   maxConcurrentRuns: 1,
+  maxParallel: 2,
+  autoPlan: false,
   outputChunkChars: 8000,
   stopOnError: true,
 }
@@ -237,6 +249,11 @@ export interface RunStep {
   group: RoleGroup
   /** 是否为主脑整合步。 */
   synthesize: boolean
+  /**
+   * 波次序号（0 起）：同一 wave 的步骤并发执行，wave 之间串行。
+   * 全串行计划里 wave === index。旧快照缺省时 UI 按 index 兜底。
+   */
+  wave?: number
   status: StepStatus
   /** 截断后的输入快照。 */
   inputSnapshot: string
@@ -287,6 +304,12 @@ export interface Run {
   origin: RunOrigin
   sessionId?: string
   modelOverrides?: Record<string, ModelBinding>
+  /** 计划来源：chain=预设链；roles=临时点兵；plan=调用方显式并行计划；auto=主脑自主编排。 */
+  planMode?: PlanMode
+  /** 主脑自主编排时给出的分工理由（面板/HUD 展示）。 */
+  planNote?: string
+  /** 波次数（steps 里 wave 的去重计数；并行运行的 UI 分层依据）。 */
+  waveCount?: number
   startedAt: string
   finishedAt?: string
   steps: RunStep[]
@@ -314,16 +337,75 @@ export interface RunSummary {
 /** 启动运行的入参。 */
 export interface StartRunInput {
   teamId: string
-  /** 链 id；与 roles 二选一。 */
+  /** 链 id；与 roles / plan 三选一。 */
   chainId?: string
   /** 临时点兵的角色 id 序列（chainId 缺省时使用）。 */
   roles?: string[]
+  /**
+   * 显式并行计划：一个数组元素 = 一个波次，波次内的角色并发执行，波次之间串行。
+   * 例：`[['cha','ping'],['jiang']]` = 察与评同时跑，完成后驳/匠再跑。
+   * 优先级高于 chainId / roles。
+   */
+  plan?: PlanWave[]
   task: string
   modelOverrides?: Record<string, ModelBinding>
   origin?: RunOrigin
   sessionId?: string
   /** 临时点兵是否追加主脑整合（默认 true）。 */
   synthesize?: boolean
+  /** 主脑自主编排：运行开始时先让主脑给出派发计划（并行分组），再据此执行。 */
+  autoPlan?: boolean
+}
+
+/** 计划来源。 */
+export type PlanMode = 'chain' | 'roles' | 'plan' | 'auto'
+
+/** 一个波次的角色项（可带本步任务说明）。 */
+export interface PlanWaveItem {
+  roleId: string
+  taskNote?: string
+}
+
+/** 一个波次：角色 id 数组或带说明的对象数组。 */
+export type PlanWave = Array<string | PlanWaveItem>
+
+/**
+ * 归一化并行计划：过滤非法角色、去掉空波次、限制规模。
+ * 同一波次内重复角色去重（同一角色在一个波次里跑两次没有意义）。
+ */
+export function normalizePlan(
+  input: unknown,
+  knownRoleIds: ReadonlySet<string>,
+  limits: { maxWaves?: number, maxPerWave?: number } = {},
+): PlanWaveItem[][] {
+  const maxWaves = limits.maxWaves ?? 8
+  const maxPerWave = limits.maxPerWave ?? 6
+  if (!Array.isArray(input)) return []
+  const out: PlanWaveItem[][] = []
+  for (const rawWave of input) {
+    if (out.length >= maxWaves) break
+    // 容忍「单角色写成裸字符串」的写法：'cha' 等价于 ['cha']。
+    const items = Array.isArray(rawWave) ? rawWave : [rawWave]
+    const wave: PlanWaveItem[] = []
+    const seen = new Set<string>()
+    for (const item of items) {
+      if (wave.length >= maxPerWave) break
+      let roleId = ''
+      let taskNote = ''
+      if (typeof item === 'string') {
+        roleId = item.trim()
+      } else if (item !== null && typeof item === 'object') {
+        const raw = item as Record<string, unknown>
+        roleId = typeof raw.roleId === 'string' ? raw.roleId.trim() : ''
+        taskNote = typeof raw.taskNote === 'string' ? raw.taskNote.trim().slice(0, 400) : ''
+      }
+      if (roleId === '' || !knownRoleIds.has(roleId) || seen.has(roleId)) continue
+      seen.add(roleId)
+      wave.push({ roleId, ...(taskNote !== '' ? { taskNote } : {}) })
+    }
+    if (wave.length > 0) out.push(wave)
+  }
+  return out
 }
 
 // ── 对话框团队开关 ──────────────────────────────────────────────────────────
@@ -512,7 +594,12 @@ function normalizeStep(input: unknown): ChainStep | null {
   const roleId = str(raw.roleId).trim()
   if (roleId === '') return null
   const note = str(raw.taskNote).trim()
-  return { kind: 'role', roleId, ...(note !== '' ? { taskNote: note } : {}) }
+  return {
+    kind: 'role',
+    roleId,
+    ...(note !== '' ? { taskNote: note } : {}),
+    ...(raw.parallel === true ? { parallel: true } : {}),
+  }
 }
 
 /** 归一化链条。 */
@@ -561,6 +648,8 @@ function normalizeOverrides(input: unknown): TeamOverrides | undefined {
   if (typeof raw.maxRetries === 'number') out.maxRetries = Math.max(0, Math.min(5, Math.floor(raw.maxRetries)))
   if (raw.upstreamWindow === 'last' || raw.upstreamWindow === 'all-summary') out.upstreamWindow = raw.upstreamWindow
   if (typeof raw.maxConcurrentRuns === 'number') out.maxConcurrentRuns = Math.max(1, Math.min(5, Math.floor(raw.maxConcurrentRuns)))
+  if (typeof raw.maxParallel === 'number') out.maxParallel = Math.max(1, Math.min(5, Math.floor(raw.maxParallel)))
+  if (typeof raw.autoPlan === 'boolean') out.autoPlan = raw.autoPlan
   if (typeof raw.outputChunkChars === 'number') out.outputChunkChars = Math.max(500, Math.floor(raw.outputChunkChars))
   if (typeof raw.stopOnError === 'boolean') out.stopOnError = raw.stopOnError
   return Object.keys(out).length > 0 ? out : undefined
@@ -671,6 +760,8 @@ export function normalizeGlobals(input: unknown): TeamGlobals {
     maxRetries: Math.max(0, Math.min(5, Math.floor(num(raw.maxRetries, DEFAULT_GLOBALS.maxRetries)))),
     upstreamWindow: window,
     maxConcurrentRuns: Math.max(1, Math.min(5, Math.floor(num(raw.maxConcurrentRuns, DEFAULT_GLOBALS.maxConcurrentRuns)))),
+    maxParallel: Math.max(1, Math.min(5, Math.floor(num(raw.maxParallel, DEFAULT_GLOBALS.maxParallel)))),
+    autoPlan: raw.autoPlan === true,
     outputChunkChars: Math.max(500, Math.floor(num(raw.outputChunkChars, DEFAULT_GLOBALS.outputChunkChars))),
     stopOnError: raw.stopOnError !== false,
   }

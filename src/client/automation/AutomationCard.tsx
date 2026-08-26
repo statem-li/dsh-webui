@@ -25,6 +25,7 @@ import { clearRuns, getRuns } from './api.ts'
 import { formatAbsolute, formatRelative, t } from './locales.ts'
 import { ScheduleEditor } from './ScheduleEditor.tsx'
 import { ChevronIcon, CopyIcon, PlayIcon, SpinnerIcon, StopIcon, TrashIcon } from './icons.tsx'
+import { ModelPicker } from './ModelPicker.tsx'
 import { RunRow } from './RunRow.tsx'
 
 /** 显示名：label 优先，否则取 prompt 前 40 字，最后退到 id。 */
@@ -80,14 +81,17 @@ export function AutomationCard({
   const [saving, setSaving] = useState(false)
   const [armDelete, setArmDelete] = useState(false)
 
-  /** 服务端值变化时同步本地编辑态（configRevision 是唯一权威的「变了」信号）。 */
+  /** 服务端值变化时同步本地编辑态（configRevision 是唯一权威的「变了」信号——
+   *  轮询刷新返回的新 job 对象引用变化不算，否则会覆盖用户未保存的编辑）。 */
   useEffect(() => {
     setLabel(job.label)
     setDraft(scheduleDraftFromStored(job.type, job.schedule))
     setDraftDirty(false)
     setPrompt(job.prompt)
     setModel(modelSelectValue(job.model))
-  }, [job.id, job.configRevision, job.label, job.prompt, job.type, job.schedule, job.model])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- job.model 等是对象引用，
+    // 轮询每次重建引用；只有 configRevision（写操作自增）才是服务端值变化的信号。
+  }, [job.id, job.configRevision])
 
   // 收起卡片时复位删除待确认态，避免下次展开时按钮还停在「确认删除？」。
   useEffect(() => {
@@ -283,18 +287,12 @@ export function AutomationCard({
 
           <label className="auto-field">
             <span>{t('modelLabel')}</span>
-            <select className="auto-select" value={model} onChange={event => setModel(event.target.value)}>
-              <option value="">{modelsLoading && models.length === 0 ? t('modelsLoading') : t('defaultModel')}</option>
-              {/* 目录里已不存在的旧绑定也要能显示，否则 select 会静默回落到默认模型 */}
-              {model !== '' && !models.some(option => `${option.provider}/${option.id}` === model)
-                ? <option value={model}>{model}</option>
-                : null}
-              {models.map(option => (
-                <option key={`${option.provider}/${option.id}`} value={`${option.provider}/${option.id}`}>
-                  {`${option.providerName} / ${option.name}`}
-                </option>
-              ))}
-            </select>
+            <ModelPicker
+              models={models}
+              loading={modelsLoading}
+              value={model}
+              onChange={setModel}
+            />
           </label>
 
           <div className="auto-runs">

@@ -10,7 +10,8 @@
  *     模型」里给模型打开「语音」开关即成为候选），合成 mp3 后由同一个朗读
  *     进程播放。
  *  3. **总结播报**：回合结束后播一句「做完了什么 / 什么原因 / 解决了什么」，
- *     默认 digest（本地结论提取，零 token），可切 llm（模型压成一句话，费 token）。
+ *     默认 digest（本地结论提取，零 token），可切 llm（模型生成结论，费 token）。
+ *     两种方式都不限制字数，只留 600 字安全网兜底。
  *
  * 队列语义：朗读进程一次只念一条，stdin 管道本身就是队列（先到先念）；
  * 「停止播报」= 杀掉进程（唯一能打断已在播的方式）并清空待播队列。
@@ -39,7 +40,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import z from '@deepseek-ai/schemastery'
-import { clampSpeech, outcomeSummary, sanitizeForSpeech, SPEECH_MAX_CHARS, SUMMARY_TARGET_CHARS } from './voice-text.js'
+import { clampSpeech, outcomeSummary, sanitizeForSpeech, SPEECH_MAX_CHARS } from './voice-text.js'
 
 /** 注入服务均为运行时动态注册，类型上放宽为 any。 */
 type PluginContext = any
@@ -210,7 +211,7 @@ function splitKey(key: string): { provider: string, model: string } | null {
  * @returns 一句话总结（可能为空串）。
  */
 export function digestSummary(text: string): string {
-  return outcomeSummary(text, SUMMARY_TARGET_CHARS)
+  return outcomeSummary(text)
 }
 
 /**
@@ -552,13 +553,13 @@ export function applyVoice(ctx: PluginContext): void {
   // ── 总结播报 ────────────────────────────────────────────────────────────
 
   /**
-   * 用所选模型把回复压成一句播报（summaryStyle=llm 时）。
+   * 用所选模型把回复压成结论播报（summaryStyle=llm 时）。
    *
    * 提示词刻意只要三件事：做完了什么、原因、解决了什么问题——不要过程复述、
-   * 不要罗列步骤。超长输出在返回后仍会被 {@link clampSpeech} 截断。
+   * 不要罗列步骤。不限制字数，只留 {@link SPEECH_MAX_CHARS} 安全网兜底。
    * @param text - 已清洗的回复正文。
    * @param config - 当前配置（取 modelKey）。
-   * @returns 一句话总结；失败返回空串（调用方回落本地提取）。
+   * @returns 结论文本；失败返回空串（调用方回落本地提取）。
    */
   async function llmSummary(text: string, config: VoiceConfig): Promise<string> {
     const parts = splitKey(config.modelKey)
@@ -571,14 +572,14 @@ export function applyVoice(ctx: PluginContext): void {
         model: parts.model,
         messages: [{
           role: 'user',
-          content: [{ type: 'text', text: `把下面这段助手回复压成一句不超过 35 字的中文口播，只说「做完了什么／为什么／解决了什么问题」，不要复述过程、不要列步骤、不要客套。只输出这句话：\n\n${text.slice(0, 4000)}` }],
+          content: [{ type: 'text', text: `把下面这段助手回复总结成完整结论口播：做完了什么／为什么／解决了什么问题，直接说出来。不要复述过程、不要列步骤、不要客套、不要 Markdown。\n\n${text.slice(0, 4000)}` }],
         }],
-        system: '你为语音播报写一句话结论：只讲结果、原因、解决的问题，不超过 35 字，不要 Markdown、不要引号、不要罗列步骤。',
-        maxTokens: 120,
+        system: '你为语音播报写结论口播：只讲结果、原因、解决的问题，说完整、说清楚，不要 Markdown、不要引号、不要罗列步骤、不要客套。',
+        maxTokens: 300,
       })) {
         if (chunk.type === 'text-delta') out += chunk.text
       }
-      return clampSpeech(sanitizeForSpeech(out.trim()), SUMMARY_TARGET_CHARS)
+      return clampSpeech(sanitizeForSpeech(out.trim()))
     } catch (error: any) {
       console.warn('[webui-voice] llm summary failed:', String(error?.message ?? error))
       return ''

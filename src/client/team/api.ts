@@ -108,6 +108,10 @@ export interface StartRunPayload {
   teamId: string
   chainId?: string
   roles?: string[]
+  /** 显式并行计划：每个元素一个波次（波次内并发，波次间串行）。优先于 chainId/roles。 */
+  plan?: string[][]
+  /** 让主脑先自主编排并行计划再执行。 */
+  autoPlan?: boolean
   task: string
   modelOverrides?: Record<string, { provider: string, model: string }>
   sessionId?: string

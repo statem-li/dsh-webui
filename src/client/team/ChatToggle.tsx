@@ -1,21 +1,24 @@
 /**
- * team — 对话框「团队」开关（conversation.input.right 槽位，order 4）。
+ * team — 对话框「团队」选择器（conversation.input.right 槽位，order 4）。
  *
- * 位于「提示词优化」（order 5）左侧。点击弹出小卡：
- *  - 团队模式开关（会话级）
- *  - 团队选择、链条选择（自动＝由主脑判断）
- *  - 强制模式（每个任务都先走 team_run）
- *  - 团队默认模型只读回显 + 「打开团队面板」提示
+ * 交互与模型切换（ModelSeat）完全一致：
+ *  - 胶囊触发按钮：图标 + 当前团队名（或「团队模式」）+ chevron 箭头；
+ *  - hover 弹出菜单（80ms 延迟关闭），未开启时点击也打开菜单；
+ *  - 菜单列出团队，选中项打勾；点选团队即开启团队模式（enabled=true）
+ *    且默认就是强制模式（force=true）；
+ *  - **团队模式已开启时，左键点击按钮本体直接关闭**（不需要进菜单）。
  *
  * 状态双写：localStorage（立即生效、跨刷新即时）+ POST /api/webui-team/chat-mode
  * （host 提示词注入的真源）。与 prompt-optimize 的挂载范式一致，零 DSH 源码改动。
  */
 
 import { useEffect, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
+import clsx from 'clsx'
 import type { SessionId } from '@deepseek-ai/dsh-client-runtime/client'
+import { IconCheckOutline16, IconChevronDownOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
 import * as api from './api.ts'
 import { ensureTeamStyles } from './styles.ts'
+import { TeamAura, type AuraPulse } from './Aura.tsx'
 import type { ChatModeState, TeamSummary } from './types.ts'
 
 /** 注入面（inject 返回）。 */
@@ -38,7 +41,7 @@ function readLocal(sessionId: string): ChatModeState | null {
       enabled: parsed.enabled === true,
       teamId: typeof parsed.teamId === 'string' ? parsed.teamId : '',
       chainId: typeof parsed.chainId === 'string' ? parsed.chainId : '',
-      force: parsed.force === true,
+      force: parsed.force !== false, // 默认强制
       updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : '',
     }
   } catch {
@@ -50,19 +53,24 @@ function writeLocal(sessionId: string, state: ChatModeState): void {
   try { window.localStorage.setItem(storageKey(sessionId), JSON.stringify(state)) } catch { /* ignore */ }
 }
 
-/** 渲染对话框团队开关。 */
+/** 渲染对话框团队选择器（与模型切换同款交互）。 */
 export function TeamToggle({ available, sessionId }: TeamToggleInjected): JSX.Element | null {
   ensureTeamStyles()
   const sid = String(sessionId)
   const [state, setState] = useState<ChatModeState>(() => readLocal(sid) ?? {
-    enabled: false, teamId: '', chainId: '', force: false, updatedAt: '',
+    enabled: false, teamId: '', chainId: '', force: true, updatedAt: '',
   })
   const [teams, setTeams] = useState<TeamSummary[]>([])
-  const [chains, setChains] = useState<Array<{ id: string, name: string }>>([])
   const [open, setOpen] = useState(false)
-  const [pos, setPos] = useState<{ left: number, top: number } | null>(null)
   const [err, setErr] = useState<string | null>(null)
+  /** 切换信号（仅驱动横幅关闭动画窗口期；坐标不再使用）。 */
+  const [pulse, setPulse] = useState<AuraPulse | null>(null)
+  const rootRef = useRef<HTMLDivElement | null>(null)
   const btnRef = useRef<HTMLButtonElement | null>(null)
+  const pulseSeq = useRef(0)
+  const pulseTimer = useRef(0)
+  /** hover 移出后的延迟关闭定时器（与模型切换/推理等级一致）。 */
+  const hoverHideTimer = useRef<number | null>(null)
 
   // 从 host 校正状态（真源）。
   useEffect(() => {
@@ -75,9 +83,19 @@ export function TeamToggle({ available, sessionId }: TeamToggleInjected): JSX.El
     return () => { alive = false }
   }, [sid])
 
-  // 打开小卡时拉团队清单。
+  // 切换会话：清掉上一会话残留的脉冲（避免换会话后氛围动画错位）。
   useEffect(() => {
-    if (!open) return
+    setPulse(null)
+  }, [sid])
+
+  // 卸载时清理定时器。
+  useEffect(() => () => {
+    window.clearTimeout(pulseTimer.current)
+    if (hoverHideTimer.current !== null) window.clearTimeout(hoverHideTimer.current)
+  }, [])
+
+  // 拉团队清单：挂载即拉（横幅/按钮都需要团队名），open 时刷新兜底。
+  useEffect(() => {
     let alive = true
     void api.listTeams().then((data) => {
       if (!alive) return
@@ -87,25 +105,26 @@ export function TeamToggle({ available, sessionId }: TeamToggleInjected): JSX.El
       }
     }).catch(error => { if (alive) setErr(error instanceof Error ? error.message : String(error)) })
     return () => { alive = false }
-  }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  // 团队变化时拉该团队的链条列表。
-  useEffect(() => {
-    if (!open) return
-    const teamId = state.teamId !== '' ? state.teamId : (teams[0]?.id ?? '')
-    if (teamId === '') { setChains([]); return }
-    let alive = true
-    void api.getTeam(teamId).then((data) => {
-      if (!alive) return
-      setChains(data.team.chains.map(chain => ({ id: chain.id, name: chain.name })))
-    }).catch(() => { if (alive) setChains([]) })
-    return () => { alive = false }
-  }, [open, state.teamId, teams])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sid, open])
 
   if (!available) return null
 
+  /** 开关翻转 → 维持横幅的"关闭动画窗口期"（横幅自身播退出动画后卸载）。 */
+  const firePulse = (dir: 'in' | 'out'): void => {
+    pulseSeq.current += 1
+    setPulse({ key: pulseSeq.current, dir })
+    window.clearTimeout(pulseTimer.current)
+    // 窗口期 1300ms：横幅退出动画（640ms）内保持渲染。
+    pulseTimer.current = window.setTimeout(() => { setPulse(null) }, 1300)
+  }
+
   const commit = (patch: Partial<ChatModeState>): void => {
     const next: ChatModeState = { ...state, ...patch, updatedAt: new Date().toISOString() }
+    // 团队开关翻转：维持横幅关闭动画窗口期（仅用户操作触发，host 校正不算）。
+    if (patch.enabled !== undefined && patch.enabled !== state.enabled) {
+      firePulse(next.enabled ? 'in' : 'out')
+    }
     setState(next)
     writeLocal(sid, next)
     void api.setChatMode(sid, {
@@ -113,17 +132,33 @@ export function TeamToggle({ available, sessionId }: TeamToggleInjected): JSX.El
     }).catch(error => setErr(error instanceof Error ? error.message : String(error)))
   }
 
-  const toggleOpen = (): void => {
-    if (open) { setOpen(false); return }
-    const rect = btnRef.current?.getBoundingClientRect()
-    if (rect !== undefined) {
-      const width = 288
-      const left = Math.max(8, Math.min(rect.left - width / 2 + rect.width / 2, window.innerWidth - width - 8))
-      // 卡片弹在按钮上方，估高 260。
-      const top = Math.max(8, rect.top - 268)
-      setPos({ left, top })
+  /** 取消「移出后延迟关闭」的定时器。 */
+  const cancelHoverHide = (): void => {
+    if (hoverHideTimer.current !== null) {
+      window.clearTimeout(hoverHideTimer.current)
+      hoverHideTimer.current = null
     }
+  }
+
+  /** hover 进入按钮/菜单：立即显示并取消延迟关闭。 */
+  const showPanel = (): void => {
+    cancelHoverHide()
     setOpen(true)
+  }
+
+  /** hover 移出：延迟 0.08 秒再关闭，给用户时间从按钮移入菜单点选。 */
+  const scheduleHide = (): void => {
+    cancelHoverHide()
+    hoverHideTimer.current = window.setTimeout(() => {
+      hoverHideTimer.current = null
+      setOpen(false)
+    }, 80)
+  }
+
+  /** 点选团队：开启团队模式（默认就是强制）。 */
+  const pickTeam = (teamId: string): void => {
+    setOpen(false)
+    commit({ enabled: true, teamId, chainId: '', force: true })
   }
 
   // 点击外部关闭。
@@ -132,8 +167,7 @@ export function TeamToggle({ available, sessionId }: TeamToggleInjected): JSX.El
     const onDown = (event: MouseEvent): void => {
       const target = event.target as Node | null
       if (target === null) return
-      if (btnRef.current?.contains(target) === true) return
-      if ((target as HTMLElement).closest?.('.team-pop') !== null) return
+      if (rootRef.current?.contains(target) === true) return
       setOpen(false)
     }
     const onKey = (event: KeyboardEvent): void => { if (event.key === 'Escape') setOpen(false) }
@@ -146,21 +180,38 @@ export function TeamToggle({ available, sessionId }: TeamToggleInjected): JSX.El
   }, [open])
 
   const activeTeam = teams.find(team => team.id === state.teamId) ?? teams[0]
-  const modelText = activeTeam !== undefined && activeTeam.model.provider !== ''
-    ? `${activeTeam.model.model}`
-    : '未设置（用全局默认 / 会话模型）'
+  const buttonLabel = state.enabled && activeTeam !== undefined ? activeTeam.name : '团队模式'
 
   return (
-    <>
+    <div ref={rootRef} className="team-seat">
+      {/* 中心光晕过场：开关翻转瞬间从窗口中心扩散（in）/收拢（out） */}
+      {state.enabled || pulse !== null ? (
+        <TeamAura active={state.enabled} pulse={pulse} />
+      ) : null}
       <button
         ref={btnRef}
         type="button"
         className="team-toggle-btn"
         data-on={state.enabled}
         aria-label="团队模式"
+        aria-haspopup="menu"
         aria-expanded={open}
-        title={state.enabled ? `团队模式：${activeTeam?.name ?? state.teamId}` : '团队模式（关闭）'}
-        onClick={toggleOpen}
+        title={state.enabled ? `团队模式：${activeTeam?.name ?? state.teamId}（强制）` : '团队模式（关闭）'}
+        onMouseEnter={showPanel}
+        onMouseLeave={scheduleHide}
+        onClick={() => {
+          // 团队模式已开启：左键点击按钮直接关闭（不进菜单）。
+          // 未开启：点击打开菜单选择团队。
+          if (state.enabled) {
+            setOpen(false)
+            commit({ enabled: false })
+          } else if (open) {
+            cancelHoverHide()
+            setOpen(false)
+          } else {
+            showPanel()
+          }
+        }}
       >
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
           <circle cx="9" cy="8" r="3.1" />
@@ -168,84 +219,53 @@ export function TeamToggle({ available, sessionId }: TeamToggleInjected): JSX.El
           <path d="M16.5 11.2a2.6 2.6 0 1 0-1.2-4.9" />
           <path d="M17 18.6c0-1.9-.9-3.3-2.4-4.1 2.9-.6 5.4 1 5.4 4.1" />
         </svg>
-        {state.enabled && activeTeam !== undefined ? (
-          <span className="team-toggle-name">{activeTeam.name}</span>
-        ) : null}
+        <span className="team-toggle-name">{buttonLabel}</span>
+        <IconChevronDownOutline14 className={clsx('team-toggle-chevron', open && 'team-toggle-chevron-open')} />
       </button>
 
-      {open && pos !== null ? createPortal(
-        <div className="team-pop" style={{ left: pos.left, top: pos.top }} role="dialog" aria-label="团队模式设置">
-          <div className="team-pop-head">
-            <span className="team-pop-title">团队模式</span>
-            <button
-              type="button"
-              className="team-switch-ctl"
-              role="switch"
-              aria-checked={state.enabled}
-              aria-label="启用团队模式"
-              disabled={teams.length === 0}
-              onClick={() => commit({ enabled: !state.enabled, teamId: state.teamId !== '' ? state.teamId : (teams[0]?.id ?? '') })}
-            />
-          </div>
-
+      {open && (
+        <div
+          className="team-pop"
+          role="menu"
+          aria-label="选择团队"
+          onMouseEnter={showPanel}
+          onMouseLeave={scheduleHide}
+        >
           {teams.length === 0 ? (
-            <div className="team-pop-hint">还没有团队。先在左侧「团队」面板新建一个。</div>
+            <div className="team-pop-empty">还没有团队。先在左侧「团队」面板新建一个。</div>
           ) : (
             <>
-              <label className="team-field">
-                <span>团队</span>
-                <select
-                  className="team-select team-select-grow"
-                  value={state.teamId !== '' ? state.teamId : (teams[0]?.id ?? '')}
-                  onChange={e => commit({ teamId: e.target.value, chainId: '' })}
-                >
-                  {teams.map(team => (
-                    <option key={team.id} value={team.id}>{team.name}</option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="team-field">
-                <span>协作链</span>
-                <select
-                  className="team-select team-select-grow"
-                  value={state.chainId}
-                  onChange={e => commit({ chainId: e.target.value })}
-                >
-                  <option value="">自动选择（由主脑判断）</option>
-                  {chains.map(chain => (
-                    <option key={chain.id} value={chain.id}>{chain.name}</option>
-                  ))}
-                </select>
-              </label>
-
-              <div className="team-model-row">
-                <span>团队默认模型</span>
-                <span style={{ fontFamily: 'ui-monospace, monospace', fontSize: 11, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {modelText}
-                </span>
-              </div>
-
-              <label className="team-check">
-                <input type="checkbox" checked={state.force} onChange={e => commit({ force: e.target.checked })} />
-                强制模式：每个任务都先交给团队
-              </label>
-
-              <div className="team-pop-divider" />
-              <div className="team-pop-hint">
-                {state.enabled
-                  ? '开启后，需要多角色协作的任务会由该团队接力执行，产物落盘；进度显示在对话流上方的团队 HUD。'
-                  : '开启后，本会话的复杂任务将交给所选团队分工执行。简单问答仍直接回答。'}
-              </div>
-              {state.force ? (
-                <div className="team-pop-hint">强制模式下简单问题也会走团队，响应更慢、消耗更多 token。</div>
-              ) : null}
+              {teams.map(team => {
+                const selected = state.enabled && team.id === state.teamId
+                return (
+                  <button
+                    key={team.id}
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={selected}
+                    className={clsx('team-pop-item', selected && 'team-pop-item-on')}
+                    title={team.name}
+                    onClick={() => pickTeam(team.id)}
+                  >
+                    <span className="team-pop-item-copy">
+                      <span className="team-pop-item-name">{team.name}</span>
+                      <span className="team-pop-item-sub">
+                        {team.description ?? `${team.roleCount} 个角色 · ${team.chainCount} 条协作链`}
+                      </span>
+                    </span>
+                    <span className="team-pop-check">{selected ? <IconCheckOutline16 /> : null}</span>
+                  </button>
+                )
+              })}
             </>
           )}
+          <div className="team-pop-divider" />
+          <div className="team-pop-foot">
+            ⚡ 强制模式：选中团队即开启，每个任务都先交给团队执行
+          </div>
           {err !== null ? <div className="team-error">{err}</div> : null}
-        </div>,
-        document.body,
-      ) : null}
-    </>
+        </div>
+      )}
+    </div>
   )
 }

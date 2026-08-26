@@ -91,8 +91,11 @@ export interface Role {
   capabilities?: RoleCapabilities
 }
 
+/**
+ * 链步骤。`parallel: true` = 与上一步同波次并行执行（同时开跑，彼此看不到对方产出）。
+ */
 export type ChainStep =
-  | { kind: 'role', roleId: string, taskNote?: string }
+  | { kind: 'role', roleId: string, taskNote?: string, parallel?: boolean }
   | { kind: 'synthesize', roleId?: string }
 
 export interface Chain {
@@ -141,12 +144,18 @@ export interface TeamGlobals {
   maxRetries: number
   upstreamWindow: 'last' | 'all-summary'
   maxConcurrentRuns: number
+  /** 单个运行内同一波次的最大并发角色数（1 = 全串行）。 */
+  maxParallel: number
+  /** 面板/工具默认让主脑自主编排并行计划。 */
+  autoPlan: boolean
   outputChunkChars: number
   stopOnError: boolean
 }
 
 export interface RunStep {
   index: number
+  /** 波次序号（0 起）：同波次并行执行，波次之间串行。旧快照缺省时按 index 兜底。 */
+  wave?: number
   roleId: string
   roleName: string
   tagline: string
@@ -198,6 +207,12 @@ export interface Run {
   origin: RunOrigin
   sessionId?: string
   modelOverrides?: Record<string, ModelBinding>
+  /** 计划来源：chain / roles / plan（显式并行计划）/ auto（主脑自主编排）。 */
+  planMode?: 'chain' | 'roles' | 'plan' | 'auto'
+  /** 主脑自主编排时的分工说明。 */
+  planNote?: string
+  /** 波次数（< steps.length 即存在并行）。 */
+  waveCount?: number
   startedAt: string
   finishedAt?: string
   steps: RunStep[]

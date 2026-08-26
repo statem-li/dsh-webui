@@ -1,15 +1,15 @@
 /**
  * webui — 对话框「语音播报」开关（client 半身）。
  *
- * 注册在 conversation.input.left，只影响**当前会话**。旧版的三个坑这里都修了：
+ * 注册在 conversation.input.left，只影响**当前会话**。交互约定：
  *
- *  1. 生效值被 `global.enabled &&` 一票否决——全局关着时，对话框里怎么点都不响，
- *     「开关跟没开一样」。现在会话覆盖是**双向**的：全局关着也能只为本会话打开
- *     （请求带 force 越过 host 全局开关），全局开着也能只让本会话闭嘴。
- *  2. 主按钮只是个「打开弹层」的入口，没有一键开关语义。现在**单击即开关本会话**，
- *     右键 / 长按（或点箭头）才展开细项。
- *  3. 没有「立刻别念了」的入口。现在按钮上带静音态：静音是全局运行期硬开关，
- *     一次点击掐断所有会话正在播的那句，并挡住后续所有播报。
+ *  1. **左键一键总闸**：单击＝开「本会话播报＋总结播报（回复结束念结论）」，
+ *     再击＝一键全关（同时停掉正在播的那句）。实时播报不强行改变，沿用既有偏好。
+ *  2. **悬停展开细项**：鼠标停在图标上约 140ms 后弹出细项面板（防扫过误触），
+ *     移开约 240ms 自动收起（留出挪进面板的宽限）；右键已退役，仅吞掉默认菜单。
+ *  3. 会话覆盖是**双向**的：全局关着也能只为本会话打开（请求带 force 越过
+ *     host 全局开关），全局开着也能只让本会话闭嘴。
+ *  4. 静音态：全局运行期硬开关，一次点击掐断所有会话正在播的那句并挡住后续。
  */
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -24,6 +24,16 @@ import { setMuted, stopSpeak } from './api'
 export interface VoiceToggleInjected {
   sessionId: SessionId
 }
+
+/** 弹层相位：closed 未挂载 / open 展开 / closing 退场动画中。 */
+type PanelPhase = 'closed' | 'open' | 'closing'
+
+/** 悬停多久后才展开（毫秒，防鼠标扫过误触）。 */
+const HOVER_OPEN_MS = 140
+/** 移开多久后才收起（毫秒，给「挪进弹层」留宽限）。 */
+const HOVER_CLOSE_MS = 240
+/** 退场动画时长（毫秒，与下方 CSS 的 webui-pop-out 保持一致）。 */
+const POP_OUT_MS = 130
 
 /** 按钮行内样式（对齐官方 tool-row 小图标按钮）。 */
 const btnBase: React.CSSProperties = {
@@ -42,6 +52,40 @@ const btnMuted: React.CSSProperties = {
   color: 'var(--dsw-alias-state-error-primary)',
   background: 'var(--dsw-alias-interactive-bg-hover, rgba(230,80,80,0.10))',
 }
+
+/**
+ * 按钮与弹层的动效（组件级一次性注入的小段 CSS）：
+ * 弹层出入场、按钮 hover 微抬升与按压回弹、开启态呼吸光环；
+ * prefers-reduced-motion 下全部让位。
+ */
+const interactionCss = `
+@keyframes webuiVoicePopIn {
+  from { opacity: 0; transform: translateY(7px) scale(0.96); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes webuiVoicePopOut {
+  from { opacity: 1; transform: translateY(0) scale(1); }
+  to { opacity: 0; transform: translateY(5px) scale(0.97); }
+}
+@keyframes webuiVoiceGlow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(65, 118, 230, 0); }
+  50% { box-shadow: 0 0 9px 2px rgba(65, 118, 230, 0.30); }
+}
+.webui-voice-btn {
+  transition: transform .18s cubic-bezier(.22, 1, .36, 1), background-color .18s ease, color .18s ease;
+}
+.webui-voice-btn:hover { transform: translateY(-1px) scale(1.08); }
+.webui-voice-btn:active { transform: scale(.92); transition-duration: .09s; }
+.webui-voice-btn.is-on { animation: webuiVoiceGlow 2.6s ease-in-out infinite; }
+.webui-voice-pop { transform-origin: 50% 100%; will-change: opacity, transform; }
+.webui-voice-pop.webui-pop-in { animation: webuiVoicePopIn .17s cubic-bezier(.22, 1, .36, 1) both; }
+.webui-voice-pop.webui-pop-out { animation: webuiVoicePopOut .13s ease-in both; }
+@media (prefers-reduced-motion: reduce) {
+  .webui-voice-btn { transition: none; }
+  .webui-voice-btn.is-on { animation: none; }
+  .webui-voice-pop.webui-pop-in, .webui-voice-pop.webui-pop-out { animation: none; }
+}
+`
 
 /** 弹层（body 直属 portal，避开设置面板 backdrop-filter containing-block）。 */
 const popStyle: React.CSSProperties = {
@@ -102,9 +146,11 @@ function Switch(props: { on: boolean; label: string; disabled?: boolean; onToggl
 export function VoiceToggle({ sessionId }: VoiceToggleInjected): JSX.Element {
   const sid = String(sessionId)
   const [, forceRender] = useState(0)
-  const [open, setOpen] = useState(false)
+  const [phase, setPhase] = useState<PanelPhase>('closed')
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null)
   const btnRef = useRef<HTMLButtonElement | null>(null)
+  const openTimer = useRef<number | null>(null)
+  const closeTimer = useRef<number | null>(null)
 
   // store 变化（本会话覆盖 / 全局缓存 / 静音，含其它标签页）即重渲染。
   useEffect(() => subscribeVoice(() => { forceRender(n => n + 1) }), [])
@@ -120,11 +166,10 @@ export function VoiceToggle({ sessionId }: VoiceToggleInjected): JSX.Element {
   }
 
   /**
-   * 单击主按钮：开关**本会话**播报。
+   * 单击主按钮＝一键总闸：开＝「本会话播报＋总结播报」，关＝全停。
    *
    * 静音态下第一次点击优先解除静音（用户此刻的意图显然是「我又想听了」）。
-   * 从关到开时补齐子开关：若本会话/全局都没开过任何一项，默认只开总结播报——
-   * 播报的价值在结论，实时朗读长篇是噪音。
+   * 开启时总结播报必开（播报的价值在结论），实时播报沿用既有偏好不强改。
    */
   const toggleSession = (): void => {
     if (muted) {
@@ -136,65 +181,122 @@ export function VoiceToggle({ sessionId }: VoiceToggleInjected): JSX.Element {
       void stopSpeak({ sessionId: sid })
       return
     }
-    const live = override?.live ?? global.live
-    const summary = override?.summary ?? global.summary
-    commit(live || summary ? { on: true, live, summary } : { on: true, live: false, summary: true })
+    commit({ on: true, live: override?.live ?? global.live, summary: true })
   }
 
-  const toggleOpen = (): void => {
-    if (open) { setOpen(false); return }
+  /** 计算弹层落点：按钮上方优先，放不下再弹下方，两侧夹紧视口。 */
+  const placePop = (): void => {
     const rect = btnRef.current?.getBoundingClientRect()
-    if (rect !== undefined) {
-      const width = 296
-      const left = Math.max(8, Math.min(rect.right - width / 2 + rect.width / 2, window.innerWidth - width - 8))
-      // 优先弹在按钮上方（输入框在窗口底部，弹下方会被推出视口）；上方放不下再弹下方。
-      const estimated = 300
-      const top = rect.top - estimated - 8 >= 8
-        ? rect.top - estimated - 8
-        : Math.min(window.innerHeight - estimated - 8, Math.max(8, rect.bottom + 8))
-      setPos({ left, top })
-    }
-    setOpen(true)
+    if (rect === undefined) return
+    const width = 296
+    const left = Math.max(8, Math.min(rect.right - width / 2 + rect.width / 2, window.innerWidth - width - 8))
+    const estimated = 300
+    const top = rect.top - estimated - 8 >= 8
+      ? rect.top - estimated - 8
+      : Math.min(window.innerHeight - estimated - 8, Math.max(8, rect.bottom + 8))
+    setPos({ left, top })
   }
 
-  // 点击外部 / Esc 关闭。
+  const clearOpenTimer = (): void => {
+    if (openTimer.current !== null) { window.clearTimeout(openTimer.current); openTimer.current = null }
+  }
+  const clearCloseTimer = (): void => {
+    if (closeTimer.current !== null) { window.clearTimeout(closeTimer.current); closeTimer.current = null }
+  }
+
+  /** 悬停进入按钮：稍候展开；若正在收起则立刻拉回展开态。 */
+  const handleEnter = (): void => {
+    if (closeTimer.current !== null) {
+      clearCloseTimer()
+      setPhase('open')
+      return
+    }
+    if (phase === 'open' || openTimer.current !== null) return
+    openTimer.current = window.setTimeout(() => {
+      openTimer.current = null
+      placePop()
+      setPhase('open')
+    }, HOVER_OPEN_MS)
+  }
+
+  /** 悬停离开（按钮或弹层）：宽限片刻后收起；尚未展开则直接取消。 */
+  const handleLeave = (): void => {
+    clearOpenTimer()
+    if (phase !== 'open' || closeTimer.current !== null) return
+    closeTimer.current = window.setTimeout(() => {
+      closeTimer.current = null
+      setPhase('closing')
+    }, HOVER_CLOSE_MS)
+  }
+
+  /** 进入弹层本体：取消收起倒计时；收起动画中则拉回展开。 */
+  const handlePopEnter = (): void => {
+    clearCloseTimer()
+    if (phase === 'closing') setPhase('open')
+  }
+
+  /** 请求关闭（Esc / 点击外部）：走退场动画后卸载。 */
+  const requestClose = (): void => {
+    clearOpenTimer()
+    setPhase(p => (p === 'open' ? 'closing' : p))
+  }
+
+  // closing 相位落定为 closed（退场动画播完再卸载 DOM）。
   useEffect(() => {
-    if (!open) return
+    if (phase !== 'closing') return
+    const t = window.setTimeout(() => { setPhase('closed') }, POP_OUT_MS)
+    return () => { window.clearTimeout(t) }
+  }, [phase])
+
+  // Esc / 点击弹层外部关闭。
+  useEffect(() => {
+    if (phase === 'closed') return
     const onDown = (event: MouseEvent): void => {
       const target = event.target as Node | null
       if (target === null) return
       if (btnRef.current?.contains(target) === true) return
       if ((target as HTMLElement).closest?.('.webui-voice-pop') !== null) return
-      setOpen(false)
+      requestClose()
     }
-    const onKey = (event: KeyboardEvent): void => { if (event.key === 'Escape') setOpen(false) }
+    const onKey = (event: KeyboardEvent): void => { if (event.key === 'Escape') requestClose() }
     document.addEventListener('mousedown', onDown)
     document.addEventListener('keydown', onKey)
     return () => {
       document.removeEventListener('mousedown', onDown)
       document.removeEventListener('keydown', onKey)
     }
-  }, [open])
+  }, [phase])
+
+  // 卸载时清掉所有挂起的定时器。
+  useEffect(() => () => { clearOpenTimer(); clearCloseTimer() }, [])
 
   const buttonStyle = muted ? btnMuted : eff.on ? btnActive : btnBase
+  const btnClass = `webui-voice-btn${eff.on && !muted ? ' is-on' : ''}`
   const title = muted
-    ? '已静音（点击恢复；右键展开设置）'
+    ? '已全局静音（点击解除静音；悬停展开设置）'
     : eff.on
-      ? `本会话播报已开：${[eff.live ? '实时' : '', eff.summary ? '总结' : ''].filter(Boolean).join(' + ')}（点击关闭；右键展开设置）`
-      : '本会话播报已关（点击开启；右键展开设置）'
+      ? `本会话播报已开：${[eff.live ? '实时' : '', eff.summary ? '总结' : ''].filter(Boolean).join(' + ')}（点击一键关闭；悬停展开设置）`
+      : '播报已关（点击一键开启本会话＋总结播报；悬停展开设置）'
 
   return (
     <>
+      <style>{interactionCss}</style>
       <button
         ref={btnRef}
         type="button"
+        className={btnClass}
         style={buttonStyle}
         aria-label="语音播报（本会话）"
         aria-pressed={eff.on && !muted}
-        aria-expanded={open}
+        aria-haspopup="dialog"
+        aria-expanded={phase === 'open'}
         title={title}
         onClick={toggleSession}
-        onContextMenu={(event) => { event.preventDefault(); toggleOpen() }}
+        onMouseEnter={handleEnter}
+        onMouseLeave={handleLeave}
+        onFocus={handleEnter}
+        onBlur={handleLeave}
+        onContextMenu={(event) => { event.preventDefault() }}
       >
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
           <path d="M11 5 6.5 9H3.5v6h3L11 19V5z" fill={eff.on && !muted ? 'currentColor' : 'none'} />
@@ -212,8 +314,15 @@ export function VoiceToggle({ sessionId }: VoiceToggleInjected): JSX.Element {
         </svg>
       </button>
 
-      {open && pos !== null ? createPortal(
-        <div className="webui-voice-pop" style={{ ...popStyle, left: pos.left, top: pos.top }} role="dialog" aria-label="本会话语音播报">
+      {phase !== 'closed' && pos !== null ? createPortal(
+        <div
+          className={`webui-voice-pop ${phase === 'open' ? 'webui-pop-in' : 'webui-pop-out'}`}
+          style={{ ...popStyle, left: pos.left, top: pos.top }}
+          role="dialog"
+          aria-label="本会话语音播报"
+          onMouseEnter={handlePopEnter}
+          onMouseLeave={handleLeave}
+        >
           <span style={popTitle}>本会话语音播报</span>
 
           <div style={rowStyle}>
@@ -229,7 +338,7 @@ export function VoiceToggle({ sessionId }: VoiceToggleInjected): JSX.Element {
               on={eff.summary && !muted} label="总结播报" disabled={muted}
               onToggle={() => {
                 const live = override?.live ?? global.live
-                commit({ on: true, live, summary: !eff.summary })
+                commit(eff.summary ? { on: eff.on, live, summary: false } : { on: true, live, summary: true })
               }}
             />
           </div>
@@ -274,8 +383,8 @@ export function VoiceToggle({ sessionId }: VoiceToggleInjected): JSX.Element {
           </div>
 
           <span style={hintStyle}>
-            单击图标即开关本会话；静音是全局硬开关，立刻掐断所有会话。
-            全局默认在「设置 → 通用 → 语音播报」。
+            单击图标＝一键开关「本会话＋总结」播报；细项在此调整，移开自动收起。
+            静音是全局硬开关。全局默认在「设置 → 通用 → 语音播报」。
           </span>
         </div>,
         document.body,

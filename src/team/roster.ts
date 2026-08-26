@@ -17,6 +17,7 @@ import {
   type Chain,
   type ChainStep,
   type ModelBinding,
+  type PlanWaveItem,
   type ResolvedModel,
   type Role,
   type Run,
@@ -157,6 +158,11 @@ export function resolveModelChecked(input: ResolveInput, providers: readonly Pro
 /** 展开后的一个执行步骤。 */
 export interface PlannedStep {
   index: number
+  /**
+   * 波次序号（0 起）：同一 wave 的步骤由引擎并发执行，wave 之间串行。
+   * 全串行计划里 wave === index。
+   */
+  wave: number
   role: Role
   synthesize: boolean
   taskNote?: string
@@ -170,16 +176,36 @@ export function findCoreRole(team: Team): Role | null {
 }
 
 /**
- * 把链条展开为线性执行计划：role 步 + 显式/隐式 synthesize 步。
+ * 把链条展开为执行计划：role 步 + 显式/隐式 synthesize 步。
  * 找不到角色的步骤直接跳过；主脑缺失时不追加整合步。
+ *
+ * 并行语义：`step.parallel === true` 的 role 步与**前一步同波次**（首步除外）；
+ * 其余步骤各自开新波次。synthesize 步永远独占最后一个波次（必须看到全部上游）。
+ * 波次内步数由 maxParallel 限制（超出的自动溢出到下一个波次，避免一次点爆供应商）。
  */
-export function planChain(team: Team, chain: Chain): PlannedStep[] {
+export function planChain(team: Team, chain: Chain, maxParallel = 1): PlannedStep[] {
   const byId = new Map(team.roles.map(role => [role.id, role]))
   const out: PlannedStep[] = []
   let hasExplicitSynth = false
+  let wave = -1
+  /** 当前波次已放入的步数（用于 maxParallel 溢出切波）。 */
+  let waveSize = 0
 
-  const push = (role: Role, synthesize: boolean, taskNote?: string): void => {
-    out.push({ index: out.length, role, synthesize, ...(taskNote !== undefined ? { taskNote } : {}) })
+  const push = (role: Role, synthesize: boolean, sameWave: boolean, taskNote?: string): void => {
+    const canJoin = sameWave && wave >= 0 && waveSize < Math.max(1, maxParallel)
+    if (canJoin) {
+      waveSize += 1
+    } else {
+      wave += 1
+      waveSize = 1
+    }
+    out.push({
+      index: out.length,
+      wave,
+      role,
+      synthesize,
+      ...(taskNote !== undefined ? { taskNote } : {}),
+    })
   }
 
   for (const step of chain.steps as ChainStep[]) {
@@ -187,35 +213,95 @@ export function planChain(team: Team, chain: Chain): PlannedStep[] {
       const role = (step.roleId !== undefined ? byId.get(step.roleId) : undefined) ?? findCoreRole(team)
       if (role === null || role === undefined) continue
       hasExplicitSynth = true
-      push(role, true)
+      push(role, true, false)
       continue
     }
     const role = byId.get(step.roleId)
     if (role === undefined) continue
-    push(role, false, step.taskNote)
+    push(role, false, step.parallel === true, step.taskNote)
   }
 
   if (chain.finalSynthesize && !hasExplicitSynth) {
     const core = findCoreRole(team)
-    if (core !== null) push(core, true)
+    if (core !== null) push(core, true, false)
   }
   return out
 }
 
-/** 把任意角色 id 序列展开为执行计划（临时点兵）。 */
+/**
+ * 把任意角色 id 序列展开为执行计划（临时点兵，全串行 + 可选尾部整合）。
+ */
 export function planRoles(team: Team, roleIds: readonly string[], synthesize: boolean): PlannedStep[] {
   const byId = new Map(team.roles.map(role => [role.id, role]))
   const out: PlannedStep[] = []
   for (const id of roleIds) {
     const role = byId.get(id)
     if (role === undefined) continue
-    out.push({ index: out.length, role, synthesize: false })
+    out.push({ index: out.length, wave: out.length, role, synthesize: false })
   }
   if (synthesize) {
     const core = findCoreRole(team)
-    if (core !== null) out.push({ index: out.length, role: core, synthesize: true })
+    if (core !== null) out.push({ index: out.length, wave: out.length, role: core, synthesize: true })
   }
   return out
+}
+
+/**
+ * 把显式并行计划（波次数组）展开为执行计划。
+ * 每个波次内的角色并发执行；超过 maxParallel 的部分溢出为额外波次。
+ * synthesize=true 时尾部追加一个独占波次的主脑整合步。
+ */
+export function planWaves(
+  team: Team,
+  waves: readonly PlanWaveItem[][],
+  synthesize: boolean,
+  maxParallel = 1,
+): PlannedStep[] {
+  const byId = new Map(team.roles.map(role => [role.id, role]))
+  const out: PlannedStep[] = []
+  const limit = Math.max(1, maxParallel)
+  let wave = -1
+  for (const group of waves) {
+    let placed = 0
+    for (const item of group) {
+      const role = byId.get(item.roleId)
+      if (role === undefined) continue
+      if (placed % limit === 0) wave += 1
+      placed += 1
+      out.push({
+        index: out.length,
+        wave,
+        role,
+        synthesize: false,
+        ...(item.taskNote !== undefined ? { taskNote: item.taskNote } : {}),
+      })
+    }
+  }
+  if (out.length === 0) return out
+  if (synthesize) {
+    const core = findCoreRole(team)
+    if (core !== null) out.push({ index: out.length, wave: wave + 1, role: core, synthesize: true })
+  }
+  return out
+}
+
+/** 计划里的波次数量。 */
+export function waveCountOf(planned: readonly PlannedStep[]): number {
+  return new Set(planned.map(step => step.wave)).size
+}
+
+/** 计划的可读路径文案（并行波次用 `A‖B` 表示）。 */
+export function describePlan(planned: readonly PlannedStep[]): string {
+  const groups = new Map<number, string[]>()
+  for (const step of planned) {
+    const names = groups.get(step.wave) ?? []
+    names.push(step.synthesize ? `${step.role.name}（整合）` : step.role.name)
+    groups.set(step.wave, names)
+  }
+  return [...groups.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([, names]) => (names.length > 1 ? names.join('‖') : names[0]))
+    .join('→')
 }
 
 /** 校验团队可用性：至少一个角色；链引用的角色存在（normalizeTeam 已过滤，这里只查空链）。 */

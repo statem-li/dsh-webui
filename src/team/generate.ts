@@ -55,11 +55,12 @@ const SYSTEM = [
   '4. 角色 id 用简短小写英文（字母数字连字符，≤20 字符），name 用简短中文名（1~3 字最佳，如「察」「驳」「匠」），en 用 id 同名英文，tagline 是 6~14 字的中文定位语（用「·」分隔两个短语）。',
   '5. 每个角色的 prompt 是完整可用的中文系统提示词：身份定位、职责清单（3~5 条具体动作）、协作纪律（不越权、采信上游、结论先行、不确定处标注待确认）、输出格式要求。每个 prompt 至少 150 字。',
   '6. 设计 1~4 条协作链（chains）：每条链是有序的角色接力，steps 里每步 {"roleId": "...", "taskNote": "该步要做什么（一句话）"}；finalSynthesize 一律为 true（尾部由主脑整合）。链的 id 用小写英文，name 用「A→B→主脑整合」形式。',
+  '6.1 并行：某一步与它前一步互不依赖、可以同时开跑时，给该步加 "parallel": true —— 它会与前一步同一波次并发执行（同波次的角色彼此看不到对方产出）。有依赖关系的步骤（先取证再成稿、先实现再评审）绝不能标 parallel。请至少设计一条带并行的链，name 里用「A‖B」表示这个并行组。',
   '7. 可选设计 0~4 条按需直连（directLinks）：{"from","to","kind":"bidirectional"|"directed","label":"关系"}，表示两个角色之间的非链式协作关系。',
   '8. 不要输出任何模型名称或 provider——模型由用户在界面上统一配置。',
   '',
   '只输出一个 JSON 对象，不要 markdown 围栏，不要任何解释文字，形状严格如下：',
-  '{"name":"团队名（4~10 字中文）","description":"一句话说明这支团队做什么","roles":[{"id":"brain","name":"主脑","en":"brain","tagline":"协调中枢·总管兜底","group":"core","prompt":"..."},{"id":"...","name":"...","en":"...","tagline":"...","group":"judge|act|guard","prompt":"..."}],"chains":[{"id":"...","name":"...","finalSynthesize":true,"steps":[{"roleId":"...","taskNote":"..."}]}],"directLinks":[{"from":"...","to":"...","kind":"bidirectional","label":"..."}]}',
+  '{"name":"团队名（4~10 字中文）","description":"一句话说明这支团队做什么","roles":[{"id":"brain","name":"主脑","en":"brain","tagline":"协调中枢·总管兜底","group":"core","prompt":"..."},{"id":"...","name":"...","en":"...","tagline":"...","group":"judge|act|guard","prompt":"..."}],"chains":[{"id":"...","name":"...","finalSynthesize":true,"steps":[{"roleId":"...","taskNote":"..."},{"roleId":"...","parallel":true,"taskNote":"..."}]}],"directLinks":[{"from":"...","to":"...","kind":"bidirectional","label":"..."}]}',
 ].join('\n')
 
 /** 从 LLM 输出里稳健提取 JSON 对象。 */
@@ -192,7 +193,12 @@ function sanitizeChains(input: unknown, roles: readonly Role[]): Chain[] {
         const roleId = typeof s.roleId === 'string' ? s.roleId.trim().toLowerCase() : ''
         if (!ids.has(roleId)) return null
         const note = typeof s.taskNote === 'string' ? s.taskNote.trim().slice(0, 200) : ''
-        return { kind: 'role' as const, roleId, ...(note !== '' ? { taskNote: note } : {}) }
+        return {
+          kind: 'role' as const,
+          roleId,
+          ...(note !== '' ? { taskNote: note } : {}),
+          ...(s.parallel === true ? { parallel: true } : {}),
+        }
       })
       .filter((step): step is Chain['steps'][number] => step !== null)
     if (steps.length === 0) continue

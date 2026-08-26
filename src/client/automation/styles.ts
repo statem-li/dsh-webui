@@ -101,6 +101,39 @@ const SHEET = `
 .auto-input::placeholder,.auto-textarea::placeholder{color:var(--dsw-alias-label-dimmed,#666)}
 .auto-textarea{height:auto;min-height:88px;padding:8px 10px;resize:vertical;line-height:21px}
 .auto-select{appearance:none;width:100%;height:32px;box-sizing:border-box;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.14));border-radius:8px;padding:0 32px 0 10px;font-size:14px;line-height:22px;font-family:inherit;color:var(--dsw-alias-label-primary,#eee);background-color:var(--dsw-alias-bg-layer-1,#1c1f26);background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none'%3E%3Cpath d='M3 4.5L6 7.5L9 4.5' stroke='%2381858C' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;background-size:12px 12px;cursor:pointer;max-width:240px}
+
+/* ── 模型选择器（左右分栏弹层，替换原生 select）── */
+.auto-model{position:relative;min-width:0}
+.auto-model-btn{appearance:none;display:flex;align-items:center;gap:8px;width:100%;max-width:240px;height:32px;box-sizing:border-box;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.14));border-radius:8px;padding:0 10px;font-size:14px;line-height:22px;font-family:inherit;color:var(--dsw-alias-label-primary,#eee);background:var(--dsw-alias-bg-layer-1,#1c1f26);cursor:pointer;text-align:left;transition:border-color .16s ease}
+.auto-model-btn:hover{border-color:var(--dsw-alias-border-l3,rgba(255,255,255,.16))}
+.auto-model-btn:focus-visible,.auto-model-btn[aria-expanded='true']{outline:none;border-color:var(--dsw-alias-state-business-primary,#4176e6)}
+.auto-model-label{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.auto-model-chevron{flex:none;display:inline-flex;color:var(--dsw-alias-label-tertiary,#888);transition:transform .18s cubic-bezier(.2,.8,.2,1)}
+.auto-model-btn[aria-expanded='true'] .auto-model-chevron{transform:rotate(180deg)}
+.auto-model-pop{position:fixed;z-index:1200;display:flex;width:344px;height:300px;box-sizing:border-box;overflow:hidden;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.14));border-radius:12px;box-shadow:var(--dsw-shadow-lv3,0 8px 40px rgba(0,0,0,.5))}
+/* 实底表面（不透明）：底色必须用 static token（alias 在玻璃模式下被换成 rgba 会透），
+   并带 html[data-dsh-glass] 前缀压过 glass.ts 的「插件自绘面板一律 transparent」规则 */
+.auto-model-pop,html[data-dsh-glass] .auto-model-pop{background:var(--dsw-static-neutral-bluish-00,#fff);backdrop-filter:none;-webkit-backdrop-filter:none}
+body[data-ds-dark-theme] .auto-model-pop,html[data-dsh-glass] body[data-ds-dark-theme] .auto-model-pop{background:var(--dsw-static-neutral-bluish-850,#2c2c2e)}
+.auto-model-pop[data-anim='in']{animation:auto-model-in .18s cubic-bezier(.2,.8,.2,1)}
+.auto-model-pop[data-anim='out']{animation:auto-model-out .16s cubic-bezier(.4,0,.2,1) both}
+@keyframes auto-model-in{from{opacity:0;transform:scale(.96) translateY(6px)}to{opacity:1;transform:scale(1) translateY(0)}}
+@keyframes auto-model-out{from{opacity:1;transform:scale(1) translateY(0)}to{opacity:0;transform:scale(.96) translateY(4px)}}
+.auto-model-providers{flex:none;width:130px;display:flex;flex-direction:column;overflow-y:auto;padding:4px;border-right:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.08))}
+.auto-model-provider{appearance:none;border:none;flex:none;display:flex;align-items:center;gap:6px;min-width:0;height:30px;padding:0 10px;border-radius:7px;background:transparent;color:var(--dsw-alias-label-secondary,#bbb);font-size:12px;line-height:18px;font-family:inherit;cursor:pointer;text-align:left;transition:background .14s ease,color .14s ease}
+.auto-model-provider:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.06));color:var(--dsw-alias-label-primary,#eee)}
+.auto-model-provider[data-active='true'],.auto-model-provider[data-active='true']:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.06));color:var(--dsw-alias-label-primary,#eee);font-weight:600}
+.auto-model-provider-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.auto-model-provider-count{flex:none;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary,#888);font-variant-numeric:tabular-nums}
+.auto-model-models{flex:1;min-width:0;display:flex;flex-direction:column;overflow-y:auto;padding:4px;animation:auto-model-models-in .16s ease}
+@keyframes auto-model-models-in{from{opacity:0;transform:translateX(4px)}to{opacity:1;transform:translateX(0)}}
+.auto-model-model{appearance:none;border:none;flex:none;display:flex;align-items:center;gap:8px;min-height:34px;padding:5px 10px;border-radius:7px;background:transparent;color:var(--dsw-alias-label-primary,#eee);font-size:13px;line-height:20px;font-family:inherit;cursor:pointer;text-align:left;transition:background .14s ease}
+.auto-model-model:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.06))}
+.auto-model-model-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.auto-model-check{flex:none;display:inline-flex;width:16px;height:16px;color:var(--dsw-alias-label-primary,#eee)}
+.auto-model-model[data-selected='true'] .auto-model-check{animation:auto-model-check-in .2s cubic-bezier(.2,.8,.2,1)}
+@keyframes auto-model-check-in{from{opacity:0;transform:scale(.4)}to{opacity:1;transform:scale(1)}}
+.auto-model-empty{flex:1;display:flex;align-items:center;justify-content:center;padding:16px 10px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,#888);text-align:center}
 .auto-inline{display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap}
 .auto-inline .auto-field{flex:1;min-width:120px}
 .auto-hint{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary,#888)}
@@ -179,6 +212,8 @@ const SHEET = `
   .auto-toast{animation:none}
   .auto-switch,.auto-switch::after,.auto-chevron,.auto-chip,.auto-btn{transition:none!important}
   .auto-running svg,.auto-icon-btn[data-spin='true'] svg{animation:none!important}
+  .auto-model-pop,.auto-model-models,.auto-model-check,.auto-model-chevron{animation:none!important}
+  .auto-model-btn,.auto-model-chevron,.auto-model-provider{transition:none!important}
 }
 `
 

@@ -105,6 +105,8 @@ const SETTINGS_SCHEMA = z.object({
   timeoutSec: z.number().step(1).min(10).max(3600).default(300),
   maxRetries: z.number().step(1).min(0).max(5).default(1),
   maxConcurrentRuns: z.number().step(1).min(1).max(5).default(1),
+  maxParallel: z.number().step(1).min(1).max(5).default(2),
+  autoPlan: z.boolean().default(false),
   outputChunkChars: z.number().step(1).min(500).default(8000),
   stopOnError: z.boolean().default(true),
 })
@@ -123,10 +125,11 @@ function syncSettingsToGlobals(scope: any, store: TeamStore): void {
   const patch: Record<string, unknown> = {}
   if (provider !== '' || model !== '') patch.defaultModel = { provider, model }
   if (typeof value.activeTeamId === 'string' && value.activeTeamId.trim() !== '') patch.activeTeamId = value.activeTeamId.trim()
-  for (const key of ['timeoutSec', 'maxRetries', 'maxConcurrentRuns', 'outputChunkChars'] as const) {
+  for (const key of ['timeoutSec', 'maxRetries', 'maxConcurrentRuns', 'maxParallel', 'outputChunkChars'] as const) {
     if (typeof value[key] === 'number') patch[key] = value[key]
   }
   if (typeof value.stopOnError === 'boolean') patch.stopOnError = value.stopOnError
+  if (typeof value.autoPlan === 'boolean') patch.autoPlan = value.autoPlan
   if (Object.keys(patch).length === 0) return
   try { store.patchGlobals(patch) } catch { /* ignore */ }
 }
@@ -264,10 +267,17 @@ async function handleRuns(deps: RouteDeps, url: URL, req: IncomingMessage, res: 
       }
     }
     const sessionId = typeof body.sessionId === 'string' ? body.sessionId.trim() : ''
+    // plan：并行波次数组（[[roleId,…],…]，也接受 [{roleId,taskNote}] 形式）；
+    // autoPlan：让主脑先自己编排并行计划。两者都优先于 chainId/roles。
+    const plan = Array.isArray(body.plan) ? body.plan : undefined
+    const autoPlan = body.autoPlan === true
+    const useChain = !autoPlan && plan === undefined && chainId !== ''
     const run = engine.start({
       teamId,
-      ...(chainId !== '' ? { chainId } : {}),
-      ...(roles.length > 0 ? { roles } : {}),
+      ...(useChain ? { chainId } : {}),
+      ...(!autoPlan && plan === undefined && roles.length > 0 ? { roles } : {}),
+      ...(plan !== undefined ? { plan: plan as never } : {}),
+      ...(autoPlan ? { autoPlan: true } : {}),
       task,
       ...(Object.keys(overrides).length > 0 ? { modelOverrides: overrides } : {}),
       origin: 'panel',

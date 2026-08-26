@@ -37,7 +37,7 @@ export function applyTeamClient(ctx: ClientContext): void {
     scope.slots.inject('conversation.input.right', () => scope.slots.register({
       name: 'conversation.input.right',
       id: 'webui-team-toggle',
-      order: 4,
+      order: 5,
       inject: (sessionId: SessionId): TeamToggleInjected => ({
         available: sessions.subagentAddress(sessionId) === undefined,
         sessionId,

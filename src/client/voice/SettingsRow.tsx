@@ -177,7 +177,7 @@ export function VoiceSettingsRow(): JSX.Element {
           <div style={fieldRowStyle}>
             <span style={fieldLabelStyle}>总结播报</span>
             <Switch on={config.summary} label="总结播报" onToggle={() => { void commit({ summary: !config.summary }) }} />
-            <span style={{ ...inlineHint, flex: 1 }}>回复结束念一句结论（约 35 字，推荐只开这个）</span>
+            <span style={{ ...inlineHint, flex: 1 }}>回复结束念完整结论，不限制字数（推荐只开这个）</span>
           </div>
           <div style={fieldRowStyle}>
             <span style={fieldLabelStyle}>实时播报</span>

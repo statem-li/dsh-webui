@@ -209,6 +209,8 @@ function TeamPanel({ onClose }: { onClose: () => void }): JSX.Element {
 
   // 运行态
   const [chainId, setChainId] = useState('')
+  /** 派发方式：chain=按选中协作链（含链内并行组）；auto=主脑自主编排并行计划。 */
+  const [dispatch, setDispatch] = useState<'chain' | 'auto'>('chain')
   const [task, setTask] = useState('')
   const [overrides, setOverrides] = useState<Record<string, ModelBinding | null>>({})
   const [showOverrides, setShowOverrides] = useState(false)
@@ -234,7 +236,11 @@ function TeamPanel({ onClose }: { onClose: () => void }): JSX.Element {
       ])
       setTeams(teamList.teams)
       setProviders(providerList.providers)
-      setGlobals(globalsData.globals)
+      // 首次加载时派发方式跟随设置里的「默认主脑自主编排」；之后用户的手动选择优先。
+      setGlobals((previous) => {
+        if (previous === null) setDispatch(globalsData.globals.autoPlan ? 'auto' : 'chain')
+        return globalsData.globals
+      })
       const wanted = preferId ?? (activeId !== '' ? activeId : teamList.activeTeamId)
       const exists = teamList.teams.some(t => t.id === wanted && t.readonly !== true)
       const target = exists ? wanted : (teamList.teams.find(t => t.readonly !== true)?.id ?? '')
@@ -566,7 +572,8 @@ function TeamPanel({ onClose }: { onClose: () => void }): JSX.Element {
       const payload: api.StartRunPayload = {
         teamId: team.id,
         task: task.trim(),
-        ...(chainId !== '' ? { chainId } : {}),
+        // 派发方式：链（按链内并行组执行）/ 主脑自主编排并行计划。
+        ...(dispatch === 'auto' ? { autoPlan: true } : chainId !== '' ? { chainId } : {}),
       }
       const picked: Record<string, { provider: string, model: string }> = {}
       for (const [roleId, binding] of Object.entries(overrides)) {
@@ -852,14 +859,32 @@ function TeamPanel({ onClose }: { onClose: () => void }): JSX.Element {
             <div className="team-scroll-narrow" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               <div className="team-run-form">
                 <label className="team-field">
-                  <span>协作链</span>
-                  <select className="team-select team-select-grow" value={chainId} onChange={e => setChainId(e.target.value)}>
-                    {team.chains.length === 0 ? <option value="">（该团队没有链条）</option> : null}
-                    {team.chains.map(chain => (
-                      <option key={chain.id} value={chain.id}>{chain.name}</option>
-                    ))}
+                  <span>派发方式</span>
+                  <select
+                    className="team-select team-select-grow"
+                    value={dispatch}
+                    onChange={e => setDispatch(e.target.value as 'chain' | 'auto')}
+                  >
+                    <option value="chain">按协作链（链内标了「‖」的步骤会并行）</option>
+                    <option value="auto">主脑自主派发（先编排并行计划，再执行）</option>
                   </select>
                 </label>
+                {dispatch === 'chain' ? (
+                  <label className="team-field">
+                    <span>协作链</span>
+                    <select className="team-select team-select-grow" value={chainId} onChange={e => setChainId(e.target.value)}>
+                      {team.chains.length === 0 ? <option value="">（该团队没有链条）</option> : null}
+                      {team.chains.map(chain => (
+                        <option key={chain.id} value={chain.id}>{chain.name}</option>
+                      ))}
+                    </select>
+                  </label>
+                ) : (
+                  <div className="team-pop-hint">
+                    主脑会先看一遍任务与角色名册，给出「哪些角色并行、分几波」的派发计划，再按计划执行。
+                    单波并发上限由设置页的「同波最大并行」控制（默认 2）。
+                  </div>
+                )}
                 <label className="team-field">
                   <span>任务描述（越具体产出越可用）</span>
                   <textarea
@@ -900,7 +925,7 @@ function TeamPanel({ onClose }: { onClose: () => void }): JSX.Element {
                   <button
                     type="button"
                     className="team-btn team-btn-primary team-btn-lg"
-                    disabled={starting || team.chains.length === 0}
+                    disabled={starting || (dispatch === 'chain' && team.chains.length === 0)}
                     onClick={() => void startRun()}
                   >{starting ? '启动中…' : '启动运行'}</button>
                   {currentRun !== null && (currentRun.status === 'running' || currentRun.status === 'queued') ? (
@@ -1081,7 +1106,21 @@ function RunTimeline({ run, now, onOpenOutput }: {
 }): JSX.Element {
   const done = run.steps.filter(s => s.status === 'done').length
   const failed = run.steps.filter(s => s.status === 'error' || s.status === 'skipped').length
+  const running = run.steps.filter(s => s.status === 'running').length
   const total = Math.max(1, run.steps.length)
+  /** 每步的波次号（1 起）与该波是否并行——面板时间线据此标注「并行」。 */
+  const waveInfo = useMemo(() => {
+    const waveOf = new Map<number, number>()
+    const sizes = new Map<number, number>()
+    for (const step of run.steps) {
+      const wave = typeof step.wave === 'number' ? step.wave : step.index
+      waveOf.set(step.index, wave)
+      sizes.set(wave, (sizes.get(wave) ?? 0) + 1)
+    }
+    const ordered = [...sizes.keys()].sort((a, b) => a - b)
+    const label = new Map(ordered.map((wave, i) => [wave, i + 1]))
+    return { waveOf, sizes, label, total: ordered.length }
+  }, [run.steps])
   return (
     <>
       <div className="team-section-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -1089,6 +1128,9 @@ function RunTimeline({ run, now, onOpenOutput }: {
         <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{run.chainName}</span>
         <span style={{ fontFamily: 'ui-monospace, monospace' }}>{formatDuration(elapsedOf(run.startedAt, run.finishedAt, now))}</span>
       </div>
+      {run.planNote !== undefined && run.planNote !== '' ? (
+        <div className="team-pop-hint">🧩 分工：{run.planNote}</div>
+      ) : null}
       <div className="team-progress">
         <div className="team-progress-fill" style={{ width: `${(done / total) * 100}%` }} />
         {failed > 0 ? (
@@ -1097,53 +1139,69 @@ function RunTimeline({ run, now, onOpenOutput }: {
       </div>
       <div className="team-progress-text">
         <span>{done}/{run.steps.length} 完成</span>
-        {run.steps.some(s => s.status === 'running') ? <span>1 进行中</span> : null}
+        {running > 0 ? <span>{running > 1 ? `${running} 个并行进行中` : '1 进行中'}</span> : null}
         {failed > 0 ? <span style={{ color: 'var(--dsw-alias-state-error-primary, #e0434b)' }}>{failed} 异常</span> : null}
+        {waveInfo.total < run.steps.length ? <span>{waveInfo.total} 波次</span> : null}
       </div>
 
       <div className="team-step-list">
-        {run.steps.map(step => (
-          <div className="team-step" data-status={step.status} key={step.index}>
-            <span className="team-dot" data-status={step.status} />
-            <div className="team-step-body">
-              <div className="team-step-head">
-                <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {step.index + 1}. {step.roleName}
-                </span>
-                <span style={{ flex: 'none', fontSize: 11, color: 'var(--dsw-alias-label-tertiary, #888)' }}>
-                  {stepStatusText(step.status)}
-                  {step.startedAt !== undefined ? ` · ${formatDuration(elapsedOf(step.startedAt, step.finishedAt, now))}` : ''}
-                </span>
-              </div>
-              <div className="team-step-meta">
-                <span className="team-tag" style={{ borderColor: GROUP_META[step.group].color, color: GROUP_META[step.group].color }}>
-                  {GROUP_META[step.group].label}
-                </span>
-                {step.modelUsed.provider !== '' ? (
-                  <>
-                    <span style={{ fontFamily: 'ui-monospace, monospace' }}>{shortModel(step.modelUsed)}</span>
-                    <span className="team-card-src" data-src={step.modelSource}>{SOURCE_LABEL[step.modelSource]}</span>
-                  </>
-                ) : null}
-                {step.channel !== undefined ? <span>{step.channel}</span> : null}
-                {step.retries !== undefined && step.retries > 0 ? <span>重试 {step.retries}</span> : null}
-              </div>
-              {step.warning !== undefined ? <div className="team-card-inherit" style={{ fontSize: 11 }}>{step.warning}</div> : null}
-              {step.error !== undefined ? <div className="team-card-err">{step.error}</div> : null}
-              {step.output !== '' ? <div className="team-step-out">{step.output}</div> : null}
-              {step.outputFile !== undefined ? (
-                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                  <button
-                    type="button"
-                    className="team-btn"
-                    style={{ height: 24, fontSize: 11, lineHeight: '22px', padding: '0 10px' }}
-                    onClick={() => onOpenOutput(step.outputFile as string, `${step.roleName} · 第 ${step.index + 1} 步`)}
-                  >查看全文</button>
+        {run.steps.map((step, i) => {
+          const wave = waveInfo.waveOf.get(step.index) ?? step.index
+          const parallel = (waveInfo.sizes.get(wave) ?? 1) > 1
+          const previousWave = i > 0 ? waveInfo.waveOf.get(run.steps[i - 1].index) : undefined
+          const sameWaveAsPrevious = previousWave !== undefined && previousWave === wave
+          const groupHead = !sameWaveAsPrevious && i + 1 < run.steps.length
+            && waveInfo.waveOf.get(run.steps[i + 1].index) === wave
+          return (
+            <div
+              className="team-step"
+              data-status={step.status}
+              data-parallel={sameWaveAsPrevious ? 'true' : 'false'}
+              data-group-head={groupHead ? 'true' : 'false'}
+              key={step.index}
+            >
+              <span className="team-dot" data-status={step.status} />
+              <div className="team-step-body">
+                <div className="team-step-head">
+                  <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    第 {waveInfo.label.get(wave) ?? wave + 1} 波 · {step.roleName}
+                  </span>
+                  {parallel ? <span className="team-par-badge">‖ 并行</span> : null}
+                  <span style={{ flex: 'none', fontSize: 11, color: 'var(--dsw-alias-label-tertiary, #888)' }}>
+                    {stepStatusText(step.status)}
+                    {step.startedAt !== undefined ? ` · ${formatDuration(elapsedOf(step.startedAt, step.finishedAt, now))}` : ''}
+                  </span>
                 </div>
-              ) : null}
+                <div className="team-step-meta">
+                  <span className="team-tag" style={{ borderColor: GROUP_META[step.group].color, color: GROUP_META[step.group].color }}>
+                    {GROUP_META[step.group].label}
+                  </span>
+                  {step.modelUsed.provider !== '' ? (
+                    <>
+                      <span style={{ fontFamily: 'ui-monospace, monospace' }}>{shortModel(step.modelUsed)}</span>
+                      <span className="team-card-src" data-src={step.modelSource}>{SOURCE_LABEL[step.modelSource]}</span>
+                    </>
+                  ) : null}
+                  {step.channel !== undefined ? <span>{step.channel}</span> : null}
+                  {step.retries !== undefined && step.retries > 0 ? <span>重试 {step.retries}</span> : null}
+                </div>
+                {step.warning !== undefined ? <div className="team-card-inherit" style={{ fontSize: 11 }}>{step.warning}</div> : null}
+                {step.error !== undefined ? <div className="team-card-err">{step.error}</div> : null}
+                {step.output !== '' ? <div className="team-step-out">{step.output}</div> : null}
+                {step.outputFile !== undefined ? (
+                  <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                    <button
+                      type="button"
+                      className="team-btn"
+                      style={{ height: 24, fontSize: 11, lineHeight: '22px', padding: '0 10px' }}
+                      onClick={() => onOpenOutput(step.outputFile as string, `${step.roleName} · 第 ${step.index + 1} 步`)}
+                    >查看全文</button>
+                  </div>
+                ) : null}
+              </div>
             </div>
-          </div>
-        ))}
+          )
+        })}
       </div>
 
       {run.finalFile !== undefined ? (
@@ -1214,17 +1272,40 @@ function SettingsTab({ globals, providers, onPatch }: {
           />
         </label>
         <label className="team-field">
-          <span>上游注入预算（字符）</span>
+          <span>同波最大并行角色（1＝全串行）</span>
           <input
             className="team-input"
             type="number"
-            min={500}
-            step={500}
-            value={globals.outputChunkChars}
-            onChange={(e) => { void onPatch({ outputChunkChars: Number(e.target.value) }) }}
+            min={1}
+            max={5}
+            value={globals.maxParallel}
+            onChange={(e) => { void onPatch({ maxParallel: Number(e.target.value) }) }}
           />
         </label>
       </div>
+      <div className="team-pop-hint">
+        同波最大并行 = 一个波次里最多几个角色同时开跑。调高更省时，但多角色共用同一模型时更容易触发
+        供应商限流（429）；超出上限的角色会自动溢出到下一个波次。
+      </div>
+      <label className="team-check">
+        <input
+          type="checkbox"
+          checked={globals.autoPlan}
+          onChange={(e) => { void onPatch({ autoPlan: e.target.checked }) }}
+        />
+        默认让主脑自主编排并行派发计划（面板运行页仍可逐次切换）
+      </label>
+      <label className="team-field">
+        <span>上游注入预算（字符）</span>
+        <input
+          className="team-input"
+          type="number"
+          min={500}
+          step={500}
+          value={globals.outputChunkChars}
+          onChange={(e) => { void onPatch({ outputChunkChars: Number(e.target.value) }) }}
+        />
+      </label>
       <label className="team-field">
         <span>上游上下文窗口</span>
         <select

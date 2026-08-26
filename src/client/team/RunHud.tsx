@@ -410,6 +410,23 @@ export function RunHud({ ctx }: { ctx: ClientContext }): JSX.Element | null {
 type StepViewing = { kind: 'step', runId: string, index: number } | { kind: 'final', runId: string }
 
 /**
+ * 把步骤按波次分组（同一波次 = 并行执行）。
+ * 旧快照没有 wave 字段时按 index 兜底，等价于每步独占一波（全串行）。
+ */
+function groupStepsByWave(steps: readonly RunStep[]): RunStep[][] {
+  const buckets = new Map<number, RunStep[]>()
+  for (const step of steps) {
+    const wave = typeof step.wave === 'number' ? step.wave : step.index
+    const list = buckets.get(wave)
+    if (list === undefined) buckets.set(wave, [step])
+    else list.push(step)
+  }
+  return [...buckets.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([, group]) => group.sort((a, b) => a.index - b.index))
+}
+
+/**
  * 执行详情卡：点角色卡弹出，展示该角色的完整执行过程。
  * 内容从 shown（轮询实时数据）取 —— 运行中的输出快照会随 1.2s 轮询自动刷新；
  * 步骤完成（有产物文件）或查看最终交付物时，额外拉取全文。
@@ -419,7 +436,7 @@ function StepDetailCard({ viewing, shown, now, onClose }: {
   shown: readonly Run[]
   now: number
   onClose: () => void
-}): JSX.Element {
+}): JSX.Element | null {
   const run = shown.find(item => item.id === viewing.runId) ?? null
   const step = viewing.kind === 'step' && run !== null
     ? run.steps.find(item => item.index === viewing.index) ?? null
@@ -489,7 +506,7 @@ function StepDetailCard({ viewing, shown, now, onClose }: {
               ) : null}
               <span className="team-step-badge team-step-time">
                 ⏱ {step.startedAt !== undefined
-                  ? formatDuration(elapsedOf(step.startedAt, step.finishedAt ?? (step.status === 'running' ? now : undefined), now))
+                  ? formatDuration(elapsedOf(step.startedAt, step.finishedAt, now))
                   : '未开始'}
                 {step.status === 'running' ? ' · 输出中…' : ''}
               </span>
@@ -617,6 +634,9 @@ function RunSegment({ run, now, multi, onOpenStep, onOpenFinal, onCancel }: {
   const total = Math.max(1, run.steps.length)
   const live = run.status === 'running' || run.status === 'queued'
   const files = run.steps.filter(step => step.outputFile !== undefined).length
+  /** 按波次分组（同波次即并行执行）；旧快照无 wave 时退化为每步一波。 */
+  const waveGroups = useMemo(() => groupStepsByWave(run.steps), [run.steps])
+  const layered = waveGroups.length > 1 || waveGroups.some(group => group.length > 1)
 
   return (
     <div className="team-hud-seg">
@@ -638,6 +658,11 @@ function RunSegment({ run, now, multi, onOpenStep, onOpenFinal, onCancel }: {
             <button type="button" className="team-btn team-btn-danger" style={{ flex: 'none' }} onClick={onCancel}>取消运行</button>
           ) : null}
         </div>
+        {run.planNote !== undefined && run.planNote !== '' ? (
+          <div className="team-progress-text" style={{ alignItems: 'flex-start' }}>
+            <span>🧩 分工：{run.planNote}</span>
+          </div>
+        ) : null}
 
         <div className="team-progress">
           <div className="team-progress-fill" style={{ width: `${(done / total) * 100}%` }} />
@@ -647,20 +672,46 @@ function RunSegment({ run, now, multi, onOpenStep, onOpenFinal, onCancel }: {
         </div>
         <div className="team-progress-text">
           <span>{done}/{run.steps.length} 完成</span>
-          {running > 0 ? <span>{running} 进行中</span> : null}
+          {running > 1 ? <span>{running} 个并行进行中</span> : running === 1 ? <span>1 进行中</span> : null}
           {pending > 0 ? <span>{pending} 待办</span> : null}
           {failed > 0 ? <span style={{ color: 'var(--dsw-alias-state-error-primary, #e0434b)' }}>{failed} 异常</span> : null}
+          {layered ? <span>{waveGroups.length} 波次</span> : null}
           <span style={{ marginLeft: 'auto' }} className="team-status-text" data-status={run.status}>{runStatusText(run.status)}</span>
         </div>
       </div>
 
-      {/* 角色卡组：一张包围卡片承载整组角色，内部网格排列成员卡 */}
+      {/* 角色卡组：按波次分层——同波次的卡片并排（它们此刻在同时跑），
+          波次之间用分隔条标顺序，「谁在并行、谁在等」一眼可见。 */}
       <div className="team-cards-wrap team-surface">
-        <div className="team-cards">
-          {run.steps.map(step => (
-            <RoleRunCard key={step.index} step={step} now={now} onOpen={onOpenStep} />
-          ))}
-        </div>
+        {layered ? waveGroups.map((group, i) => {
+          const waveLive = group.some(step => step.status === 'running')
+          return (
+            <div key={`wave-${i}`} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <div className="team-wave-sep" data-live={waveLive ? 'true' : 'false'}>
+                <span className="team-wave-tag">第 {i + 1} 波</span>
+                {group.length > 1 ? <span className="team-wave-par">‖ {group.length} 个并行</span> : null}
+                <span className="team-wave-sep-line" />
+              </div>
+              <div className="team-cards">
+                {group.map(step => (
+                  <RoleRunCard
+                    key={step.index}
+                    step={step}
+                    now={now}
+                    parallel={group.length > 1}
+                    onOpen={onOpenStep}
+                  />
+                ))}
+              </div>
+            </div>
+          )
+        }) : (
+          <div className="team-cards">
+            {run.steps.map(step => (
+              <RoleRunCard key={step.index} step={step} now={now} onOpen={onOpenStep} />
+            ))}
+          </div>
+        )}
       </div>
 
       {files > 0 || run.finalFile !== undefined || run.error !== undefined ? (
