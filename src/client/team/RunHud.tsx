@@ -686,7 +686,7 @@ function RunSegment({ run, now, multi, onOpenStep, onOpenFinal, onCancel }: {
         {layered ? waveGroups.map((group, i) => {
           const waveLive = group.some(step => step.status === 'running')
           return (
-            <div key={`wave-${i}`} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div key={`wave-${i}`} className="team-wave" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               <div className="team-wave-sep" data-live={waveLive ? 'true' : 'false'}>
                 <span className="team-wave-tag">第 {i + 1} 波</span>
                 {group.length > 1 ? <span className="team-wave-par">‖ {group.length} 个并行</span> : null}

@@ -11,7 +11,9 @@ import type { Role, RunStep, Team, TeamGlobals } from './types.js';
 /** 角色的 system 提示词：角色 prompt + 团队上下文 + 输出纪律。 */
 export declare function buildSystem(team: Team, role: Role, synthesize: boolean): string;
 /** 装配一步的用户消息。 */
-export declare function buildUserPrompt(team: Team, planned: PlannedStep, task: string, previous: readonly RunStep[], globals: TeamGlobals, chainName: string): string;
+export declare function buildUserPrompt(team: Team, planned: PlannedStep, task: string, previous: readonly RunStep[], globals: TeamGlobals, chainName: string, 
+/** 同波次并行伙伴（同时开跑、彼此看不到产出）的展示名。 */
+peers?: readonly string[]): string;
 /** 产物文件内容（步骤 md）。 */
 export declare function renderStepDocument(team: Team, planned: PlannedStep, content: string, meta: {
     provider: string;
@@ -22,3 +24,7 @@ export declare function renderStepDocument(team: Team, planned: PlannedStep, con
 }): string;
 /** 最终交付物文件内容。 */
 export declare function renderFinalDocument(team: Team, chainName: string, task: string, content: string): string;
+/** 编排 prompt 的 system（要求只输出 JSON）。 */
+export declare const PLAN_SYSTEM: string;
+/** 编排 prompt 的用户消息。 */
+export declare function buildPlanPrompt(team: Team, task: string, maxParallel: number): string;

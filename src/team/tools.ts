@@ -180,7 +180,7 @@ export function registerTeamTools({ ctx, store, engine }: TeamToolDeps): () => v
       '把一个任务交给多智能体团队执行：角色按波次推进——同一波次的角色**并行同时干活**，波次之间串行（后一波看得到前面全部产出），末尾由主脑整合成最终交付物。',
       '适用于需要多角色协作的任务：调研+审查、方案+落地、诊断+修复+验收、取证+成稿等。',
       '三种派发方式（优先级从高到低）：',
-      '① plan：自己编排并行计划，形如 [["cha","ping"],["jiang"]] —— 察与评同时跑完，匠再上；互不依赖的工作放同一组能显著省时。',
+      '① plan：自己编排并行计划，形如 [["architect","strategist"],["coder"]] —— 架构师与策略师并行，完成后编码再上；互不依赖的工作放同一组能显著省时。',
       '② chainId：用预设协作链（链里可标注并行组）。',
       '③ roles：给一个角色 id 序列，串行接力。',
       '不确定怎么分工时传 autoPlan:true，让主脑先自己出一份并行派发计划再执行。',
@@ -193,7 +193,7 @@ export function registerTeamTools({ ctx, store, engine }: TeamToolDeps): () => v
       plan: {
         type: 'array',
         items: { type: 'array', items: { type: 'string' } },
-        description: '并行派发计划：每个元素是一个波次（同时执行的角色 id 数组），波次之间串行。例 [["cha","ping"],["jiang"]]。优先级高于 chainId/roles。',
+        description: '并行派发计划：每个元素是一个波次（同时执行的角色 id 数组），波次之间串行。例 [["architect","strategist"],["coder"]]。优先级高于 chainId/roles。',
       },
       autoPlan: { type: 'boolean', description: 'true = 让主脑先自主编排并行派发计划再执行（不需要你给 plan/chainId/roles）。' },
       chainId: { type: 'string', description: '协作链 id。留空且未给 plan/roles 时自动选用团队第一条链。' },
@@ -202,7 +202,7 @@ export function registerTeamTools({ ctx, store, engine }: TeamToolDeps): () => v
       modelOverrides: {
         type: 'array',
         items: { type: 'string' },
-        description: '本次运行的模型覆盖，每项形如 "角色id=provider/model"（如 "cha=bai/gpt-5.6"）。',
+        description: '本次运行的模型覆盖，每项形如 "角色id=provider/model"（如 "brain=provider/model"）。',
       },
       wait: { type: 'boolean', description: '是否等待运行完成（默认 true）。false 时立即返回 runId，之后用 team_status 查询。' },
     },

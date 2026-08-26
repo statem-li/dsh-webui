@@ -325,6 +325,9 @@ body[data-ds-dark-theme] .team-ask{background:var(--dsw-static-neutral-bluish-85
 .team-wave-tag{flex:none;display:inline-flex;align-items:center;gap:5px}
 .team-wave-par{flex:none;padding:0 6px;border-radius:8px;border:1px solid color-mix(in srgb,var(--dsw-alias-state-business-primary,#4176e6) 40%,transparent);color:var(--dsw-alias-state-business-primary,#4176e6)}
 @keyframes team-wave-grow{from{transform:scaleX(0);opacity:0}to{transform:scaleX(1);opacity:1}}
+/* 波次整组入场：轻微上浮淡入（卡片随组一起就位，营造「一波到位」的节奏） */
+.team-wave{animation:team-wave-rise .34s cubic-bezier(.2,.8,.2,1)}
+@keyframes team-wave-rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 /* 并行进行中的角色卡：外圈脉冲光提示「这几张卡在同时跑」 */
 .team-card[data-parallel='true'][data-status='running']{animation:team-par-pulse 2.2s ease-in-out infinite}
 @keyframes team-par-pulse{
@@ -541,7 +544,10 @@ body[data-ds-dark-theme] .team-surface{background:var(--dsw-static-neutral-bluis
 
 /* 顶部概览条：独立卡片（flex:none 保证面板定高时它不被压扁） */
 .team-hud-bar{flex:none;display:flex;align-items:center;gap:8px;padding:0 14px;cursor:pointer;height:44px;box-sizing:border-box;border-radius:12px;transition:border-color .2s ease}
-.team-hud-bar:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.04))}
+/* 悬停反馈用 background-image 叠色，不能用 background 简写：
+   team-surface 的不透明底色（特异性 0,1,0）会被 :hover 的简写（0,2,0）整体替换成
+   半透明色导致悬停瞬间「卡底被擦掉、变成透明」——叠色层画在底色之上，不透光。 */
+.team-hud-bar:hover{background-image:linear-gradient(var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.04)),var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.04)))}
 /* 折叠态：靠 left/right 对撑 + margin-inline:auto 居中（不用 transform），
    顶条按内容收窄并悬浮在对话框上方 */
 .team-hud[data-collapsed='true'] .team-hud-bar{max-width:100%;margin-inline:auto;overflow:hidden}
@@ -576,7 +582,9 @@ body[data-ds-dark-theme] .team-surface{background:var(--dsw-static-neutral-bluis
 /* 包围卡内的成员卡：浅填充底替代白底+投影，与外层白卡形成「面板→成员」层级 */
 .team-cards-wrap .team-card{background:var(--dsw-alias-bg-module-platform,rgba(0,0,0,.03));box-shadow:none}
 body[data-ds-dark-theme] .team-cards-wrap .team-card{background:var(--dsw-alias-bg-module-platform,rgba(255,255,255,.04))}
-.team-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:8px}
+/* auto-fit（而非 auto-fill）：波次里只有 1~2 张卡时，空轨道自动塌缩，
+   卡片吃满整行 —— 不会出现「卡片缩在左边 + 右半屏空白」的稀疏排布。 */
+.team-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(168px,1fr));gap:8px}
 .team-card{display:flex;flex-direction:column;gap:6px;padding:11px 12px;box-sizing:border-box;border-radius:12px;cursor:pointer;transition:border-color .2s ease,box-shadow .2s ease,transform .12s ease}
 .team-card:hover{border-color:var(--dsw-alias-border-l3,rgba(255,255,255,.22));transform:translateY(-1px)}
 .team-card[data-status='running']{border-color:color-mix(in srgb,var(--dsw-alias-state-business-primary,#4176e6) 60%,transparent);box-shadow:0 0 0 1px color-mix(in srgb,var(--dsw-alias-state-business-primary,#4176e6) 22%,transparent),var(--dsw-shadow-lv2,0 6px 24px rgba(0,0,0,.35))}
@@ -614,7 +622,7 @@ body[data-ds-dark-theme] .team-cards-wrap .team-card{background:var(--dsw-alias-
 
 @media (prefers-reduced-motion:reduce){
   .team-toast,.team-hud,.team-pop,.team-pill,.team-drawer,.team-mask,.team-gen-card,.team-gen-mask,
-  .team-canvas-layer,.team-editor-card,.team-editor-mask,.team-ask,.team-ask-mask{animation:none}
+  .team-canvas-layer,.team-editor-card,.team-editor-mask,.team-ask,.team-ask-mask,.team-wave{animation:none}
   .team-dot[data-status='running'],.team-hud-pip[data-status='running']{animation:none}
   .team-toggle-btn,.team-toggle-chevron,.team-pop-item,.team-pop-check,.team-chevron,.team-progress-fill,.team-role-card-grid{transition:none!important}
   .team-pop,.team-pop-check{animation:none!important}

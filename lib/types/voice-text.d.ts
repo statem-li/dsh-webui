@@ -12,15 +12,8 @@
  * 两端共用同一份实现：client 判断该念哪一句，host 落到语音引擎前再兜底
  * 清洗一次（避免旧 client / 直接调 API 时把 Markdown 念出来）。
  */
-/** 单次播报文本上限（超出截断；防止把长文一次性灌给引擎）。 */
+/** 单次播报文本上限（安全网：防止极端长文一次性灌给引擎；正常播报不触发）。 */
 export declare const SPEECH_MAX_CHARS = 600;
-/**
- * 总结播报的目标长度。
- *
- * 播报的价值在于「它做完了什么 / 为什么 / 解决了什么问题」，不是复述过程，
- * 所以这里刻意压得很短——宁可漏细节，也不要念长篇。
- */
-export declare const SUMMARY_TARGET_CHARS = 90;
 /**
  * Markdown → 朗读文本。
  * @param input - 原始 Markdown（可为流式半截文本）。
@@ -47,10 +40,10 @@ export declare function segmentSentences(input: string, options?: {
  * 从一段回复里提取「做完了什么 / 什么原因 / 解决了什么问题」的短总结。
  *
  * 播报的价值是结论，不是复述过程：按结论线索词与句子位置打分，取最多两句
- * 原序拼接，硬截断到 {@link SUMMARY_TARGET_CHARS}。零 token、零延迟。
+ * 原序拼接；不限制字数，只受 {@link SPEECH_MAX_CHARS} 安全网约束。零 token、零延迟。
  *
  * @param text - 助手回复正文（Markdown 或已清洗文本皆可）。
- * @param limit - 字符上限。
+ * @param limit - 字符上限（安全网，默认 {@link SPEECH_MAX_CHARS}）。
  * @returns 一句（或两句）可直接朗读的总结；无可播内容返回空串。
  */
 export declare function outcomeSummary(text: string, limit?: number): string;

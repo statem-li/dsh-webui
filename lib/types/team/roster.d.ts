@@ -10,7 +10,7 @@
  * 解析在「每步开始时」做一次并写入 RunStep.modelUsed/modelSource——运行中改团队
  * 模型不影响已在跑的步骤。
  */
-import { type Chain, type ModelBinding, type ResolvedModel, type Role, type Run, type Team, type TeamGlobals } from './types.js';
+import { type Chain, type ModelBinding, type PlanWaveItem, type ResolvedModel, type Role, type Run, type Team, type TeamGlobals } from './types.js';
 /** 注入服务均为运行时动态注册，类型上放宽。 */
 type AnyContext = any;
 /** 一个供应商下可选的模型。 */
@@ -51,19 +51,40 @@ export declare function resolveModelChecked(input: ResolveInput, providers: read
 /** 展开后的一个执行步骤。 */
 export interface PlannedStep {
     index: number;
+    /**
+     * 波次序号（0 起）：同一 wave 的步骤由引擎并发执行，wave 之间串行。
+     * 全串行计划里 wave === index。
+     */
+    wave: number;
     role: Role;
     synthesize: boolean;
     taskNote?: string;
 }
-/** 找主脑角色（core 分组第一个，或 id 为 hanako 的角色）。 */
+/** 找主脑角色（core 分组第一个，或 id 为 brain / 旧 id hanako 的角色）。 */
 export declare function findCoreRole(team: Team): Role | null;
 /**
- * 把链条展开为线性执行计划：role 步 + 显式/隐式 synthesize 步。
+ * 把链条展开为执行计划：role 步 + 显式/隐式 synthesize 步。
  * 找不到角色的步骤直接跳过；主脑缺失时不追加整合步。
+ *
+ * 并行语义：`step.parallel === true` 的 role 步与**前一步同波次**（首步除外）；
+ * 其余步骤各自开新波次。synthesize 步永远独占最后一个波次（必须看到全部上游）。
+ * 波次内步数由 maxParallel 限制（超出的自动溢出到下一个波次，避免一次点爆供应商）。
  */
-export declare function planChain(team: Team, chain: Chain): PlannedStep[];
-/** 把任意角色 id 序列展开为执行计划（临时点兵）。 */
+export declare function planChain(team: Team, chain: Chain, maxParallel?: number): PlannedStep[];
+/**
+ * 把任意角色 id 序列展开为执行计划（临时点兵，全串行 + 可选尾部整合）。
+ */
 export declare function planRoles(team: Team, roleIds: readonly string[], synthesize: boolean): PlannedStep[];
+/**
+ * 把显式并行计划（波次数组）展开为执行计划。
+ * 每个波次内的角色并发执行；超过 maxParallel 的部分溢出为额外波次。
+ * synthesize=true 时尾部追加一个独占波次的主脑整合步。
+ */
+export declare function planWaves(team: Team, waves: readonly PlanWaveItem[][], synthesize: boolean, maxParallel?: number): PlannedStep[];
+/** 计划里的波次数量。 */
+export declare function waveCountOf(planned: readonly PlannedStep[]): number;
+/** 计划的可读路径文案（并行波次用 `A‖B` 表示）。 */
+export declare function describePlan(planned: readonly PlannedStep[]): string;
 /** 校验团队可用性：至少一个角色；链引用的角色存在（normalizeTeam 已过滤，这里只查空链）。 */
 export declare function assertTeamRunnable(team: Team, chain: Chain | null): void;
 /** 从运行快照统计 TODO 进度（HUD 与清单共用）。 */

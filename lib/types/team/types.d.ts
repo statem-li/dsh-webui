@@ -91,11 +91,18 @@ export interface Role {
     /** 能力装配（工具 + 技能）；缺省 = 完全继承。 */
     capabilities?: RoleCapabilities;
 }
-/** 链步骤：执行某角色，或显式的主脑整合步。 */
+/**
+ * 链步骤：执行某角色，或显式的主脑整合步。
+ *
+ * `parallel: true` 表示「与上一步同批并行执行」——引擎把连续的并行步归入同一个
+ * 波次（wave），一个波次内的角色同时开跑，波次之间仍严格串行（后一波看得到前
+ * 面所有波次的产出）。首步的 parallel 无意义（自成一波）。
+ */
 export type ChainStep = {
     kind: 'role';
     roleId: string;
     taskNote?: string;
+    parallel?: boolean;
 } | {
     kind: 'synthesize';
     roleId?: string;
@@ -129,6 +136,10 @@ export interface TeamGlobals {
     upstreamWindow: 'last' | 'all-summary';
     /** 最大并发运行数。 */
     maxConcurrentRuns: number;
+    /** 单个 Run 内「同一波次」的最大并发角色数（1 = 退回全串行）。 */
+    maxParallel: number;
+    /** 允许主脑在运行开始时自主编排派发计划（并行分组由模型决定）。 */
+    autoPlan: boolean;
     /** 步骤输出注入上游时的截断长度（字符）。 */
     outputChunkChars: number;
     /** 某步失败是否终止整链。 */
@@ -175,6 +186,11 @@ export type StepStatus = 'pending' | 'running' | 'done' | 'error' | 'skipped';
 /** 触发来源。 */
 export type RunOrigin = 'panel' | 'chat-toggle' | 'tool';
 /** 单步运行快照。 */
+/** 子 agent 任务清单的单项（todo_write 参数的最小投影）。 */
+export interface TodoItemLite {
+    content: string;
+    status: 'pending' | 'in_progress' | 'completed';
+}
 export interface RunStep {
     index: number;
     roleId: string;
@@ -185,6 +201,11 @@ export interface RunStep {
     group: RoleGroup;
     /** 是否为主脑整合步。 */
     synthesize: boolean;
+    /**
+     * 波次序号（0 起）：同一 wave 的步骤并发执行，wave 之间串行。
+     * 全串行计划里 wave === index。旧快照缺省时 UI 按 index 兜底。
+     */
+    wave?: number;
     status: StepStatus;
     /** 截断后的输入快照。 */
     inputSnapshot: string;
@@ -209,6 +230,11 @@ export interface RunStep {
     };
     /** 通道降级 / 模型继承会话等提示。 */
     warning?: string;
+    /**
+     * 子 agent 的任务清单快照（截获其 todo_write 工具调用，每次全量覆盖）。
+     * 仅 subagent 通道且子 agent 实际使用任务清单时存在。
+     */
+    todos?: TodoItemLite[];
     startedAt?: string;
     finishedAt?: string;
     error?: string;
@@ -229,6 +255,12 @@ export interface Run {
     origin: RunOrigin;
     sessionId?: string;
     modelOverrides?: Record<string, ModelBinding>;
+    /** 计划来源：chain=预设链；roles=临时点兵；plan=调用方显式并行计划；auto=主脑自主编排。 */
+    planMode?: PlanMode;
+    /** 主脑自主编排时给出的分工理由（面板/HUD 展示）。 */
+    planNote?: string;
+    /** 波次数（steps 里 wave 的去重计数；并行运行的 UI 分层依据）。 */
+    waveCount?: number;
     startedAt: string;
     finishedAt?: string;
     steps: RunStep[];
@@ -254,17 +286,42 @@ export interface RunSummary {
 /** 启动运行的入参。 */
 export interface StartRunInput {
     teamId: string;
-    /** 链 id；与 roles 二选一。 */
+    /** 链 id；与 roles / plan 三选一。 */
     chainId?: string;
     /** 临时点兵的角色 id 序列（chainId 缺省时使用）。 */
     roles?: string[];
+    /**
+     * 显式并行计划：一个数组元素 = 一个波次，波次内的角色并发执行，波次之间串行。
+     * 例：`[['cha','ping'],['jiang']]` = 察与评同时跑，完成后驳/匠再跑。
+     * 优先级高于 chainId / roles。
+     */
+    plan?: PlanWave[];
     task: string;
     modelOverrides?: Record<string, ModelBinding>;
     origin?: RunOrigin;
     sessionId?: string;
     /** 临时点兵是否追加主脑整合（默认 true）。 */
     synthesize?: boolean;
+    /** 主脑自主编排：运行开始时先让主脑给出派发计划（并行分组），再据此执行。 */
+    autoPlan?: boolean;
 }
+/** 计划来源。 */
+export type PlanMode = 'chain' | 'roles' | 'plan' | 'auto';
+/** 一个波次的角色项（可带本步任务说明）。 */
+export interface PlanWaveItem {
+    roleId: string;
+    taskNote?: string;
+}
+/** 一个波次：角色 id 数组或带说明的对象数组。 */
+export type PlanWave = Array<string | PlanWaveItem>;
+/**
+ * 归一化并行计划：过滤非法角色、去掉空波次、限制规模。
+ * 同一波次内重复角色去重（同一角色在一个波次里跑两次没有意义）。
+ */
+export declare function normalizePlan(input: unknown, knownRoleIds: ReadonlySet<string>, limits?: {
+    maxWaves?: number;
+    maxPerWave?: number;
+}): PlanWaveItem[][];
 /** 一个会话的团队模式状态。 */
 export interface ChatModeState {
     enabled: boolean;

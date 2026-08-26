@@ -1,12 +1,16 @@
 /**
  * team — 运行引擎（host 半身）。
  *
- * 一次 Run = 把链条展开成线性步骤，逐步执行并把快照写回 run.json：
+ * 一次 Run = 把链条/计划展开成**波次**（wave）序列，逐波推进并把快照写回 run.json：
  *   queued → running ─(全部步骤 done)→ done
  *                    ─(某步 error 且 stopOnError)→ error
  *                    ─(取消)→ cancelled（当前步 abort，后续 pending → skipped）
  *
- * 两条执行通道：
+ * 并行语义：同一波次里的步骤**并发执行**（受 maxParallel 限制），波次之间严格串行。
+ * 一个步骤的上游上下文只包含**更早波次**的产出——同波伙伴彼此看不到对方结果，
+ * 所以提示词里会显式告知「谁在与你同时干活」，避免重复劳动与互相假设。
+ *
+ * 两条执行通道（并行时按角色 executor 各自选择）：
  *  - llm 直跑：ctx.llm.stream，可精确指定 provider/model；无工具。
  *  - subagent：ctx.subagents.start（需要 agent 上下文），有完整工具能力；模型继承父会话。
  *
@@ -68,11 +72,15 @@ export declare class TeamEngine {
     /**
      * 启动一次运行：同步创建 run.json（status=queued）并返回快照，
      * 执行在后台推进（调用方无需等待）。
+     *
+     * 计划来源优先级：input.plan（显式并行波次）> chainId（链，含链内并行组）
+     * > roles（临时点兵）。autoPlan=true 时先落一个「编排中」的空壳 run，
+     * 由后台先问主脑要计划再填充步骤。
      */
     start(input: StartRunInput, context?: RunContext): Run;
     /** 并发闸门：超出 maxConcurrentRuns 时排队。 */
     private enqueue;
-    /** 执行整个 Run（每步落盘快照）。 */
+    /** 执行整个 Run（按波次推进，波次内并发；每步落盘快照）。 */
     private execute;
     /** 执行单步；返回 'done' | 'error' | 'skipped'。 */
     private runStep;
@@ -88,6 +96,14 @@ export declare class TeamEngine {
      * undefined，可安全降级。
      */
     private subagents;
+    /**
+     * 主脑自主派发：问一次模型要「波次计划」。
+     *
+     * 走 llm 直跑通道（要的是结构化 JSON，不需要工具），模型按主脑角色解析
+     * （core 角色覆盖 → 团队默认 → 全局默认）。解析失败/角色名不合法的项被丢弃，
+     * 全部无效时返回空波次由调用方兜底。
+     */
+    private askForPlan;
     /** 调用一次通道（统一超时 + 取消语义）。 */
     private invoke;
     /** llm 直跑：累积 text-delta，节流写快照。 */
@@ -98,7 +114,25 @@ export declare class TeamEngine {
      * （被限制的工具从子 agent 提示词消失且拒绝执行）；provider 不支持该能力时降级为不限制。
      */
     private invokeSubagent;
-    /** 原子更新某步字段（读—改—写 run.json）。 */
+    /**
+     * 跟踪子 agent 会话日志，把思考/正文增量与任务清单转发给上层。
+     *
+     * 实现：sessionPersistence.readFrom(id, watermark) 是官方的「从水位线读后缀」
+     * 原语（SQLite 后端只物理读后缀），每秒轮询一次：
+     *  - assistant/chunk 的 reasoning-delta / text-delta → 拼成 Markdown 快照
+     *    （思考为引用块、正文原样）经 handlers.onDelta 写进 run.json；
+     *  - tool/call 的 todo_write → 解析其 todos 参数经 handlers.onTodos 写入步骤
+     *    的结构化字段 —— HUD 卡与详情卡即可像对话流一样看到子 agent 的过程。
+     * 子会话 id 拿不到 / 后端不支持 / 日志未就绪时静默降级零过程流。
+     */
+    private tailSubagentSession;
+    /**
+     * 原子更新某步字段（读—改—写 run.json）。
+     *
+     * 并行波次里多个步骤会交替调用本方法：readRun/saveRun 都是同步 fs 调用，
+     * Node 单线程下这段读—改—写不会被其它 JS 打断，所以并发步骤各自只改自己
+     * 那一项、互不覆盖（写盘本身也是 tmp+rename 原子替换）。
+     */
     private patchStep;
 }
 export {};

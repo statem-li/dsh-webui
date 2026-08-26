@@ -37,31 +37,26 @@
 
 ## 1. 背景与语义还原
 
-参考图（1250×1252 px）：中心**主脑 hanako**（协调中枢，总管·通才·兜底），外围 10 个专职角色，
-每个角色绑定一个模型；三类协作编组 + 两套协作约定：
+参考图（1250×1252 px）：中心**主脑 星见**（协调中枢，总管兜底），外围 5 个专职角色；
+三组编组（core / act / guard）+ 两套协作约定：
 
-| 编组 | 角色（id / 名称 / 定位） | 模型（图上标注） |
-|---|---|---|
-| 信息与判断 `judge` | `cha` 察·深度调研多源取证 | v4-flash |
-|  | `bo` 驳·质量把关挑漏洞 | gpt-5.6-terra |
-|  | `ce` 策·创意发散收敛方案 | v4-flash |
-| 落地执行 `act` | `jiang` 匠·技术落地能跑起来 | gpt-5.6-sol |
-|  | `zao` 造·游戏原型可玩版本 | v4-pro |
-|  | `bi` 笔·写作交付公文成稿 | v4-pro |
-|  | `jian` 简·云文档资料管家 | v4-flash |
-| 守护支持 `guard` | `liangsu` 凉溯·倾听陪伴情绪支持 | v4-flash |
-|  | `mentor` 导师·论文评审答辩把关 | v4-flash |
-|  | `yuan` 垣·运维巡检系统守护 | gpt-5.6-terra |
-| 中枢 `core` | `hanako` 主脑·协调中枢总管通才兜底 | （调度方） |
+| 编组 | 角色（id / 名称 / 定位） |
+|---|---|
+| 中枢 `core` | `brain` 星见·协调中枢总管兜底 |
+| 落地执行 `act` | `architect` 观月·拆解需求定架构选型 |
+|  | `strategist` 凛音·评审方案识别风险 |
+|  | `coder` 琉夏·依规编码稳定产出 |
+|  | `tester` 星乃·编写测试验证闭环 |
+| 守护支持 `guard` | `reviewer` 神代·审查代码质量守门 |
 
 **协作接力（链，串行）**：
-- `verify` 察 → 驳 → 主脑整合交付
-- `ship` 策 → 匠 → 造 →（游戏原型）
-- `ops` 垣（诊断）→ 匠（修复）→ 垣（回归验收）
+- `full-delivery` 架构师 → 程序员 → 审查员 → 主脑整合交付
+- `fast-iteration` 程序员 → 测试员 → 主脑整合交付
 
-**按需直连（旁路，非链）**：
-- 笔 ↔ 简 ↔ 凉溯（互为直连）
-- 导师 → 主脑（评审结论经主脑整合后交付）
+**按需直连（旁路，非链，全双向）**：
+- 架构师 ↔ 策略师（方案互审）
+- 程序员 ↔ 审查员（审查返修）
+- 程序员 ↔ 测试员（缺陷修复）
 
 ---
 
@@ -93,7 +88,7 @@
 ```ts
 interface Team {
   id: string                    // 't-<slug>'，全局唯一，只增不改
-  name: string                  // '小凉全能团' / '写作小队'
+  name: string                  // '软件工程全流程团队' / '写作小队'
   description?: string
   /** 团队默认模型：本团队所有角色的默认模型（角色可覆盖）。 */
   model: ModelBinding
@@ -117,10 +112,10 @@ interface Team {
 
 ```ts
 interface Role {
-  id: string                    // 'cha' | 'bo' | ... 团队内唯一
-  name: string                  // '察'
-  en: string                    // 'cha'（图上英文名）
-  tagline: string               // '深度调研·多源取证'
+  id: string                    // 'brain' | 'architect' | ... 团队内唯一
+  name: string                  // '星见'
+  en: string                    // 'brain'（图上英文名）
+  tagline: string               // '协调中枢·总管兜底'
   group: 'core' | 'judge' | 'act' | 'guard'
   prompt: string                // 角色系统提示词（自行创建/编辑）
   /** 模型：null/缺省 = 继承所属团队的 team.model；对象 = 本角色覆盖。 */
@@ -150,15 +145,15 @@ interface ModelBinding {
 
 ```ts
 interface Chain {
-  id: string                    // 'verify' | 'ship' | 'ops'
-  name: string                  // '察→驳→主脑整合'
+  id: string                    // 'full-delivery' | 'fast-iteration'
+  name: string                  // '架构师→程序员→审查员→主脑整合'
   steps: ChainStep[]
   finalSynthesize: boolean      // 尾步追加主脑整合（默认 true）
 }
 
 type ChainStep =
   | { kind: 'role'; roleId: string; taskNote?: string }   // 该步任务模板（可留空=继承 run.task）
-  | { kind: 'synthesize'; roleId?: string }               // 明确的主脑整合步（默认 core/hanako）
+  | { kind: 'synthesize'; roleId?: string }               // 明确的主脑整合步（默认 core/brain）
 ```
 
 **接力语义**：第 i 步输入 = `角色 prompt + 任务描述 + 上游输出（按上下文窗口裁剪）+ taskNote`。
@@ -171,7 +166,7 @@ interface DirectLink {
   from: string                  // roleId
   to: string
   label?: string
-  kind: 'bidirectional' | 'directed'   // 笔↔简 用 bidirectional；导师→主脑 用 directed
+  kind: 'bidirectional' | 'directed'   // 架构师↔策略师 用 bidirectional；单向结论类可用 directed
 }
 ```
 
@@ -295,7 +290,7 @@ function 选通道(role, 触发上下文):
 ### 4.4 主脑整合（synthesize）
 
 - 默认尾步：输入 = 全部步骤输出（按 `outputChunkChars` 预算聚合，超限取每步摘要），
-  prompt 固定「你是主脑 hanako，协调中枢：整合各角色产出，形成最终交付物……」，模型按 §3.7
+  prompt 固定「你是主脑 星见，协调中枢：整合各角色产出，形成最终交付物……」，模型按 §3.7
   解析（`core` 角色覆盖 → 团队默认 → 全局默认）。
 - 产物：`final-deliverable.md`，即对用户可见的交付物。
 
@@ -312,7 +307,7 @@ function 选通道(role, 触发上下文):
 | 来源 | 入口 | 语义 |
 |---|---|---|
 | `autoPlan: true` | `team_run` 参数 / 面板「主脑自主派发」 | 运行开始时先用主脑角色的模型问一次计划（`PLAN_SYSTEM`，只要一段 JSON），拿到 `{note, waves}` 后据此填充步骤；解析失败或全部角色非法则退回「全体非主脑角色串行 + 整合」，并把 `note` 写入 `Run.planNote` |
-| `plan: [["cha","ping"],["jiang"]]` | `team_run` 参数 / `POST /runs` | 调用方显式编排：一个数组元素 = 一个波次 |
+| `plan: [["architect","strategist"],["coder"]]` | `team_run` 参数 / `POST /runs` | 调用方显式编排：一个数组元素 = 一个波次 |
 | `parallel: true` | `Chain.steps[i]` | 该步与**上一步同波次**；首步的 `parallel` 无意义（自成一波） |
 
 约束与降级：
@@ -420,16 +415,17 @@ TAB 式面板卡片（窄屏回退底部 sheet）。
 
 ```
 ┌─ 团队面板 ─────────────────────────────────────────────┐
-│ 团队切换器：[小凉全能团 ▾] [+ 新建] [⧉ 复制] [🗑 删除]   │
+│ 团队切换器：[软件工程全流程团队 ▾] [+ 新建] [⧉ 复制] [🗑 删除]   │
 │ 团队默认模型：[provider / model ▾]  ← 团队级模型设置     │
 │ 工具条：[编制 | 运行 | 历史]（模式切换）+ ⚙ 全局设置     │
 │                                                        │
 │ 编制视图：径向图（SVG）                                 │
-│   中心深蓝圆「主脑 hanako·协调中枢·总管·通才·兜底」      │
-│   环形分布角色卡（分组色：judge 青绿 / act 砖红 /        │
+│   中心深蓝圆「主脑 星见·协调中枢·总管兜底」              │
+│   环形分布角色卡（分组色：core 深蓝 / act 砖红 /          │
 │   guard 蓝灰；模型胶囊短名，继承团队时显示为浅色「团队」）│
-│   协作接力链：链选中时高亮箭头路径（察→驳→整合…）       │
-│   按需直连：点划线（笔↔简↔凉溯、导师→主脑）             │
+│   协作接力链：链选中时高亮箭头路径（观月→琉夏→神代→整合…）│
+│   按需直连：点划线（架构师↔策略师、程序员↔审查员、        │
+│   程序员↔测试员）                                        │
 │   hover 角色 → 摘要浮层；点击 → 编辑弹窗                │
 │                                                        │
 │ 运行模式：链下拉 + 任务输入 + [启动]                    │
@@ -475,9 +471,9 @@ TAB 式面板卡片（窄屏回退底部 sheet）。
    点击 → 悬浮小卡（图标上方，popover）：
      ┌──────────────────────────────┐
      │ ● 团队模式          [开关]   │
-     │ 团队   [小凉全能团 ▾]        │
+     │ 团队   [软件工程全流程团队 ▾]        │
      │ 链条   [自动选择 ▾]          │  ← 自动 = 由主脑判断走哪条链/临时点兵
-     │ 模型   团队默认：v4-flash    │  ← 只读回显，改动跳团队面板
+     │ 模型   团队默认：未设置      │  ← 只读回显，改动跳团队面板
      │ ────────────────────────     │
      │ ⓘ 开启后本会话的任务将由该    │
      │   团队接力执行，产物落盘。    │
@@ -516,25 +512,25 @@ TAB 式面板卡片（窄屏回退底部 sheet）。
 
 ```
 ┌─ 折叠态（默认，高 40px）────────────────────────────────────┐
-│ 👥 小凉全能团 · verify 链   ●●○○  2/4 步   ⏱ 01:23   [展开▾] │
+│ 👥 软件工程全流程团队 · full-delivery 链   ●●○○  2/4 步   ⏱ 01:23   [展开▾] │
 └──────────────────────────────────────────────────────────────┘
 
 ┌─ 展开态 ─────────────────────────────────────────────────────┐
-│ 👥 小凉全能团 · 察→驳→主脑整合      ⏱ 01:23 / 预估 03:00     │
+│ 👥 软件工程全流程团队 · 观月→琉夏→神代→整合      ⏱ 01:23 / 预估 03:00     │
 │ 任务：核实 xxx 并给出可交付结论            [取消运行] [收起▴] │
 │ ── TODO 进度条 ─────────────────────────────────────────     │
 │ ▓▓▓▓▓▓▓▓░░░░░░░░  2/4 完成 · 1 进行中 · 1 待办                │
 │                                                              │
 │ ┌── 角色卡网格（每角色一卡，按步骤顺序）───────────────────┐ │
 │ │ ┌────────────┐ ┌────────────┐ ┌────────────┐ ┌────────┐ │ │
-│ │ │✅ 察 cha    │ │🔄 驳 bo     │ │⏳ 主脑      │ │        │ │ │
-│ │ │深度调研     │ │质量把关     │ │整合交付     │ │        │ │ │
-│ │ │v4-flash     │ │terra(团队)  │ │继承团队     │ │        │ │ │
+│ │ │✅ 观月      │ │🔄 琉夏      │ │⏳ 神代      │ │        │ │ │
+│ │ │拆解需求     │ │依规编码     │ │审查代码     │ │        │ │ │
+│ │ │继承团队     │ │继承团队     │ │继承团队     │ │        │ │ │
 │ │ │⏱ 00:38 完成 │ │⏱ 00:45 进行 │ │—            │ │        │ │ │
 │ │ │▸ 输出摘要…  │ │▸ 实时增量…  │ │             │ │        │ │ │
 │ │ └────────────┘ └────────────┘ └────────────┘ └────────┘ │ │
 │ └──────────────────────────────────────────────────────────┘ │
-│ 产物：steps/00-cha.md · steps/01-bo.md   [打开产物目录]       │
+│ 产物：steps/00-architect.md · steps/01-coder.md   [打开产物目录]       │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -581,7 +577,7 @@ HUD 直接读快照即可，不额外开 SSE（与 automation/planweave 的轮�
 ~/.dsh/team/
 ├── globals.json            # TeamGlobals（含 activeTeamId；也影射进 settings.yaml）
 ├── teams/
-│   ├── t-liang-all.json    # 一团队一文件：{version,id,name,model,roles,chains,directLinks}
+│   ├── t-mt8v11xo.json    # 一团队一文件：{version,id,name,model,roles,chains,directLinks}
 │   └── t-writing.json
 ├── chat-mode.json          # sessionId → {enabled, teamId, chainId, force}
 └── runs/
@@ -589,8 +585,9 @@ HUD 直接读快照即可，不额外开 SSE（与 automation/planweave 的轮�
         ├── run.json           # Run 快照（每步完成后原子更新）
         ├── final-deliverable.md   # 主脑整合产物（若有）
         └── steps/
-            ├── 00-cha.md
-            ├── 01-bo.md
+            ├── 00-architect.md
+            ├── 01-coder.md
+            ├── 02-reviewer.md
             └── ...
 ```
 
@@ -604,41 +601,32 @@ HUD 直接读快照即可，不额外开 SSE（与 automation/planweave 的轮�
 
 ## 8. 出厂默认团队（播种数据，从图提取）
 
-首次启用时播种一个团队 `t-liang-all`「小凉全能团」，`team.model` = 全局默认模型，
-角色 `model` 一律为 `null`（继承团队），`label` 保留图上短名作为提示。用户改一次团队默认模型
-即全体生效；需要差异化时再逐个角色覆盖。
+首次启用时播种一个团队 `t-mt8v11xo`「软件工程全流程团队」，`team.model` = `{provider:'', model:''}`
+（出厂让用户在面板设一次团队默认模型），角色 `model` 一律为 `null`（继承团队）。用户改一次
+团队默认模型即全体生效；需要差异化时再逐个角色覆盖。
 
 ### 8.1 角色表
 
-| id | name | en | tagline | group | 图上标注短名（label） | model | executor |
-|---|---|---|---|---|---|---|---|
-| hanako | 主脑 | hanako | 协调中枢·总管·通才·兜底 | core | — | null（继承团队） | llm |
-| cha | 察 | cha | 深度调研·多源取证 | judge | v4-flash | null | auto |
-| bo | 驳 | bo | 质量把关·挑漏洞 | judge | gpt-5.6-terra | null | auto |
-| ce | 策 | ce | 创意发散·收敛方案 | judge | v4-flash | null | auto |
-| jiang | 匠 | jiang | 技术落地·能跑起来 | act | gpt-5.6-sol | null | auto |
-| zao | 造 | zao | 游戏原型·可玩版本 | act | v4-pro | null | auto |
-| bi | 笔 | bi | 写作交付·公文成稿 | act | v4-pro | null | auto |
-| jian | 简 | jian | 云文档·资料管家 | act | v4-flash | null | auto |
-| liangsu | 凉溯 | liangsu | 倾听陪伴·情绪支持 | guard | v4-flash | null | auto |
-| mentor | 导师 | mentor | 论文评审·答辩把关 | guard | v4-flash | null | auto |
-| yuan | 垣 | yuan | 运维巡检·系统守护 | guard | gpt-5.6-terra | null | auto |
-
-> label 只是显示提示，不参与执行；真正生效的是 §3.7 解析出的 provider/model。
+| id | name | en | tagline | group | model | executor |
+|---|---|---|---|---|---|---|
+| brain | 星见 | brain | 协调中枢·总管兜底 | core | null（继承团队） | auto |
+| architect | 观月 | architect | 拆解需求·定架构选型 | act | null | auto |
+| strategist | 凛音 | strategist | 评审方案·识别风险 | act | null | auto |
+| coder | 琉夏 | coder | 依规编码·稳定产出 | act | null | auto |
+| tester | 星乃 | tester | 编写测试·验证闭环 | act | null | auto |
+| reviewer | 神代 | reviewer | 审查代码·质量守门 | guard | null | auto |
 
 
 ### 8.2 链条
 
-- `verify` 察→驳→主脑整合：`[{role:cha},{role:bo},{synthesize}]`（finalSynthesize=true）
-- `ship` 策→匠→造→主脑整合：`[{role:ce},{role:jiang},{role:zao},{synthesize}]`
-- `ops` 垣→匠→垣→主脑整合：`[{role:yuan},{role:jiang},{role:yuan},{synthesize}]`
-  （垣诊断 → 匠修复 → 垣回归验收，同角色两次为不同步骤，产物分文件）
+- `full-delivery` 架构师→程序员→审查员→主脑整合：`[{role:architect},{role:coder},{role:reviewer},{synthesize}]`（finalSynthesize=true）
+- `fast-iteration` 程序员→测试员→主脑整合：`[{role:coder},{role:tester},{synthesize}]`
 
 ### 8.3 直连
 
-- `{from:bi, to:jian, kind:'bidirectional'}`
-- `{from:jian, to:liangsu, kind:'bidirectional'}`（笔↔简↔凉溯 三角中的两对；简↔笔 已含）
-- `{from:mentor, to:hanako, kind:'directed'}`（评审结论经主脑整合交付）
+- `{from:architect, to:strategist, kind:'bidirectional', label:'方案互审'}`
+- `{from:coder, to:reviewer, kind:'bidirectional', label:'审查返修'}`
+- `{from:coder, to:tester, kind:'bidirectional', label:'缺陷修复'}`
 
 ---
 

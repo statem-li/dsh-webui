@@ -77,7 +77,7 @@ function buildInstruction(entries: Array<{ sessionId: string, mode: ChatModeStat
   head.push(
     '调用约定：`team_run { teamId, task, plan? | chainId? | roles?, autoPlan? }`——task 写清完整目标与验收标准。',
     '**并行派发（省时关键）**：`plan` 是波次数组，同一波次里的角色**同时开跑**，波次之间串行（后一波能看到前面全部产出）。'
-    + '把互不依赖的工作放进同一波次，例如 `plan: [["cha","ping"],["jiang"]]` = 察与评并行调研/审查，完成后匠再落地。'
+    + '把互不依赖的工作放进同一波次，例如 `plan: [["architect","strategist"],["coder"]]` = 架构师与策略师并行调研/审查，完成后编码再落地。'
     + '有依赖关系的工作（先取证再成稿、先实现再评审）必须排进后续波次。',
     '同一波次的角色彼此看不到对方产出，所以「需要引用同伴结论」的工作不要排进同一波。',
     '不确定怎么分工时传 `autoPlan: true`，让主脑先自主编排一份并行计划再执行；'
