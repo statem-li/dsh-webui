@@ -224,8 +224,9 @@ function sectionHeader(section: keyof InjectionSections): string {
 /** 全量编译入口：写项目层 + 全局层产物（ticker 调用）。 */
 export async function compileAll(store: MemoryStore, config: MemoryConfig): Promise<void> {
   const all = await store.readEntries()
-  // disabled 条目不进任何产物（memory.md / facts.md / pinned.md / identity.md）。
-  const entries = all.filter(entry => entry.disabled !== true)
+  // disabled 条目不进任何产物（memory.md / facts.md / pinned.md / identity.md）；
+  // deprecated 条目同理（软废弃 = 从产物与注入中消失，数据仍保留在库）。
+  const entries = all.filter(entry => entry.disabled !== true && entry.deprecated !== true)
   const byProject = new Map<string, MemoryEntry[]>()
   for (const entry of entries) {
     if (entry.scope !== 'project' || entry.projectHash === null) continue

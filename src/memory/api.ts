@@ -38,6 +38,8 @@ interface EntryView {
   pinned: boolean
   /** true = 已禁用（保留但不参与注入/编译）。 */
   disabled: boolean
+  /** true = 已软废弃（retire / revise）。 */
+  deprecated: boolean
   importance: number
   layer: 'short' | 'long'
   source: 'extract' | 'manual'
@@ -70,6 +72,7 @@ function toView(entry: MemoryEntry): EntryView {
     tags: entry.tags,
     pinned: entry.pinned,
     disabled: entry.disabled === true,
+    deprecated: entry.deprecated === true,
     importance: entry.importance,
     layer: entry.layer,
     source: entry.source,
@@ -158,13 +161,14 @@ async function handle(
       const today = localDate()
       json(res, 200, {
         today,
-        entryCount: entries.length,
+        entryCount: entries.filter(entry => entry.deprecated !== true).length,
         projectCount: (await store.listProjects(entries)).length,
         todayChanges: (await store.readChanges(today)).length,
         pinnedCount: entries.filter(entry => entry.pinned).length,
         disabledCount: entries.filter(entry => entry.disabled === true).length,
-        longtermCount: entries.filter(entry => entry.layer === 'long').length,
-        globalCount: entries.filter(entry => entry.scope === 'global').length,
+        deprecatedCount: entries.filter(entry => entry.deprecated === true).length,
+        longtermCount: entries.filter(entry => entry.layer === 'long' && entry.deprecated !== true).length,
+        globalCount: entries.filter(entry => entry.scope === 'global' && entry.deprecated !== true).length,
       })
       return
     }
@@ -375,6 +379,80 @@ async function handle(
       json(res, 200, { ok: true, deleted: removed.length, missing: ids.length - removed.length })
       return
     }
+    if (method === 'POST' && rest === '/revise') {
+      // 修订：软废弃旧条目 + 写入后继条目（opencontext oc_memory_revise 语义）。
+      const body = await readBody(req) as Record<string, unknown>
+      const entryId = requireString(body.entryId, 'entryId')
+      const content = typeof body.content === 'string' ? body.content.trim() : ''
+      if (content === '') throw new Error('content 不能为空')
+      const target = await store.getEntry(entryId)
+      if (target === undefined) throw new Error(`记忆不存在：${entryId}`)
+      const result = await store.reviseEntry({
+        id: entryId,
+        content,
+        reason: typeof body.reason === 'string' ? body.reason : undefined,
+        tags: Array.isArray(body.tags)
+          ? body.tags.filter((tag): tag is string => typeof tag === 'string' && tag.trim() !== '').map(tag => tag.trim()).slice(0, 8)
+          : undefined,
+        importance: typeof body.importance === 'number' && Number.isFinite(body.importance)
+          ? Math.max(1, Math.min(10, Math.round(body.importance)))
+          : undefined,
+      })
+      if (result === undefined) throw new Error(`记忆不存在或已废弃：${entryId}`)
+      await store.appendChange({
+        action: 'revise',
+        entryId: result.deprecatedId,
+        scope: target.scope,
+        projectHash: target.projectHash,
+        summary: `修订为：${summarize(result.entry.content)}`,
+        before: target.content,
+        after: result.entry.content,
+      })
+      await compileAll(store, config)
+      json(res, 200, {
+        ok: true,
+        deprecatedId: result.deprecatedId,
+        newId: result.newId,
+        entry: toView(result.entry),
+      })
+      return
+    }
+    if (method === 'POST' && rest === '/retire') {
+      // 软废弃：数据保留但退出检索/注入/编译。
+      const body = await readBody(req) as Record<string, unknown>
+      const entryId = requireString(body.entryId, 'entryId')
+      const entry = await store.retireEntry(entryId, typeof body.reason === 'string' ? body.reason : undefined)
+      if (entry === undefined) throw new Error(`记忆不存在：${entryId}`)
+      await store.appendChange({
+        action: 'retire',
+        entryId: entry.id,
+        scope: entry.scope,
+        projectHash: entry.projectHash,
+        summary: `废弃：${summarize(entry.content)}`,
+        before: entry.content,
+      })
+      await compileAll(store, config)
+      json(res, 200, { ok: true, entry: toView(entry) })
+      return
+    }
+    if (method === 'POST' && rest === '/restore') {
+      // 复活已废弃条目（undo retire / undo revise 后继侧）。
+      const body = await readBody(req) as Record<string, unknown>
+      const entryId = requireString(body.entryId, 'entryId')
+      const entry = await store.restoreEntry(entryId)
+      if (entry === undefined) throw new Error(`记忆不存在：${entryId}`)
+      await store.appendChange({
+        action: 'update',
+        entryId: entry.id,
+        scope: entry.scope,
+        projectHash: entry.projectHash,
+        summary: `恢复：${summarize(entry.content)}`,
+        after: entry.content,
+      })
+      await compileAll(store, config)
+      json(res, 200, { ok: true, entry: toView(entry) })
+      return
+    }
     if (method === 'POST' && rest === '/meta') {
       const body = await readBody(req) as Record<string, unknown>
       const hash = requireString(body.projectHash, 'projectHash')
@@ -516,13 +594,15 @@ async function listView(store: MemoryStore, params: URLSearchParams): Promise<{ 
   const project = params.get('project')
   const q = params.get('q')?.trim().toLowerCase() ?? ''
   const tag = params.get('tag')
+  const includeDeprecated = params.get('includeDeprecated') === '1'
 
-  // 硬过滤：scope / project / tag。
+  // 硬过滤：scope / project / tag；deprecated 条目默认不显示（软废弃 = 退出活跃列表）。
   const scoped = entries.filter(entry => {
     if (scope === 'global' && entry.scope !== 'global') return false
     if (scope === 'project' && entry.scope !== 'project') return false
     if (project !== null && project !== '' && entry.projectHash !== project) return false
     if (tag !== null && tag !== '' && !entry.tags.includes(tag)) return false
+    if (!includeDeprecated && entry.deprecated === true) return false
     return true
   })
   // 搜索：走同一套 hybrid 检索（n-gram 相似 + 精确命中加成），

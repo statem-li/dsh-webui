@@ -84,6 +84,11 @@ function buildInstruction(entries: Array<{ sessionId: string, mode: ChatModeStat
     + '想按预设流程走就用 `chainId`；只需要简单串行接力用 `roles`。',
     '运行产物会落盘，运行进度在对话流上方的团队 HUD 与团队面板中实时可见。',
     '运行结束后用 `team_status` 取回结果摘要，再基于最终交付物回答用户。',
+    '**失败处置**：运行因限流/鉴权/额度/超时/上游 5xx/服务重启/取消而没跑完时，'
+    + '用 `team_resume`（只重跑失败与未开始的步骤，已完成产物保留）——'
+    + '**不要重新 team_run**，那会把已完成的工作和额度全部重烧一遍。'
+    + '`team_status` 的 `resumable` 字段与 `errorKind`/`advice` 会告诉你能否接续、该先修什么；'
+    + '鉴权失败或额度不足属于配置问题，请先让用户处理再接续。',
     '',
   )
 

@@ -11,6 +11,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { ModelSelect } from './ModelSelect.tsx'
+import { FallbackEditor } from './FallbackEditor.tsx'
 import { CapabilityEditor } from './CapabilityEditor.tsx'
 import {
   GROUP_META,
@@ -29,6 +30,8 @@ const EXECUTORS: Array<{ value: ExecutorPref, label: string, hint: string }> = [
 export interface RoleEditorModalProps {
   role: Role
   teamModel: ModelBinding
+  /** 团队备用模型链（角色留空时继承它，用于提示文案）。 */
+  teamFallback?: ModelBinding[]
   providers: readonly ProviderView[]
   catalog: CapabilityCatalog | null
   /** 已建立的关联（对方名 + directLinks 索引）。 */
@@ -41,7 +44,7 @@ export interface RoleEditorModalProps {
 
 /** 角色编辑弹窗。 */
 export function RoleEditorModal({
-  role, teamModel, providers, catalog, links, onClose, onSave, onRemove, onRemoveLink,
+  role, teamModel, teamFallback, providers, catalog, links, onClose, onSave, onRemove, onRemoveLink,
 }: RoleEditorModalProps): JSX.Element {
   const [draft, setDraft] = useState<Role>(role)
   const [saving, setSaving] = useState(false)
@@ -209,6 +212,23 @@ export function RoleEditorModal({
               onChange={next => patch({ model: next })}
             />
           </label>
+
+          {/* 备用模型链：主模型失败且「换模型有救」时按序尝试 */}
+          <FallbackEditor
+            value={draft.fallbackModels}
+            providers={providers}
+            inheritFrom={teamFallback ?? []}
+            onChange={(next) => {
+              setDraft((previous) => {
+                if (next === undefined) {
+                  const copy = { ...previous }
+                  delete copy.fallbackModels
+                  return copy
+                }
+                return { ...previous, fallbackModels: next }
+              })
+            }}
+          />
 
           {links.length > 0 ? (
             <div className="team-field">

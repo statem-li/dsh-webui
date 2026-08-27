@@ -229,6 +229,8 @@ export function isDuplicateContent(content: string, existing: MemoryEntry[], thr
   const trimmed = content.trim()
   if (trimmed === '') return true
   for (const entry of existing) {
+    // 软废弃条目不参与去重：已退出活跃生命周期，新提取的相似内容应可重新入库。
+    if (entry.deprecated === true) continue
     if (entry.content.trim() === trimmed) return true
     if (semanticSimilarity(trimmed, entry.content) >= threshold) return true
   }

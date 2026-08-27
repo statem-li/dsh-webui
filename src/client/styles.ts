@@ -125,6 +125,26 @@ const SHEET = `
 /* ── 移动端：消息横条提示泡不超出屏幕 ─────────────────────────── */
 @media (max-width: 767.98px) {
   .webui-tip{width:min(300px,calc(100vw - 16px))}
+
+  /* ── P0-1 会话顶栏收纳 ───────────────────────────
+     1) 标题行去掉为右上按钮组预留的 100px，改 8px（本表媒体外基础规则是 100px）；
+     2) 图块/trigger/徽标提到 ≥44×44 触碰基线（用 min-height/min-width，
+        不动 height，避免破坏行内布局）；桌面仍走 28/22px 紧凑形态；
+     3) 右上按钮组允许换行 + 右对齐，避免窄屏标题与按钮重叠（真机回退见 P-B4）。 */
+  [data-slot="conversation.session.header"] [class*="titleRow"]{
+    padding-right:8px !important;
+    min-height:44px;
+  }
+  [data-slot="conversation.session.header"] [class*="webui-host"]{
+    flex-wrap:wrap;
+    justify-content:flex-end;
+  }
+  .webui-view-tile,
+  .webui-trigger,
+  .webui-trigger-badge{
+    min-width:44px;
+    min-height:44px;
+  }
 }
 `
 

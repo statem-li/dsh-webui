@@ -1,6 +1,7 @@
 /**
  * dsh-memory 模型工具：AI 在对话中可主动调用的记忆操作。
- * memory_search / memory_remember / memory_pin / memory_tag / memory_forget。
+ * memory_search / memory_remember / memory_pin / memory_tag / memory_forget
+ * / memory_revise / memory_retire / memory_consolidate。
  * 全部经 @deepseek-ai/dsh-tools 的 defineTool 注册，输出为模型可见文本。
  */
 
@@ -9,9 +10,10 @@ import type { InferArgs, ParameterSchemaSpec } from '@deepseek-ai/dsh-tools'
 import type { Context } from '@deepseek-ai/cordis'
 import type { ConsolidateResult, MemoryConfig } from './types.js'
 import { projectHashOf, summarize, type MemoryStore } from './engine/store.js'
-import { workspaceHashOf } from './engine/compile.js'
+import { compileAll, workspaceHashOf } from './engine/compile.js'
 import { consolidateAll, consolidateScope } from './engine/consolidate.js'
-import { searchEntries, type RetrievalMode } from './engine/retrieval.js'
+import { searchEntries, searchEntriesSemantic, type RetrievalMode } from './engine/retrieval.js'
+import { resolveEmbeddingProvider, type EmbeddingProvider } from './engine/embedding.js'
 
 /** 当前会话项目 hash（exec.agent 缺失时回退 null → global 或全部）。 */
 interface AgentLike {
@@ -36,7 +38,8 @@ export function registerMemoryTools(
       scope: { type: 'string', enum: ['global', 'project'], description: 'global=全局层（身份/偏好）；project=项目层。默认全部。' },
       project: { type: 'string', description: '项目标识（workspace 路径或 hash）。默认当前工作区项目。' },
       tag: { type: 'string', description: '按标签筛选。' },
-      mode: { type: 'string', enum: ['hybrid', 'keyword', 'semantic'], description: '检索模式：hybrid=相似度+精确命中（默认）；keyword=仅精确子串；semantic=预留（当前等同 hybrid）。' },
+      mode: { type: 'string', enum: ['hybrid', 'keyword', 'semantic'], description: '检索模式：hybrid=相似度+精确命中（默认）；keyword=仅精确子串；semantic=向量语义（需配置 embedding，未配置时回退 hybrid）。' },
+      includeDeprecated: { type: 'boolean', description: '是否包含已软废弃（retire/revise 旧条目）的记忆。默认 false。' },
       limit: { type: 'integer', description: '返回条数上限（默认 10，最大 30）。' },
     },
     async execute(args, exec) {
@@ -57,7 +60,13 @@ export function registerMemoryTools(
         return true
       })
 
-      const matches = searchEntries(query, visible, mode)
+      const options = { includeDeprecated: args.includeDeprecated === true }
+      const embeddingProvider = mode === 'semantic' ? await getEmbeddingProvider(config) : null
+      const matches = mode === 'semantic'
+        ? await searchEntriesSemantic(query, visible, embeddingProvider, options)
+        : searchEntries(query, visible, mode, options)
+      // semantic 检索会补算条目 embedding 缓存（原地写入内存态对象），一次节流刷盘。
+      if (embeddingProvider !== null) await store.flush()
       const limit = Math.max(1, Math.min(30, typeof args.limit === 'number' ? args.limit : 10))
       const picked = matches.slice(0, limit)
       if (picked.length === 0) return '没有找到匹配的记忆。'
@@ -69,12 +78,14 @@ export function registerMemoryTools(
         const verified = entry.verified ? '' : '〔待确认〕'
         // 禁用条目仍可被搜索到（避免「记忆凭空消失」），但明确标注不参与注入。
         const disabledMark = entry.disabled === true ? '〔已禁用·不参与注入〕' : ''
+        // 软废弃条目（includeDeprecated 时才出现）：标注废弃状态。
+        const deprecatedMark = entry.deprecated === true ? '〔已废弃·retire/revise 标记〕' : ''
         const rel = query.trim() !== '' ? `·相关${Math.round(score * 100)}%` : ''
         // id 必须输出：memory_pin / memory_tag / memory_forget 都以 entryId 为入参，
         // 而它们的唯一来源就是本工具的结果。
-        return `${entry.id} ${head}[${entry.importance}] ${scope}${layer}: ${entry.content}${disabledMark}${verified}${rel}${tags}`
+        return `${entry.id} ${head}[${entry.importance}] ${scope}${layer}: ${entry.content}${disabledMark}${deprecatedMark}${verified}${rel}${tags}`
       })
-      return `${lines.join('\n')}\n（首列为 entryId，可用于 memory_pin / memory_tag / memory_forget）`
+      return `${lines.join('\n')}\n（首列为 entryId，可用于 memory_pin / memory_tag / memory_forget / memory_revise / memory_retire）`
     },
   })))
 
@@ -205,6 +216,88 @@ export function registerMemoryTools(
     },
   })))
 
+  // ── memory_revise ───────────────────────────────────────────────────
+  disposers.push(ctx.tools.register(textTool({
+    name: 'memory_revise',
+    description: '修订一条记忆：软废弃旧条目（保留数据但不再检索/注入），写入新内容作为后继条目。用于记忆过时/错误/需要重写时。返回新旧两个 id。',
+    parameters: {
+      entryId: { type: 'string', required: true, description: '要修订的旧条目 id（用 memory_search 获取）。' },
+      content: { type: 'string', required: true, description: '新的记忆内容（作为后继条目）。' },
+      reason: { type: 'string', description: '修订原因（记录在旧条目的废弃原因中）。' },
+      tags: { type: 'array', items: { type: 'string' }, description: '后继条目的标签（缺省继承旧条目标签）。' },
+      importance: { type: 'integer', description: '后继条目的重要度 1-10（缺省继承旧条目）。' },
+    },
+    async execute(args, exec) {
+      const entryId = String(args.entryId ?? '')
+      if (entryId === '') throw new Error('entryId 不能为空')
+      const content = String(args.content ?? '').trim()
+      if (content === '') throw new Error('content 不能为空')
+      const agent = exec.agent as AgentLike | undefined
+      const hash = agent !== undefined ? workspaceHashOf(agent.session.header) : null
+      // 项目层受自动记忆开关约束（与 remember 一致）。
+      const target = await store.getEntry(entryId)
+      if (target === undefined) throw new Error(`记忆不存在：${entryId}`)
+      if (target.scope === 'project' && (hash === null || !(await store.isAutoMemoryEnabled(target.projectHash ?? hash)))) {
+        throw new Error('该项目的自动记忆已关闭，已跳过修订；如需记录请先在记忆面板开启该项目开关')
+      }
+      const result = await store.reviseEntry({
+        id: entryId,
+        content,
+        reason: typeof args.reason === 'string' ? args.reason : undefined,
+        tags: Array.isArray(args.tags)
+          ? args.tags.filter((tag): tag is string => typeof tag === 'string' && tag.trim() !== '').map(tag => tag.trim()).slice(0, 8)
+          : undefined,
+        importance: typeof args.importance === 'number' ? Math.max(1, Math.min(10, args.importance)) : undefined,
+      })
+      if (result === undefined) {
+        // 旧条目不存在/已废弃 → 无法修订；内容未变化 → 无修订空间。
+        const current = await store.getEntry(entryId)
+        if (current !== undefined && current.deprecated !== true
+          && current.content.trim() === content) {
+          throw new Error('新内容与旧条目相同，无需修订；如需调整请用 memory_tag / memory_pin 或修改元数据')
+        }
+        throw new Error(`记忆不存在或已废弃：${entryId}`)
+      }
+      await store.appendChange({
+        action: 'revise',
+        entryId: result.deprecatedId,
+        scope: target.scope,
+        projectHash: target.projectHash,
+        summary: `修订为：${summarize(result.entry.content)}`,
+        before: target.content,
+        after: result.entry.content,
+      })
+      await compileAll(store, config)
+      return `已修订记忆：旧条目 ${result.deprecatedId} 已软废弃，新条目 ${result.newId} 已记录：${summarize(result.entry.content)}`
+    },
+  })))
+
+  // ── memory_retire ───────────────────────────────────────────────────
+  disposers.push(ctx.tools.register(textTool({
+    name: 'memory_retire',
+    description: '软废弃一条记忆（retire）：数据保留但不再参与检索/注入/编译。用于「这条记忆过时了但不想彻底删除」的场景。彻底删除请用 memory_forget。',
+    parameters: {
+      entryId: { type: 'string', required: true, description: '要废弃的条目 id（用 memory_search 获取）。' },
+      reason: { type: 'string', description: '废弃原因。' },
+    },
+    async execute(args) {
+      const id = String(args.entryId ?? '')
+      if (id === '') throw new Error('entryId 不能为空')
+      const entry = await store.retireEntry(id, typeof args.reason === 'string' ? args.reason : undefined)
+      if (entry === undefined) throw new Error(`记忆不存在：${id}`)
+      await store.appendChange({
+        action: 'retire',
+        entryId: entry.id,
+        scope: entry.scope,
+        projectHash: entry.projectHash,
+        summary: `废弃：${summarize(entry.content)}`,
+        before: entry.content,
+      })
+      await compileAll(store, config)
+      return `已软废弃记忆：${summarize(entry.content)}（数据保留，不再注入；可用 memory_search includeDeprecated 查看）`
+    },
+  })))
+
   // ── memory_consolidate ───────────────────────────────────────────────
   disposers.push(ctx.tools.register(textTool({
     name: 'memory_consolidate',
@@ -247,6 +340,18 @@ function resolveProjectFilter(project: string): string | null {
   return projectHashOf(trimmed)
 }
 
+/** 模块级 embedding provider 缓存（按 config 惰性创建，避免每次检索都重建）。 */
+let cachedProvider: EmbeddingProvider | null | undefined
+let cachedProviderKey = ''
+
+async function getEmbeddingProvider(config: MemoryConfig): Promise<EmbeddingProvider | null> {
+  const key = `${config.embeddingProvider}|${config.embeddingBaseUrl}|${config.embeddingModel}`
+  if (cachedProviderKey === key) return cachedProvider ?? null
+  cachedProviderKey = key
+  cachedProvider = resolveEmbeddingProvider(config)
+  return cachedProvider
+}
+
 /** 工具展示身份。 */
 const TOOL_PRESENTATION: Record<string, { kind: 'read' | 'other'; title: (args: Record<string, unknown>) => string }> = {
   memory_search: { kind: 'read', title: args => `记忆搜索：${String(args.query ?? '')}` },
@@ -254,6 +359,8 @@ const TOOL_PRESENTATION: Record<string, { kind: 'read' | 'other'; title: (args: 
   memory_pin: { kind: 'other', title: args => `置顶：${String(args.entryId ?? '')}` },
   memory_tag: { kind: 'other', title: args => `改标签：${String(args.entryId ?? '')}` },
   memory_forget: { kind: 'other', title: args => `删除：${String(args.entryId ?? '')}` },
+  memory_revise: { kind: 'other', title: args => `修订：${String(args.entryId ?? '')}` },
+  memory_retire: { kind: 'other', title: args => `废弃：${String(args.entryId ?? '')}` },
   memory_consolidate: { kind: 'other', title: () => '整理记忆' },
 }
 

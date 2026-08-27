@@ -27,6 +27,7 @@ import { MoodBlock, isMoodLang } from '../mood/MoodBlock.tsx'
 import { FlowCard, type ReplyCardMeta } from './flow-card.tsx'
 import { isGeneratedImageUrl } from '../image-gallery/registry'
 import { DEFAULT_GALLERY_LABELS, GalleryStrip } from '../image-gallery/GalleryStrip'
+import { sanitizeHtmlFragment } from '../../shared/sanitize-html.ts'
 
 const CUSTOM_COMPONENT_SCOPE = 'dsh-better-markdown'
 
@@ -284,12 +285,52 @@ function extractHeadings(text: string): HeadingInfo[] {
   return result
 }
 
+/**
+ * 找元素最近的可滚动祖先（overflow-y 为 auto/scroll/overlay 且真的有溢出）。
+ * 找不到返回 null —— 调用方据此决定是否退回 window 级滚动。
+ */
+function nearestScrollParent(element: HTMLElement): HTMLElement | null {
+  let node: HTMLElement | null = element.parentElement
+  while (node !== null && node !== document.body && node !== document.documentElement) {
+    const overflowY = window.getComputedStyle(node).overflowY
+    const scrollable = overflowY === 'auto' || overflowY === 'scroll' || overflowY === 'overlay'
+    if (scrollable && node.scrollHeight > node.clientHeight + 1) return node
+    node = node.parentElement
+  }
+  return null
+}
+
+/**
+ * TOC 跳转：**只滚动最近的那个滚动容器**，绝不用 scrollIntoView。
+ *
+ * scrollIntoView 会把目标的**每一个**可滚动祖先都滚一遍，document 也算在内。
+ * Markdown 正文出现在 `position:fixed` 弹层里（团队详情卡 / 交付物卡）时，
+ * 浏览器为了「把元素滚进视口」会连宿主文档一起挪 —— 表现为点目录后整个壳子页面
+ * 往上跳（弹层本身是 fixed 不动，底下的页面却位移了）。手动改 scrollTop 只作用于
+ * 命中的那一个容器，不会外溢。
+ */
+function scrollToHeading(id: string): void {
+  const target = document.getElementById(id)
+  if (target === null) return
+  const container = nearestScrollParent(target)
+  // 顶部呼吸空间沿用 CSS 的 scroll-margin-top（styles.css 为标题锚点设过）。
+  const marginTop = Number.parseFloat(window.getComputedStyle(target).scrollMarginTop) || 0
+  if (container === null) {
+    // 没有内层滚动容器：退回窗口滚动（普通长文档场景，本就该滚页面）。
+    const top = target.getBoundingClientRect().top + window.scrollY - marginTop
+    window.scrollTo({ top, behavior: 'smooth' })
+    return
+  }
+  const delta = target.getBoundingClientRect().top - container.getBoundingClientRect().top - marginTop
+  container.scrollTo({ top: container.scrollTop + delta, behavior: 'smooth' })
+}
+
 /** 悬浮目录：标题 ≥ 3 个时展示在 Markdown 正文上方，点击平滑滚动到对应标题。 */
 function MarkdownToc({ headings }: { headings: readonly HeadingInfo[] }) {
   if (headings.length < 3) return null
   const jump = (id: string) => (event: { preventDefault: () => void }) => {
     event.preventDefault()
-    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    scrollToHeading(id)
   }
   return (
     <details className="dsh-better-markdown__toc" open>
@@ -314,7 +355,37 @@ function MarkdownToc({ headings }: { headings: readonly HeadingInfo[] }) {
   )
 }
 
-/** Markstream wrapper configured for untrusted assistant output. */
+/**
+ * 自定义 html_block / html_inline 渲染：markstream 内置的 HtmlBlockNode 会走
+ * 「结构化渲染」把 HTML 内部再解析一遍，模型输出的整篇 HTML（缩进行、`<a>`、
+ * `<span>` 等）被误解析成 Text 代码块堆。这里直接用净化后的原始 HTML 交给
+ * 浏览器原生解析（dangerouslySetInnerHTML），样式属性保留、效果与截图管线一致。
+ * 净化（sanitizeHtmlFragment）与 host 截图管线共用 src/shared/sanitize-html.ts：
+ * 剔除结构风险标签、剥事件属性、URL 协议白名单、style 值消毒。
+ */
+export function WebuiHtmlBlockNode({ node }: NodeComponentProps<{ type: 'html_block'; content: string; tag?: string }>) {
+  const html = useMemo(() => sanitizeHtmlFragment(
+    typeof node.content === 'string' ? node.content : '',
+  ), [node.content])
+  if (html === '') return null
+  return <div className="dsh-better-markdown__html" dangerouslySetInnerHTML={{ __html: html }} />
+}
+
+export function WebuiHtmlInlineNode({ node }: NodeComponentProps<{ type: 'html_inline'; content: string; tag?: string }>) {
+  const html = useMemo(() => sanitizeHtmlFragment(
+    typeof node.content === 'string' ? node.content : '',
+  ), [node.content])
+  if (html === '') return null
+  return <span className="dsh-better-markdown__html-inline" dangerouslySetInnerHTML={{ __html: html }} />
+}
+
+/**
+ * Markstream wrapper configured for assistant output with raw-HTML rendered.
+ * 历史：曾用 htmlPolicy="escape"（原始 HTML 一律转义成源码），模型输出整篇
+ * HTML（如带内联样式的公告/总结卡）显示为纯文本；改用 "trusted" 解析，并以
+ * 自定义 html_block/html_inline 组件（WebuiHtmlBlockNode/WebuiHtmlInlineNode）
+ * 接管渲染，避免 markstream 结构化渲染把 HTML 误解析成代码块。
+ */
 export const MarkstreamMarkdown = memo(function MarkstreamMarkdown({ text, streaming, fileMentions }: {
   text: string
   streaming: boolean
@@ -333,7 +404,7 @@ export const MarkstreamMarkdown = memo(function MarkstreamMarkdown({ text, strea
         content={text}
         final={!streaming}
         customId={CUSTOM_COMPONENT_SCOPE}
-        htmlPolicy="escape"
+        htmlPolicy="trusted"
         fade={false}
         smoothStreaming={false}
         viewportPriority={false}

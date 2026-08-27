@@ -11,7 +11,7 @@
  *  - 有未保存改动时展示「放弃改动」，切走不会静默丢失编辑。
  */
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CronJob, ModelOption, RunRecord } from './types.ts'
 import {
   scheduleDraftFromStored,
@@ -24,9 +24,12 @@ import { modelSelectValue, modelValueFromSelect } from './models.ts'
 import { clearRuns, getRuns } from './api.ts'
 import { formatAbsolute, formatRelative, t } from './locales.ts'
 import { ScheduleEditor } from './ScheduleEditor.tsx'
-import { ChevronIcon, CopyIcon, PlayIcon, SpinnerIcon, StopIcon, TrashIcon } from './icons.tsx'
+import { AlertIcon, ChevronIcon, CopyIcon, PlayIcon, SpinnerIcon, StopIcon, TrashIcon } from './icons.tsx'
 import { ModelPicker } from './ModelPicker.tsx'
 import { RunRow } from './RunRow.tsx'
+
+/** 卡片内联提示驻留时长（与全局 toast 的 4s 一致，之后自动淡出）。 */
+const INLINE_NOTICE_MS = 4000
 
 /** 显示名：label 优先，否则取 prompt 前 40 字，最后退到 id。 */
 function jobTitle(job: CronJob): string {
@@ -80,6 +83,18 @@ export function AutomationCard({
   const [runs, setRuns] = useState<RunRecord[] | null>(null)
   const [saving, setSaving] = useState(false)
   const [armDelete, setArmDelete] = useState(false)
+  /** 卡片内联提示（校验失败等就地提示，不乱弹全局 toast）。 */
+  const [inlineNotice, setInlineNotice] = useState<string | null>(null)
+  const noticeTimer = useRef(0)
+
+  const showInlineNotice = useCallback((message: string): void => {
+    setInlineNotice(message)
+    window.clearTimeout(noticeTimer.current)
+    noticeTimer.current = window.setTimeout(() => setInlineNotice(null), INLINE_NOTICE_MS)
+  }, [])
+
+  // 卸载时清掉提示计时器。
+  useEffect(() => () => { window.clearTimeout(noticeTimer.current) }, [])
 
   /** 服务端值变化时同步本地编辑态（configRevision 是唯一权威的「变了」信号——
    *  轮询刷新返回的新 job 对象引用变化不算，否则会覆盖用户未保存的编辑）。 */
@@ -150,7 +165,7 @@ export function AutomationCard({
   const save = async (): Promise<void> => {
     if (saving) return
     if (scheduleError !== null) {
-      onNotice(scheduleError)
+      showInlineNotice(scheduleError)
       return
     }
     const fields = collectFields()
@@ -173,11 +188,11 @@ export function AutomationCard({
       return
     }
     if (promptEmpty) {
-      onNotice(t('promptRequired'))
+      showInlineNotice(t('promptRequired'))
       return
     }
     if (scheduleError !== null) {
-      onNotice(scheduleError)
+      showInlineNotice(scheduleError)
       return
     }
     setSaving(true)
@@ -255,6 +270,13 @@ export function AutomationCard({
           <ChevronIcon />
         </button>
       </div>
+
+      {inlineNotice !== null ? (
+        <div className="auto-inline-notice" role="alert" data-tone="error">
+          <AlertIcon size={13} />
+          <span>{inlineNotice}</span>
+        </div>
+      ) : null}
 
       {open ? (
         <div className="auto-editor">

@@ -87,9 +87,10 @@ export function createMemoryInjector(
   ): Promise<{ text: string; sections: Array<{ name: string; text: string }> } | null> {
     const entries = await store.readEntries()
     const hash = workspaceHashOf(agent.session.header)
-    // disabled 条目保留在库与检索中，但绝不参与注入。
+    // disabled 条目保留在库与检索中，但绝不参与注入；
+    // deprecated 条目（软废弃）同样不参与注入。
     const visible = entries.filter(entry =>
-      entry.disabled !== true &&
+      entry.disabled !== true && entry.deprecated !== true &&
       (entry.scope === 'global' || (entry.scope === 'project' && entry.projectHash === hash)))
     if (visible.length === 0) return null
 

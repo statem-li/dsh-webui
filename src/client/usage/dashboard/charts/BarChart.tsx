@@ -33,6 +33,12 @@ const ANIM_SHEET = `
 .dsh-bar-chart { animation: var(--dsh-chart-anim, dsh-bar-rise .5s cubic-bezier(.2,.8,.2,1)); }
 .dsh-bar-chart .dsh-bar-hover { opacity: 0; transition: opacity .15s ease; }
 .dsh-bar-chart:hover .dsh-bar-hover { opacity: 1; }
+/* ── 移动端：图例允许换行，tooltip 数值行 min-width 归零（不撑破视口）。
+    内联 minWidth 需 !important 压过；本块注释未写出「星号紧跟正斜杠」序列。 ── */
+@media (max-width: 767.98px) {
+  .dsh-bar-legend { flex-wrap: wrap; gap: 6px; font-size: 10px; }
+  .dsh-chart-tip-row { min-width: 0 !important; flex-wrap: wrap; }
+}
 `
 
 function ensureBarChartStyles(): void {
@@ -123,7 +129,7 @@ export function BarChart({ data, height = 240, movingAverage = 7, anomalies, onS
   return (
     <div ref={wrapRef} className="dsh-bar-chart" style={{ position: 'relative', paddingTop: 16 }}>
       {/* 图例 */}
-      <div style={{ position: 'absolute', top: 0, right: 0, display: 'flex', gap: 14, pointerEvents: 'none', alignItems: 'center' }}>
+      <div className="dsh-bar-legend" style={{ position: 'absolute', top: 0, right: 0, display: 'flex', gap: 14, pointerEvents: 'none', alignItems: 'center' }}>
         {SERIES.map(s => (
           <span key={s.key} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'var(--dsw-alias-label-secondary)' }}>
             <span style={{
@@ -247,7 +253,7 @@ export function BarChart({ data, height = 240, movingAverage = 7, anomalies, onS
             )}
           </div>
           {[...SERIES].reverse().map(s => (
-            <div key={s.key} style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 180 }}>
+            <div key={s.key} className="dsh-chart-tip-row" style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 180 }}>
               <span style={{
                 width: 8, height: 8, borderRadius: 2, flex: 'none',
                 background: s.key === 'cache'

@@ -21,7 +21,7 @@
 
 import { useEffect, useState } from 'react'
 import { usageApi, type ProviderInfo } from './api'
-import { averageCacheHitRate, providerShare, sumActivity, sumTokens, type UsageDay, type UsageHour } from './aggregate'
+import { averageCacheHitRate, modelRank, providerShare, sumActivity, sumTokens, type UsageDay, type UsageHour } from './aggregate'
 import {
   aggregateHourSeries, aggregateSeries, dailyAverage, deltaPercent, filterDays, pickGrain, prevRange,
   type DateRange,
@@ -117,12 +117,7 @@ export function Stat({ label, value, exact, sub, delta, first }: {
   )
 }
 
-/** 范围内模型聚合排行。 */
-export function modelRank(days: UsageDay[]): Array<{ label: string; value: number }> {
-  const map = new Map<string, number>()
-  for (const d of days) for (const m of d.models ?? []) map.set(m.model, (map.get(m.model) ?? 0) + (m.tokens ?? 0))
-  return [...map.entries()].map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value)
-}
+/** 范围内模型聚合排行（含命中率，见 aggregate.modelRank）。 */
 
 const GRAIN_NAME = { hour: '按小时', day: '按日', week: '按周', month: '按月' } as const
 

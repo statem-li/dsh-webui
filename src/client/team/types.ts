@@ -9,6 +9,28 @@ export type RunStatus = 'queued' | 'running' | 'done' | 'error' | 'cancelled' | 
 export type StepStatus = 'pending' | 'running' | 'done' | 'error' | 'skipped'
 export type RunOrigin = 'panel' | 'chat-toggle' | 'tool'
 
+/** 失败归类（与 host src/team/failure.ts 一致）。 */
+export type StepErrorKind =
+  | 'rate_limit' | 'timeout' | 'auth' | 'quota' | 'network'
+  | 'server' | 'model_missing' | 'content' | 'cancelled' | 'unknown'
+
+/** 步骤执行阶段（running 时表示「现在在干什么」）。 */
+export type StepPhase =
+  | 'resolving' | 'dispatch' | 'thinking' | 'writing' | 'tooling' | 'retrying' | 'saving'
+
+/** 单次尝试记录（重试 / 模型降级轨迹）。 */
+export interface StepAttempt {
+  attempt: number
+  model: ModelBinding
+  fallback: boolean
+  status: 'done' | 'error'
+  errorKind?: StepErrorKind
+  error?: string
+  startedAt: string
+  finishedAt: string
+  backoffMs?: number
+}
+
 export interface ModelBinding {
   provider: string
   model: string
@@ -80,6 +102,8 @@ export interface Role {
   group: RoleGroup
   prompt: string
   model: ModelBinding | null
+  /** 备用模型链（主模型失败且「换模型有救」时按序尝试）。 */
+  fallbackModels?: ModelBinding[]
   executor: ExecutorPref
   label?: string
   tags?: string[]
@@ -118,6 +142,8 @@ export interface Team {
   name: string
   description?: string
   model: ModelBinding
+  /** 团队级备用模型链（角色未单独配置时继承）。 */
+  fallbackModels?: ModelBinding[]
   roles: Role[]
   chains: Chain[]
   directLinks: DirectLink[]
@@ -150,6 +176,8 @@ export interface TeamGlobals {
   autoPlan: boolean
   outputChunkChars: number
   stopOnError: boolean
+  /** 主模型失败时自动降级到备用模型链。 */
+  autoFallback: boolean
 }
 
 export interface RunStep {
@@ -162,11 +190,21 @@ export interface RunStep {
   group: RoleGroup
   synthesize: boolean
   status: StepStatus
+  /** 当前阶段（running 时有意义）。 */
+  phase?: StepPhase
+  /** 阶段补充说明（工具名 / 退避原因）。 */
+  phaseNote?: string
+  /** 阶段进入时间。 */
+  phaseSince?: string
   inputSnapshot: string
   output: string
+  /** 累计输出字符数。 */
+  outputChars?: number
   outputFile?: string
   modelUsed: ModelBinding
   modelSource: ModelSource
+  /** 本步是否降级到了备用模型。 */
+  fallbackUsed?: boolean
   channel?: 'llm' | 'subagent'
   /** 本步实际生效的能力装配。 */
   capabilities?: {
@@ -184,7 +222,13 @@ export interface RunStep {
   startedAt?: string
   finishedAt?: string
   error?: string
+  /** 失败归类（UI 徽标 + 处置建议）。 */
+  errorKind?: StepErrorKind
   retries?: number
+  /** 重试 / 降级轨迹。 */
+  attempts?: StepAttempt[]
+  /** 由第几轮「一键接续」重跑产生（缺省 = 首轮）。 */
+  resumeRound?: number
 }
 
 export interface RunProgress {
@@ -217,6 +261,13 @@ export interface Run {
   finishedAt?: string
   steps: RunStep[]
   error?: string
+  /** run 级失败归类。 */
+  errorKind?: StepErrorKind
+  /** 已执行的一键接续轮数。 */
+  resumeCount?: number
+  resumedAt?: string
+  /** 服务端判定：能否一键接续（已结束且有未完成步骤）。 */
+  resumable?: boolean
   finalFile?: string
   /** 服务端附带的进度统计（active/detail 接口）。 */
   progress?: RunProgress

@@ -1,18 +1,20 @@
 /**
  * team — Agent 工具（host 半身）。
  *
- * 三个工具：
+ * 四个工具：
  *  - team_list：列出可用团队与其角色/链（模型自选合适团队与链）。
  *  - team_run ：启动一次团队接力执行；**同步等待完成**并返回最终交付物摘要
  *               （工具触发天然带 agent 上下文 → 角色可走 subagent 通道，有工具能力）。
- *  - team_status：查看某次/最近一次运行的状态与每步模型来源。
+ *  - team_resume：接续一次未完成的运行（只重跑失败/跳过/未开始的步骤，产物保留）。
+ *  - team_status：查看某次/最近一次运行的状态、失败归类与可接续性。
  */
 
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { TeamEngine } from './engine.js'
 import type { TeamStore } from './store.js'
 import { generateTeam } from './generate.js'
-import { runProgress } from './roster.js'
+import { isResumable, runProgress } from './roster.js'
+import { failureAdvice } from './failure.js'
 import type { ModelBinding, Run, Team } from './types.js'
 import { normalizeBinding } from './types.js'
 
@@ -87,16 +89,25 @@ function presentRun(run: Run): Record<string, unknown> {
     startedAt: run.startedAt,
     ...(run.finishedAt !== undefined ? { finishedAt: run.finishedAt } : {}),
     ...(run.error !== undefined ? { error: run.error } : {}),
+    ...(run.errorKind !== undefined ? { errorKind: run.errorKind, advice: failureAdvice(run.errorKind) } : {}),
+    ...(run.resumeCount !== undefined && run.resumeCount > 0 ? { resumeCount: run.resumeCount } : {}),
+    // 明确告诉模型能不能接续，避免它对失败运行反复新建运行浪费额度。
+    resumable: isResumable(run),
+    ...(isResumable(run) ? { resumeHint: `用 team_resume（runId: ${run.id}）只重跑未完成的步骤，已完成产物保留` } : {}),
     steps: run.steps.map(step => ({
       index: step.index + 1,
       ...(step.wave !== undefined ? { wave: step.wave + 1 } : {}),
       role: step.roleName,
       status: step.status,
+      ...(step.status === 'running' && step.phase !== undefined ? { phase: step.phase } : {}),
       model: step.modelUsed.provider !== '' ? `${step.modelUsed.provider}/${step.modelUsed.model}` : '',
       modelSource: step.modelSource,
+      ...(step.fallbackUsed === true ? { fallbackUsed: true } : {}),
       channel: step.channel ?? '',
+      ...(step.retries !== undefined && step.retries > 0 ? { retries: step.retries } : {}),
       ...(step.warning !== undefined ? { warning: step.warning } : {}),
-      ...(step.error !== undefined ? { error: step.error } : {}),
+      ...(step.error !== undefined && step.error !== '' ? { error: step.error } : {}),
+      ...(step.errorKind !== undefined ? { errorKind: step.errorKind } : {}),
       ...(step.outputFile !== undefined ? { outputFile: `steps/${step.outputFile}` } : {}),
     })),
     ...(run.finalFile !== undefined ? { finalDeliverable: run.finalFile } : {}),
@@ -297,6 +308,14 @@ export function registerTeamTools({ ctx, store, engine }: TeamToolDeps): () => v
         }
       }
       if (latest.error !== undefined) lines.push('', `⚠ ${latest.error}`)
+      // 失败时明确指路：告诉模型用 team_resume 接续，而不是重开一次 team_run 把已完成的活重跑。
+      if (isResumable(latest)) {
+        lines.push(
+          '',
+          `⤴ 本次运行可接续：调用 team_resume（runId: ${latest.id}）只重跑未完成的步骤，已完成产物保留。`,
+          ...(latest.errorKind !== undefined ? [failureAdvice(latest.errorKind)] : []),
+        )
+      }
       return lines.join('\n')
     },
     output: {
@@ -350,6 +369,91 @@ export function registerTeamTools({ ctx, store, engine }: TeamToolDeps): () => v
       render: (_args, value) => [{ type: 'text', text: value }],
     },
     presentCall: args => ({ card: 'generic' as const, kind: 'other' as const, title: '查看团队运行状态', rawInput: args }),
+  })))
+
+  // ── team_resume ──
+  disposers.push(ctx.tools.register(defineTool({
+    name: 'team_resume',
+    description: [
+      '接续一次未完成的团队运行：在**同一个运行**上只重跑失败/被跳过/未开始的步骤，已完成步骤的产物完整保留（不重复消耗额度）。',
+      '适用场景：上一次 team_run 因供应商限流、鉴权失败、超时、上游 5xx、服务重启或用户取消而中断。',
+      '不要为此新建一次 team_run —— 那会把已完成的工作重跑一遍。',
+      '先用 team_status 查看 resumable 与 errorKind：鉴权/额度类错误请先让用户修好配置再接续，否则会立刻再失败一次。',
+      '默认等待完成并返回结果摘要。',
+    ].join(''),
+    parameters: {
+      runId: { type: 'string', description: '要接续的运行 id；留空取本会话最近一次未完成的运行。' },
+      wait: { type: 'boolean', description: '是否等待完成（默认 true）。false 时立即返回，之后用 team_status 查询。' },
+    },
+    async execute(args, exec) {
+      const params = args as unknown as Record<string, unknown>
+      const sessionId = execSessionId(exec)
+      if (sessionId !== '' && !store.readChatMode(sessionId).enabled) {
+        throw new Error('本会话未开启团队模式（对话框的团队开关是关闭状态），不能调用 team_resume。')
+      }
+      const explicit = typeof params.runId === 'string' ? params.runId.trim() : ''
+      // 留空：取本会话最近一次「可接续」的运行（本会话没有则不跨会话乱动别人的运行）。
+      const target = explicit !== ''
+        ? explicit
+        : (() => {
+            for (const id of store.listRunIds()) {
+              const snapshot = store.readRun(id)
+              if (snapshot === null) continue
+              if (sessionId !== '' && snapshot.sessionId !== sessionId) continue
+              if (isResumable(snapshot)) return snapshot.id
+            }
+            return ''
+          })()
+      if (target === '') throw new Error('本会话没有可接续的运行（所有运行都已全部完成，或还没有运行记录）。')
+
+      const started = engine.resume(target, { exec: exec as any })
+      const pending = started.steps.filter(step => step.status !== 'done').length
+      if (params.wait === false) {
+        return `已接续运行 ${started.id}（${started.teamName}），重跑 ${pending} 个未完成步骤。稍后用 team_status 查询。`
+      }
+
+      const deadline = Date.now() + WAIT_LIMIT_MS
+      let latest = started
+      while (Date.now() < deadline) {
+        await new Promise((resolve) => { setTimeout(resolve, POLL_MS) })
+        const signal = (exec as { signal?: AbortSignal } | undefined)?.signal
+        if (signal?.aborted === true) {
+          return `等待被中止，接续运行 ${started.id} 仍在后台继续。用 team_status 查询。`
+        }
+        const snapshot = store.readRun(started.id)
+        if (snapshot === null) continue
+        latest = snapshot
+        if (snapshot.status !== 'running' && snapshot.status !== 'queued') break
+      }
+
+      const progress = runProgress(latest)
+      const lines: string[] = [
+        `接续完成：${latest.id} · ${latest.teamName} → ${latest.status}（${progress.done}/${progress.total} 步完成，本轮重跑 ${pending} 步）`,
+        '',
+      ]
+      for (const step of latest.steps) {
+        const mark = step.status === 'done' ? '✅' : step.status === 'error' ? '❌' : step.status === 'skipped' ? '⏭' : '⏳'
+        const where = step.wave !== undefined ? `第 ${step.wave + 1} 波` : `第 ${step.index + 1} 步`
+        const model = step.modelUsed.provider !== '' ? `${step.modelUsed.provider}/${step.modelUsed.model}` : '—'
+        const fb = step.fallbackUsed === true ? '（备用模型）' : ''
+        lines.push(`${mark} ${where} ${step.roleName}（${model}${fb}）${step.error !== undefined && step.error !== '' ? ` — ${step.error}` : ''}`)
+      }
+      if (latest.finalFile !== undefined) {
+        try {
+          lines.push('', '## 最终交付物', truncate(store.readFinal(latest.id), 6000))
+        } catch { /* ignore */ }
+      }
+      if (latest.error !== undefined && latest.error !== '') {
+        lines.push('', `⚠ ${latest.error}`)
+        if (latest.errorKind !== undefined) lines.push(failureAdvice(latest.errorKind))
+      }
+      return lines.join('\n')
+    },
+    output: {
+      schema: { type: 'string' },
+      render: (_args, value) => [{ type: 'text', text: value }],
+    },
+    presentCall: args => ({ card: 'generic' as const, kind: 'other' as const, title: '接续团队运行', rawInput: args }),
   })))
 
   // ── team_create ──

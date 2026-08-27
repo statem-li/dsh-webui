@@ -21,6 +21,8 @@ export interface RenderResult {
   bytes: number
   /** 固定画幅是否精确命中（false = 内容超出比例，已保留完整长图）。 */
   aspectLocked?: boolean
+  /** 本次渲染使用的完整 HTML 文档（面板「元素删除」编辑模式取页面用）。 */
+  html?: string
 }
 
 /** 渲染请求参数。 */
@@ -37,6 +39,8 @@ export interface RenderRequest {
   title?: string
   /** 页头徽章文案（截图范围，可编辑）。 */
   label?: string
+  /** 编辑后的完整 HTML 文档（存在时 host 跳过卡片组装，直接渲染该页面）。 */
+  html?: string
 }
 
 async function post<T>(path: string, body: unknown): Promise<T> {

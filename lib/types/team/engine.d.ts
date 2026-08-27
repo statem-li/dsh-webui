@@ -82,6 +82,18 @@ export declare class TeamEngine {
     private enqueue;
     /** 执行整个 Run（按波次推进，波次内并发；每步落盘快照）。 */
     private execute;
+    /**
+     * 一键接续：在**同一个 run 上**重跑所有未完成的步骤（error / skipped / pending /
+     * 被中断卡住的 running），已完成步骤的产物与顺序完全保留。
+     *
+     * 为什么不新建 run：接续的价值就是「只补失败的那一段」——新建 run 会丢掉已完成
+     * 步骤的产物，还会让 HUD 里出现两条看起来一样的运行记录。同一个 run 上重跑还能
+     * 让上游注入（按 wave 取更早波次的 done 产出）天然成立。
+     *
+     * 幂等与并发：run 仍在跑（内存里有 active 句柄，或磁盘状态 running/queued）时拒绝；
+     * 全部步骤已完成时拒绝（无可接续内容）。
+     */
+    resume(runId: string, context?: RunContext): Run;
     /** 执行单步；返回 'done' | 'error' | 'skipped'。 */
     private runStep;
     /** 通道选择（docs §4.3）。 */

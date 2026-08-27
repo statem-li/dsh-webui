@@ -16,6 +16,7 @@
  *   GET  /runs/<id>                 → 运行快照
  *   GET  /runs/<id>/output?name=    → 单步完整产出（name=steps 文件名，或 final）
  *   POST /runs/<id>/cancel          → 取消运行
+ *   POST /runs/<id>/resume          → 一键接续（同一个 run 上重跑未完成步骤）
  *   POST /runs/<id>/remove          → 删除运行记录
  */
 
@@ -27,8 +28,8 @@ import { generateTeam } from './generate.js'
 import { capabilityCatalog } from './capabilities.js'
 import { registerTeamTools } from './tools.js'
 import { applyTeamChatMode } from './chat-mode.js'
-import { listProviders, runProgress } from './roster.js'
-import { TeamError, normalizeBinding, type ModelBinding } from './types.js'
+import { listProviders, isResumable, runProgress } from './roster.js'
+import { TeamError, normalizeBinding, type ModelBinding, type Run } from './types.js'
 
 /** 注入服务均为运行时动态注册，类型上放宽。 */
 type AnyContext = any
@@ -109,6 +110,7 @@ const SETTINGS_SCHEMA = z.object({
   autoPlan: z.boolean().default(false),
   outputChunkChars: z.number().step(1).min(500).default(8000),
   stopOnError: z.boolean().default(true),
+  autoFallback: z.boolean().default(true),
 })
 
 /** 把 settings 值同步进 globals.json（settings 为「用户可见配置面」，文件为运行时真源）。 */
@@ -129,6 +131,7 @@ function syncSettingsToGlobals(scope: any, store: TeamStore): void {
     if (typeof value[key] === 'number') patch[key] = value[key]
   }
   if (typeof value.stopOnError === 'boolean') patch.stopOnError = value.stopOnError
+  if (typeof value.autoFallback === 'boolean') patch.autoFallback = value.autoFallback
   if (typeof value.autoPlan === 'boolean') patch.autoPlan = value.autoPlan
   if (Object.keys(patch).length === 0) return
   try { store.patchGlobals(patch) } catch { /* ignore */ }
@@ -323,11 +326,19 @@ function handleActiveRuns(deps: RouteDeps, url: URL, res: ServerResponse): void 
   const lastFinished = recent.length > 0 ? store.readRun(recent[0].id) : null
   json(res, 200, {
     ok: true,
-    runs: shown.map(run => ({ ...run, progress: runProgress(run) })),
+    runs: shown.map(run => withRunFlags(run)),
     ...(lastFinished !== null
-      ? { lastFinished: { ...lastFinished, progress: runProgress(lastFinished) } }
+      ? { lastFinished: withRunFlags(lastFinished) }
       : {}),
   })
+}
+
+/**
+ * 给运行快照补上派生字段：progress 统计 + resumable（能否一键接续）。
+ * UI 不该自己推断状态机，服务端算一次所有入口共用。
+ */
+function withRunFlags(run: Run): Run & { progress: ReturnType<typeof runProgress>, resumable: boolean } {
+  return { ...run, progress: runProgress(run), resumable: isResumable(run) }
 }
 
 /** 校验调用方对本运行的会话归属；无归属的旧运行放行（跨会话禁止操作）。 */
@@ -350,6 +361,13 @@ async function handleRunDetail(
     json(res, 200, { ok: true, cancelled: hit })
     return
   }
+  // 一键接续：同一个 run 上重跑 error/skipped/pending 步骤（已完成产物保留）。
+  if (tail === 'resume' && req.method === 'POST') {
+    assertRunOwnership(store, runId, sessionId)
+    const run = engine.resume(runId)
+    json(res, 200, { ok: true, run: withRunFlags(run) })
+    return
+  }
   if (tail === 'remove' && req.method === 'POST') {
     assertRunOwnership(store, runId, sessionId)
     store.removeRun(runId)
@@ -367,7 +385,7 @@ async function handleRunDetail(
   }
   const run = store.readRun(runId)
   if (run === null) throw new TeamError(`找不到运行：${runId}`, 'run_not_found', 404)
-  json(res, 200, { ok: true, run, progress: runProgress(run) })
+  json(res, 200, { ok: true, run: withRunFlags(run), progress: runProgress(run) })
 }
 
 // ── 装配 ────────────────────────────────────────────────────────────────────

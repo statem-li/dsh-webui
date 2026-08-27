@@ -1,6 +1,7 @@
 /**
  * dsh-memory 模型工具：AI 在对话中可主动调用的记忆操作。
- * memory_search / memory_remember / memory_pin / memory_tag / memory_forget。
+ * memory_search / memory_remember / memory_pin / memory_tag / memory_forget
+ * / memory_revise / memory_retire / memory_consolidate。
  * 全部经 @deepseek-ai/dsh-tools 的 defineTool 注册，输出为模型可见文本。
  */
 import type { Context } from '@deepseek-ai/cordis';

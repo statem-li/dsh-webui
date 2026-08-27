@@ -67,10 +67,17 @@ export function createTicker(
     const days = last === null ? 1 : Math.max(1, Math.floor((Date.parse(today) - Date.parse(last)) / 86_400_000))
 
     // 1-3) 衰减 → 折叠 → 滚出 → 原子写回（走 store 写队列，避免与提取/裁决并发覆盖）。
+    // deprecated 条目（软废弃）跳过全部规则：不衰减、不晋升、不滚出（保留数据与状态）。
     let promoted: Array<import('../types.ts').MemoryEntry> = []
     let evicted: Array<import('../types.ts').MemoryEntry> = []
     await store.replaceEntries(entries => {
-      const decayed = entries.map(entry => ({
+      const live: Array<import('../types.ts').MemoryEntry> = []
+      const frozen: Array<import('../types.ts').MemoryEntry> = []
+      for (const entry of entries) {
+        if (entry.deprecated === true) frozen.push(entry)
+        else live.push(entry)
+      }
+      const decayed = live.map(entry => ({
         ...entry,
         importance: decayImportance(entry.importance, days, config.decayLambda),
       }))
@@ -82,11 +89,12 @@ export function createTicker(
         if (shouldEvict(entry, config.compileThreshold)) evicted.push(entry)
         else kept.push(entry)
       }
-      // 预算治理：条目数超上限时，按 importance+recency 淘汰低分条目（pinned 豁免）。
-      let survivor = [...promoted, ...kept]
+      // 预算治理：条目数超上限时，按 importance+recency 淘汰低分条目（pinned 豁免；
+      // deprecated 条目已冻结，不参与淘汰）。
+      let survivor = [...promoted, ...kept, ...frozen]
       if (survivor.length > config.entryLimit) {
         const overflow = survivor
-          .filter(entry => !entry.pinned)
+          .filter(entry => !entry.pinned && entry.deprecated !== true)
           .sort((a, b) => (a.importance - b.importance) || a.updatedAt.localeCompare(b.updatedAt))
           .slice(0, survivor.length - config.entryLimit)
         const overflowIds = new Set(overflow.map(entry => entry.id))

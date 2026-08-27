@@ -5,7 +5,34 @@
  * 自定义展开起止两个 date input。胶囊按钮组风格对齐 DSH 官方控件。
  */
 
+import { useEffect } from 'react'
 import { resolveRange, type DateRange, type RangePreset } from '../range'
+
+const STYLE_ID = 'dsh-usage-range-picker-styles'
+
+/* ── 移动端：预设按钮与日期输入触碰目标 ≥44px，避免小胶囊难以点按。
+    按钮是内联 style（padding 3px 10px，高约 24px），用 !important 压过；
+    本块注释内容未写出「星号紧跟正斜杠」两字符序列。 ── */
+const SHEET = `
+@media (max-width: 767.98px) {
+  .webui-range-btn { min-height: 44px; }
+  .webui-range-input { height: 44px; }
+}
+`
+
+/** 幂等注入移动端触碰样式；返回移除函数。 */
+function ensureStyle(): () => void {
+  if (typeof document === 'undefined') return () => {}
+  let tag = document.getElementById(STYLE_ID) as HTMLStyleElement | null
+  if (tag === null) {
+    tag = document.createElement('style')
+    tag.id = STYLE_ID
+    tag.dataset.plugin = '@dsh-external/dsh-webui'
+    tag.textContent = SHEET
+    document.head.appendChild(tag)
+  }
+  return () => { tag?.remove() }
+}
 
 const PRESETS: Array<{ key: RangePreset; label: string }> = [
   { key: 'today', label: '今日' },
@@ -53,10 +80,11 @@ export interface RangePickerProps {
 
 export function RangePicker({ preset, custom, onChangePreset, onChangeCustom }: RangePickerProps): JSX.Element {
   const range = resolveRange(preset, custom).range
+  useEffect(() => ensureStyle(), [])
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
       {PRESETS.map(p => (
-        <button key={p.key} type="button" style={btn(preset === p.key)} onClick={() => onChangePreset(p.key)}>
+        <button key={p.key} type="button" className="webui-range-btn" style={btn(preset === p.key)} onClick={() => onChangePreset(p.key)}>
           {p.label}
         </button>
       ))}
@@ -64,6 +92,7 @@ export function RangePicker({ preset, custom, onChangePreset, onChangeCustom }: 
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
           <input
             type="date"
+            className="webui-range-input"
             value={range.start}
             max={range.end}
             aria-label="开始日期"
@@ -73,6 +102,7 @@ export function RangePicker({ preset, custom, onChangePreset, onChangeCustom }: 
           <span style={{ color: 'var(--dsw-alias-label-tertiary)', fontSize: 12 }}>~</span>
           <input
             type="date"
+            className="webui-range-input"
             value={range.end}
             min={range.start}
             aria-label="结束日期"

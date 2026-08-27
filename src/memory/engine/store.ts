@@ -239,15 +239,19 @@ export class MemoryStore {
       const now = nowIso()
       let entry: MemoryEntry
       if (existing !== undefined) {
+        // 同内容条目已存在：若它处于软废弃状态，重新写入视为「复活」。
+        const revived = existing.deprecated === true
+          ? { ...existing, deprecated: undefined, deprecatedAt: undefined, deprecatedReason: undefined, supersededBy: undefined }
+          : existing
         entry = {
-          ...existing,
+          ...revived,
           content: next.content,
-          tags: mergeTags(existing.tags, next.tags),
-          pinned: next.pinned ?? existing.pinned,
-          importance: Math.max(existing.importance, next.importance ?? existing.importance),
-          layer: next.layer ?? existing.layer,
+          tags: mergeTags(revived.tags, next.tags),
+          pinned: next.pinned ?? revived.pinned,
+          importance: Math.max(revived.importance, next.importance ?? revived.importance),
+          layer: next.layer ?? revived.layer,
           updatedAt: now,
-          version: existing.version + 1,
+          version: revived.version + 1,
         }
         entries.splice(entries.indexOf(existing), 1, entry)
         return { created: false, entry }
@@ -334,6 +338,109 @@ export class MemoryStore {
       if (index === -1) return false
       entries.splice(index, 1)
       return true
+    })
+  }
+
+  /**
+   * 软废弃一条记忆（retire，无后继）：数据保留但默认不再检索/注入/编译。
+   * 已废弃条目重复 retire 是幂等 no-op。
+   */
+  async retireEntry(id: string, reason?: string): Promise<MemoryEntry | undefined> {
+    return this.mutateEntries(entries => {
+      const index = entries.findIndex(entry => entry.id === id)
+      if (index === -1) return undefined
+      const current = entries[index]
+      if (current.deprecated === true) return current
+      const entry: MemoryEntry = {
+        ...current,
+        deprecated: true,
+        deprecatedAt: nowIso(),
+        deprecatedReason: reason?.trim() !== '' ? reason?.trim() : undefined,
+        supersededBy: undefined,
+        updatedAt: nowIso(),
+        version: current.version + 1,
+      }
+      entries[index] = entry
+      return entry
+    })
+  }
+
+  /**
+   * 修订一条记忆（revise，软废弃 + 后继）：把旧内容软废弃，写入新内容作为后继。
+   * 参考 opencontext 的 oc_memory_revise 语义：{ deprecatedId, newId }。
+   *
+   * 后继条目复用 upsertEntry 的稳定 id 派生：新内容与库中已有条目撞 id 时
+   * 直接复用（不重复插入）；旧条目标记 supersededBy 指向后继。
+   * 内容未变化时视为 no-op（不产生废弃条目）。
+   */
+  async reviseEntry(input: {
+    id: string
+    content: string
+    reason?: string
+    tags?: string[]
+    importance?: number
+    kind?: MemoryKind
+  }): Promise<{ deprecatedId: string; newId: string; entry: MemoryEntry } | undefined> {
+    const content = input.content.trim()
+    if (content === '') throw new Error('content 不能为空')
+    const target = await this.getEntry(input.id)
+    if (target === undefined) return undefined
+    if (target.deprecated === true) return undefined
+
+    const nextId = entryIdOf(content, target.scope, target.projectHash)
+    // 内容没变（或只是空白差异）：无修订空间。
+    if (nextId === input.id) return undefined
+
+    // 先软废弃旧条目（supersededBy 指向后继 id；后继撞已有条目时指向已有条目）。
+    await this.mutateEntries(entries => {
+      const index = entries.findIndex(entry => entry.id === input.id)
+      if (index === -1) return
+      const current = entries[index]
+      entries[index] = {
+        ...current,
+        deprecated: true,
+        deprecatedAt: nowIso(),
+        deprecatedReason: input.reason?.trim() !== '' ? input.reason?.trim() : undefined,
+        supersededBy: nextId,
+        updatedAt: nowIso(),
+        version: current.version + 1,
+      }
+    })
+
+    // 后继条目：继承旧条目的归属/层/来源/置信度/置顶，内容与标签为新的。
+    const { entry } = await this.upsertEntry({
+      content,
+      scope: target.scope,
+      projectHash: target.projectHash,
+      tags: input.tags,
+      pinned: target.pinned,
+      importance: input.importance ?? target.importance,
+      layer: target.layer,
+      source: target.source,
+      kind: input.kind ?? target.kind,
+      confidence: target.confidence,
+    })
+    return { deprecatedId: input.id, newId: entry.id, entry }
+  }
+
+  /** 复活一条已废弃的记忆（undo retire / undo revise 的后继侧）。 */
+  async restoreEntry(id: string): Promise<MemoryEntry | undefined> {
+    return this.mutateEntries(entries => {
+      const index = entries.findIndex(entry => entry.id === id)
+      if (index === -1) return undefined
+      const current = entries[index]
+      if (current.deprecated !== true) return current
+      const entry: MemoryEntry = {
+        ...current,
+        deprecated: undefined,
+        deprecatedAt: undefined,
+        deprecatedReason: undefined,
+        supersededBy: undefined,
+        updatedAt: nowIso(),
+        version: current.version + 1,
+      }
+      entries[index] = entry
+      return entry
     })
   }
 
@@ -721,6 +828,17 @@ function migrateEntries(entries: unknown): MemoryEntry[] {
       embedding: Array.isArray(entry.embedding) ? entry.embedding : undefined,
       // disabled 是可选字段：仅 true 时保留（undefined=启用，落盘不冗余）。
       ...(entry.disabled === true ? { disabled: true } : {}),
+      // schema v3：软废弃字段（仅真实废弃时保留）。
+      ...(entry.deprecated === true
+        ? {
+            deprecated: true as const,
+            deprecatedAt: typeof entry.deprecatedAt === 'string' ? entry.deprecatedAt : nowIso(),
+            ...(typeof entry.deprecatedReason === 'string' && entry.deprecatedReason !== ''
+              ? { deprecatedReason: entry.deprecatedReason }
+              : {}),
+            ...(typeof entry.supersededBy === 'string' ? { supersededBy: entry.supersededBy } : {}),
+          }
+        : {}),
     })
   }
   return out

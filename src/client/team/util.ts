@@ -2,7 +2,7 @@
  * team — client 共享小工具（时间格式化、模型下拉选项、状态文案）。
  */
 
-import type { ModelBinding, ProviderView, RunStatus, StepStatus } from './types.ts'
+import type { ModelBinding, ProviderView, RunStatus, StepErrorKind, StepPhase, StepStatus } from './types.ts'
 
 /** 毫秒 → mm:ss（超过一小时给 h:mm:ss）。 */
 export function formatDuration(ms: number): string {
@@ -111,5 +111,66 @@ export function stepStatusText(status: StepStatus): string {
     case 'error': return '失败'
     case 'skipped': return '跳过'
     default: return status
+  }
+}
+
+/** 阶段文案（卡片正文一行，直接回答「现在在干什么」）。 */
+export function phaseText(phase: StepPhase | undefined): string {
+  switch (phase) {
+    case 'resolving': return '准备中'
+    case 'dispatch': return '已下发，等待响应'
+    case 'thinking': return '正在思考'
+    case 'writing': return '正在输出'
+    case 'tooling': return '正在调用工具'
+    case 'retrying': return '失败退避重试'
+    case 'saving': return '收尾落盘'
+    default: return '进行中'
+  }
+}
+
+/** 阶段图标（卡片状态点旁的小符号）。 */
+export function phaseIcon(phase: StepPhase | undefined): string {
+  switch (phase) {
+    case 'resolving': return '⚙'
+    case 'dispatch': return '📡'
+    case 'thinking': return '🧠'
+    case 'writing': return '✍'
+    case 'tooling': return '🔧'
+    case 'retrying': return '↻'
+    case 'saving': return '💾'
+    default: return '●'
+  }
+}
+
+/** 失败归类中文短标签（与 host failure.ts 保持一致）。 */
+export function errorKindText(kind: StepErrorKind | undefined): string {
+  switch (kind) {
+    case 'rate_limit': return '限流'
+    case 'timeout': return '超时'
+    case 'auth': return '鉴权失败'
+    case 'quota': return '额度不足'
+    case 'network': return '网络异常'
+    case 'server': return '上游错误'
+    case 'model_missing': return '模型不可用'
+    case 'content': return '请求被拒'
+    case 'cancelled': return '已取消'
+    case 'unknown': return '未知错误'
+    default: return ''
+  }
+}
+
+/** 失败归类的处置建议（详情卡展示）。 */
+export function errorKindAdvice(kind: StepErrorKind | undefined): string {
+  switch (kind) {
+    case 'rate_limit': return '供应商限流：已自动退避重试；持续失败可降低并行数或换备用模型后一键接续。'
+    case 'timeout': return '本步超时：可提高单步超时秒数，或把任务拆细后一键接续。'
+    case 'auth': return '鉴权失败：检查该供应商的 API key 是否有效，修好后一键接续。'
+    case 'quota': return '额度不足：充值或换一个供应商（角色/团队备用模型），再一键接续。'
+    case 'network': return '网络异常：检查网络与代理，恢复后一键接续。'
+    case 'server': return '上游服务异常：通常是临时故障，稍后一键接续即可。'
+    case 'model_missing': return '模型不可用：到团队设置重选模型（或配置备用模型），再一键接续。'
+    case 'content': return '请求被上游拒绝（内容策略/参数/上下文超长）：调整任务描述或缩小上下文预算后重跑。'
+    case 'cancelled': return '运行被取消：可一键接续从未完成的步骤继续。'
+    default: return ''
   }
 }

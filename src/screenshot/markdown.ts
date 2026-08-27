@@ -17,6 +17,7 @@ import { full as markdownItEmoji } from 'markdown-it-emoji'
 import markdownItTaskLists from 'markdown-it-task-lists'
 import { createHighlighter, type Highlighter } from 'shiki'
 import { baseOf, type ShotTheme } from './theme.js'
+import { sanitizeHtmlFragment } from '../shared/sanitize-html.js'
 
 /** 预加载的 shiki 语言（与 client 端 markdown/shiki.ts 对齐）。 */
 const SHIKI_LANGS: string[] = [
@@ -112,7 +113,7 @@ export async function renderMarkdown(md: string, theme: ShotTheme): Promise<stri
   const shikiTheme = baseOf(theme) === 'dark' ? 'github-dark' : 'github-light'
 
   const it = new MarkdownIt({
-    html: false,
+    html: true,
     linkify: true,
     highlight(code, lang) {
       // 图表围栏：交给页面内的 mermaid 引擎（textContent 即源码，引擎会就地
@@ -131,6 +132,12 @@ export async function renderMarkdown(md: string, theme: ShotTheme): Promise<stri
       return `<pre class="shiki plain"><code>${escapeHtml(code)}</code></pre>`
     },
   })
+
+  // 原始 HTML（html: true 后模型输出的 HTML 会原样进入页面）：
+  // 净化后再输出——剔除危险标签与事件属性、URL 协议白名单、style 值消毒，
+  // 与 client 端「模型 HTML 直接渲染」的策略保持一致（safe-trusted 折中）。
+  it.renderer.rules.html_block = (tokens, idx) => sanitizeHtmlFragment(tokens[idx]!.content)
+  it.renderer.rules.html_inline = (tokens, idx) => sanitizeHtmlFragment(tokens[idx]!.content)
 
   // 链接：白名单 + 新窗口 + noopener；非法 URL 置空 href（不可点击）。
   it.renderer.rules.link_open = (tokens, idx, options, _env, self) => {

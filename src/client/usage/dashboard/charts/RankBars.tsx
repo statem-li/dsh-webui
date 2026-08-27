@@ -1,14 +1,16 @@
 /**
  * RankBars — 横向条形排行（模型/供应商消耗榜共用）。
- * 名称列省略号 + 比例条 + 单位缩写值；色板与供应商环图一致。
+ * 名称列省略号 + 命中率小字 + 比例条 + 单位缩写值；色板与供应商环图一致。
  */
 
-import { formatUnits } from '../format'
+import { formatHitRate, formatUnits } from '../format'
 import { providerPalette } from '../theme'
 
 export interface RankRow {
   label: string
   value: number
+  /** 缓存命中率（0–100）；null 显示「—」。 */
+  hitRate?: number | null
 }
 
 export function RankBars({ rows, maxRows = 10, nameWidth = 200 }: {
@@ -26,6 +28,12 @@ export function RankBars({ rows, maxRows = 10, nameWidth = 200 }: {
         <div key={row.label} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0' }}>
           <span style={{ width: 10, height: 10, borderRadius: 3, background: palette[i % palette.length], flex: 'none' }} />
           <span style={{ width: nameWidth, flex: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--dsw-alias-label-primary)', fontSize: 12 }} title={row.label}>{row.label}</span>
+          <span
+            style={{ flex: 'none', fontSize: 11, lineHeight: '16px', fontFamily: 'ui-monospace, monospace', color: 'var(--dsw-alias-label-tertiary)', whiteSpace: 'nowrap' }}
+            title={row.hitRate !== null && row.hitRate !== undefined ? `缓存命中率 ${formatHitRate(row.hitRate)}` : '无命中率数据'}
+          >
+            {row.hitRate !== null && row.hitRate !== undefined ? formatHitRate(row.hitRate) : '—'}
+          </span>
           <div style={{ flex: 1, height: 8, borderRadius: 4, background: 'var(--dsw-alias-border-l2)', overflow: 'hidden', minWidth: 0 }}>
             <div style={{ height: '100%', width: `${Math.max(2, (row.value / (max || 1)) * 100)}%`, background: palette[i % palette.length], borderRadius: 4 }} />
           </div>

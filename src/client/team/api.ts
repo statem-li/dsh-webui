@@ -148,6 +148,12 @@ export function cancelRun(id: string, sessionId = ''): Promise<{ cancelled: bool
   return post(`/runs/${encodeURIComponent(id)}/cancel${query}`, {})
 }
 
+/** 一键接续：同一个 run 上重跑未完成步骤（已完成产物保留）。 */
+export function resumeRun(id: string, sessionId = ''): Promise<{ run: Run }> {
+  const query = sessionId !== '' ? `?sessionId=${encodeURIComponent(sessionId)}` : ''
+  return post(`/runs/${encodeURIComponent(id)}/resume${query}`, {})
+}
+
 export function removeRun(id: string, sessionId = ''): Promise<unknown> {
   const query = sessionId !== '' ? `?sessionId=${encodeURIComponent(sessionId)}` : ''
   return post(`/runs/${encodeURIComponent(id)}/remove${query}`, {})

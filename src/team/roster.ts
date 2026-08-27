@@ -17,6 +17,7 @@ import {
   type Chain,
   type ChainStep,
   type ModelBinding,
+  type ModelSource,
   type PlanWaveItem,
   type ResolvedModel,
   type Role,
@@ -150,6 +151,44 @@ export function resolveModelChecked(input: ResolveInput, providers: readonly Pro
     )
   }
   return resolved
+}
+
+/** 候选模型（主模型 + 备用链），engine 按序尝试。 */
+export interface ModelCandidate {
+  binding: ModelBinding
+  source: ModelSource
+  /** true = 备用模型（主模型失败后的降级目标）。 */
+  fallback: boolean
+}
+
+/**
+ * 解析本步可用的模型候选序列：`[主模型, ...备用模型]`。
+ *
+ * 备用链来源：角色 `fallbackModels` 优先，缺省继承团队 `fallbackModels`。
+ * 已在候选里的（与主模型或前一个备用同值）与「当前供应商配置里不存在」的项会被剔除
+ * —— 换到一个同样不存在的模型没有意义，只会把同一个错误重复一遍。
+ * 主模型解析失败（四级全空）时直接抛错，与 resolveModelChecked 语义一致。
+ */
+export function resolveCandidates(
+  input: ResolveInput,
+  providers: readonly ProviderView[],
+  options: { autoFallback?: boolean } = {},
+): ModelCandidate[] {
+  const primary = resolveModelChecked(input, providers)
+  const out: ModelCandidate[] = [{ ...primary, fallback: false }]
+  if (options.autoFallback === false) return out
+  const chain = input.role.fallbackModels ?? input.team.fallbackModels ?? []
+  const seen = new Set<string>([`${primary.binding.provider}/${primary.binding.model}`])
+  for (const raw of chain) {
+    if (raw.provider === '' || raw.model === '') continue
+    const key = `${raw.provider}/${raw.model}`
+    if (seen.has(key)) continue
+    // providers 为空表示枚举读不到（配置异常），此时不做存在性过滤，交给运行期报错。
+    if (providers.length > 0 && !bindingExists(providers, raw)) continue
+    seen.add(key)
+    out.push({ binding: raw, source: input.role.fallbackModels !== undefined ? 'role' : 'team', fallback: true })
+  }
+  return out
 }
 
 // ── 链条展开 ────────────────────────────────────────────────────────────────
@@ -289,6 +328,35 @@ export function waveCountOf(planned: readonly PlannedStep[]): number {
   return new Set(planned.map(step => step.wave)).size
 }
 
+/**
+ * 从既有运行快照重建「接续计划」：只挑未完成的步骤（error / skipped / pending /
+ * 卡在 running 的），保留它们原来的 index 与 wave —— 这样已完成步骤的产物不动，
+ * 上游注入（按 wave 取更早波次）照旧成立，UI 上的卡片位置也不会跳。
+ *
+ * 角色被删掉的步骤无法重跑，返回值的 `missing` 里带回角色名供上层提示。
+ */
+export function planResume(team: Team, run: Run): { planned: PlannedStep[], missing: string[] } {
+  const byId = new Map(team.roles.map(role => [role.id, role]))
+  const planned: PlannedStep[] = []
+  const missing: string[] = []
+  for (const step of run.steps) {
+    if (step.status === 'done') continue
+    const role = byId.get(step.roleId)
+    if (role === undefined) {
+      missing.push(step.roleName !== '' ? step.roleName : step.roleId)
+      continue
+    }
+    planned.push({
+      index: step.index,
+      wave: typeof step.wave === 'number' ? step.wave : step.index,
+      role,
+      synthesize: step.synthesize,
+    })
+  }
+  planned.sort((a, b) => (a.wave - b.wave) || (a.index - b.index))
+  return { planned, missing }
+}
+
 /** 计划的可读路径文案（并行波次用 `A‖B` 表示）。 */
 export function describePlan(planned: readonly PlannedStep[]): string {
   const groups = new Map<number, string[]>()
@@ -313,8 +381,7 @@ export function assertTeamRunnable(team: Team, chain: Chain | null): void {
   }
 }
 
-/** 从运行快照统计 TODO 进度（HUD 与清单共用）。 */
-export function runProgress(run: Run): {
+/** 从运行快照统计 TODO 进度（HUD 与清单共用）。 */export function runProgress(run: Run): {
   total: number, done: number, running: number, pending: number, failed: number
 } {
   let done = 0
@@ -328,4 +395,13 @@ export function runProgress(run: Run): {
     else failed += 1
   }
   return { total: run.steps.length, done, running, pending, failed }
+}
+
+/**
+ * 本次运行是否可「一键接续」：已结束（非 running/queued）且还有未完成步骤。
+ * 全部步骤都 done 的运行没有接续意义（要重跑请新建运行）。
+ */
+export function isResumable(run: Run): boolean {
+  if (run.status === 'running' || run.status === 'queued') return false
+  return run.steps.some(step => step.status !== 'done')
 }

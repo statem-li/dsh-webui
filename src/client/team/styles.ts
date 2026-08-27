@@ -323,13 +323,12 @@ body[data-ds-dark-theme] .team-ask{background:var(--dsw-static-neutral-bluish-85
    标签做足辨识度：胶囊底 + 600 字重 + 稍大字号。文字用 label-primary（浅色=近黑、
    深色=近白，官方双主题生效），不能用 label-secondary/#bbb —— 浅色主题下会褪成
    近乎白字（截图实测「第 1 波」灰到看不清）。运行中波次高亮为品牌蓝。 */
+/* 面板内的旧式波次分隔（Panel 步骤列表仍在用；HUD 已改行式时间轴 team-wave-row）。 */
 .team-wave-sep{display:flex;align-items:center;gap:8px;padding:2px 2px 0;font-size:11px;font-weight:600;color:var(--dsw-alias-label-primary,#1f2328);animation:team-fade-in .26s ease}
 .team-wave-sep-line{flex:1;min-width:28px;height:1px;background:linear-gradient(90deg,var(--dsw-alias-border-l2,rgba(255,255,255,.16)),transparent);transform-origin:left center;animation:team-wave-grow .42s cubic-bezier(.2,.8,.2,1)}
 .team-wave-sep[data-live='true']{color:var(--dsw-alias-state-business-primary,#4176e6)}
 .team-wave-sep[data-live='true'] .team-wave-sep-line{background:linear-gradient(90deg,color-mix(in srgb,var(--dsw-alias-state-business-primary,#4176e6) 55%,transparent),transparent)}
-.team-wave-tag{flex:none;display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:10px;background:color-mix(in srgb,var(--dsw-alias-label-dimmed,#777) 10%,transparent);border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.14))}
 .team-wave-sep[data-live='true'] .team-wave-tag{background:color-mix(in srgb,var(--dsw-alias-state-business-primary,#4176e6) 14%,transparent);border-color:color-mix(in srgb,var(--dsw-alias-state-business-primary,#4176e6) 45%,transparent)}
-.team-wave-par{flex:none;padding:0 6px;border-radius:8px;border:1px solid color-mix(in srgb,var(--dsw-alias-state-business-primary,#4176e6) 40%,transparent);color:var(--dsw-alias-state-business-primary,#4176e6)}
 @keyframes team-wave-grow{from{transform:scaleX(0);opacity:0}to{transform:scaleX(1);opacity:1}}
 /* 并行进行中的角色卡：外圈脉冲光提示「这几张卡在同时跑」 */
 .team-card[data-parallel='true'][data-status='running']{animation:team-par-pulse 2.2s ease-in-out infinite}
@@ -402,7 +401,9 @@ body[data-ds-dark-theme] .team-guide-step{background:var(--dsw-alias-bg-module-p
    遮罩 + 居中卡。类名 team-step-* 已加入 Panel 的 Esc / pointerdown 让行列表，
    点卡片不会误关抽屉；Esc/点遮罩关闭。 */
 .team-step-mask{position:fixed;inset:0;z-index:1001;display:flex;align-items:center;justify-content:center;background:var(--dsw-alias-bg-mask-1,rgba(0,0,0,.45));animation:dsh-modal-mask-in 200ms ease}
-.team-step-card{position:relative;display:flex;flex-direction:column;box-sizing:border-box;width:min(1060px,94vw);max-height:86vh;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.14));border-radius:14px;background:var(--dsw-static-neutral-bluish-00,#fff);backdrop-filter:none;-webkit-backdrop-filter:none;box-shadow:var(--dsw-shadow-lv3,0 8px 40px rgba(0,0,0,.5));overflow:hidden;animation:team-fade-in .2s ease;padding:14px 16px;gap:10px}
+.team-step-card{position:relative;display:flex;flex-direction:column;box-sizing:border-box;width:min(1440px,96vw);max-height:90vh;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.14));border-radius:14px;background:var(--dsw-static-neutral-bluish-00,#fff);backdrop-filter:none;-webkit-backdrop-filter:none;box-shadow:var(--dsw-shadow-lv3,0 8px 40px rgba(0,0,0,.5));overflow:hidden;animation:team-fade-in .2s ease;padding:14px 16px;gap:10px}
+/* 最终交付物是长文阅读场景：单栏时把卡片再放宽一档，正文行宽由内部 markdown 容器控制 */
+.team-step-card[data-view='final']{width:min(1600px,97vw);max-height:92vh}
 body[data-ds-dark-theme] .team-step-card{background:var(--dsw-static-neutral-bluish-950,rgb(21,21,23))}
 .team-step-head{display:flex;align-items:center;gap:8px;flex:none}
 .team-step-title{min-width:0;font-size:14px;font-weight:600;color:var(--dsw-alias-label-primary,#eee)}
@@ -434,8 +435,22 @@ body[data-ds-dark-theme] .team-step-todos{background:var(--dsw-alias-bg-module-p
 .team-step-todos-list li[data-status='in_progress'] .team-step-todos-tag{color:var(--dsw-alias-state-business-primary,#4176e6)}
 .team-step-todos-list li[data-status='completed'] .team-step-todos-tag{color:var(--dsw-alias-state-success-primary,#3fb96b)}
 .team-step-err{flex:none;font-size:12px;line-height:18px;color:var(--dsw-alias-state-error-primary,#e0434b);word-break:break-word}
+/* 详情卡双栏：左过程（定宽可滚）/ 右输出（弹性）；窄屏堆叠。
+   data-cols='one'（最终交付物：没有过程栏）必须退化为单栏 —— grid 轨道即使没有
+   子元素也照样占宽，留着两栏会把正文挤在左侧 320px 里、右边空一大片。 */
+.team-step-cols{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,340px) minmax(0,1fr);gap:12px}
+.team-step-cols[data-cols='one']{grid-template-columns:minmax(0,1fr)}
+@media (max-width:1000px){.team-step-cols{grid-template-columns:minmax(0,1fr);grid-auto-rows:minmax(0,auto)}}
+.team-step-side{min-height:0;display:flex;flex-direction:column;gap:8px;overflow-y:auto;padding-right:2px}
+/* 尝试轨迹列表 */
+.team-attempts{margin:0;padding:6px 8px;list-style:none;display:flex;flex-direction:column;gap:3px}
+.team-attempts li{display:flex;align-items:center;gap:6px;font-size:11.5px;line-height:17px;color:var(--dsw-alias-label-secondary,#bbb)}
+.team-attempt-no{flex:none;font-family:ui-monospace,SFMono-Regular,monospace;color:var(--dsw-alias-label-dimmed,#777)}
+.team-attempt-model{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,SFMono-Regular,monospace}
+.team-attempt-ok{flex:none;color:var(--dsw-alias-state-success-primary,#3fb96b)}
+.team-attempt-dur{flex:none;margin-left:auto;font-family:ui-monospace,SFMono-Regular,monospace;color:var(--dsw-alias-label-dimmed,#777)}
 .team-step-output-wrap{flex:1;min-height:0;display:flex;flex-direction:column;gap:6px}
-.team-step-output-label{flex:none;font-size:12px;font-weight:600;color:var(--dsw-alias-label-secondary,#bbb)}
+.team-step-output-label{flex:none;display:flex;align-items:center;gap:8px;font-size:12px;font-weight:600;color:var(--dsw-alias-label-secondary,#bbb)}
 .team-step-pre{flex:none;margin:0;padding:10px 12px;border-radius:10px;background:var(--dsw-alias-bg-module-platform,rgba(0,0,0,.03));font-size:12.5px;line-height:19px;font-family:inherit;white-space:pre-wrap;word-break:break-word;color:var(--dsw-alias-label-primary,#eee);max-height:180px;overflow:auto}
 body[data-ds-dark-theme] .team-step-pre{background:var(--dsw-alias-bg-module-platform,rgba(255,255,255,.04))}
 .team-step-pre-full{flex:1;min-height:0;max-height:none;overflow:auto}
@@ -450,12 +465,27 @@ body[data-ds-dark-theme] .team-step-md{background:var(--dsw-alias-bg-module-plat
 .team-step-md .dsh-better-markdown__markdown h1:first-child,
 .team-step-md .dsh-better-markdown__markdown h2:first-child,
 .team-step-md .dsh-better-markdown__markdown h3:first-child{margin-top:0}
+/* 最终交付物（单栏长文）：卡片放宽后正文行长会过长伤阅读 —— 给一个居中的阅读宽度，
+   表格/代码块仍可撑满（它们自带横向滚动，不受这条约束影响）。 */
+.team-step-card[data-view='final'] .team-step-md{padding:14px 18px}
+.team-step-card[data-view='final'] .team-step-md .dsh-better-markdown__markdown{max-width:1080px;margin-inline:auto;font-size:13.5px;line-height:22px}
+.team-step-card[data-view='final'] .team-step-pre-full{font-size:13px;line-height:20px}
 .team-step-viewtoggle{margin-left:auto;display:inline-flex;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.16));border-radius:8px;overflow:hidden}
 .team-step-viewtoggle button{border:none;background:none;font-size:11px;line-height:18px;padding:2px 10px;font-family:inherit;color:var(--dsw-alias-label-tertiary,#888);cursor:pointer}
 .team-step-viewtoggle button[data-on='true']{background:color-mix(in srgb,var(--dsw-alias-state-business-primary,#4176e6) 14%,transparent);color:var(--dsw-alias-state-business-primary,#4176e6)}
 .team-step-streaming{display:flex;align-items:center;gap:7px;font-size:11.5px;color:var(--dsw-alias-state-business-primary,#4176e6)}
 .team-step-note{font-size:11.5px;color:var(--dsw-alias-label-tertiary,#888)}
 .team-step-empty{flex:1;display:flex;align-items:center;justify-content:center;min-height:90px;border:1px dashed var(--dsw-alias-border-l2,rgba(255,255,255,.16));border-radius:10px;font-size:12.5px;color:var(--dsw-alias-label-tertiary,#888)}
+
+/* ══ 备用模型链编辑器 ══ */
+.team-fbchain{display:flex;flex-direction:column;gap:6px;padding:10px 11px;border:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.08));border-radius:10px;background:var(--dsw-alias-bg-module-platform,rgba(0,0,0,.03))}
+body[data-ds-dark-theme] .team-fbchain{background:var(--dsw-alias-bg-module-platform,rgba(255,255,255,.04))}
+.team-fbchain-head{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;font-size:12px;font-weight:600;color:var(--dsw-alias-label-secondary,#bbb)}
+.team-fbchain-hint{font-size:11px;font-weight:400;line-height:16px;color:var(--dsw-alias-label-tertiary,#888)}
+.team-fbchain-row{display:flex;align-items:center;gap:7px;animation:team-fb-in .26s cubic-bezier(.2,.8,.2,1)}
+.team-fbchain-no{flex:none;display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:9px;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.14));font-size:10.5px;color:var(--dsw-alias-label-tertiary,#888)}
+.team-fbchain-add{opacity:.9}
+@keyframes team-fb-in{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:translateY(0)}}
 
 /* ══ 一句话生成团队弹窗 ══ */
 .team-gen-mask{position:fixed;inset:0;z-index:1005;background:var(--dsw-alias-bg-mask-1,rgba(0,0,0,.5));animation:dsh-modal-mask-in 200ms ease}
@@ -576,6 +606,9 @@ body[data-ds-dark-theme] .team-surface{background:var(--dsw-static-neutral-bluis
 .team-hud-title{flex:none;display:flex;align-items:center;gap:6px;font-size:14px;font-weight:600;color:var(--dsw-alias-label-primary,#eee)}
 .team-hud-cross{font-size:11px;font-weight:400;color:var(--dsw-alias-label-tertiary,#888);animation:team-fade-in .3s ease}
 .team-hud-chain{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--dsw-alias-label-secondary,#bbb)}
+/* 折叠条实时摘要：谁在干什么（比链名更有用） */
+.team-hud-live{display:flex;align-items:center;gap:6px;min-width:0;font-size:12px;color:var(--dsw-alias-state-business-primary,#4176e6)}
+.team-hud-live-text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .team-hud-pips{flex:none;display:flex;align-items:center;gap:4px}
 .team-hud-pip{width:7px;height:7px;border-radius:50%;background:var(--dsw-alias-border-l2,rgba(255,255,255,.2))}
 .team-hud-pip[data-status='done']{background:var(--dsw-alias-state-success-primary,#3fb96b)}
@@ -583,6 +616,10 @@ body[data-ds-dark-theme] .team-surface{background:var(--dsw-static-neutral-bluis
 .team-hud-pip[data-status='error']{background:var(--dsw-alias-state-error-primary,#e0434b)}
 .team-hud-count{flex:none;font-size:12px;color:var(--dsw-alias-label-tertiary,#888);font-family:ui-monospace,SFMono-Regular,monospace}
 .team-hud-time{flex:none;margin-left:auto;font-size:12px;color:var(--dsw-alias-label-tertiary,#888);font-family:ui-monospace,SFMono-Regular,monospace}
+/* 高度档位按钮（紧凑 1/3 ↔ 放大 2/3） */
+.team-hud-sizebtn{flex:none;width:24px;height:24px;display:inline-flex;align-items:center;justify-content:center;border-radius:12px;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.14));background:none;font-size:12px;color:var(--dsw-alias-label-tertiary,#888);cursor:pointer;transition:color .18s ease,border-color .18s ease,transform .16s cubic-bezier(.2,.8,.2,1)}
+.team-hud-sizebtn:hover{color:var(--dsw-alias-label-primary,#eee);border-color:var(--dsw-alias-border-l3,rgba(255,255,255,.28));transform:scale(1.08)}
+.team-hud-sizebtn[data-on='true']{border-color:color-mix(in srgb,var(--dsw-alias-state-business-primary,#4176e6) 55%,transparent);color:var(--dsw-alias-state-business-primary,#4176e6)}
 
 /* 展开区：透明容器，弹性占满停靠高度（面板高度由 JS 按对话区下三分之一给定），
    内部纵向滚动 —— 不再用固定 max-height，否则和停靠高度打架。 */
@@ -595,6 +632,31 @@ body[data-ds-dark-theme] .team-surface{background:var(--dsw-static-neutral-bluis
 .team-hud-meta{display:flex;flex-direction:column;gap:9px;padding:12px 14px;border-radius:12px}
 .team-hud-task{font-size:13px;line-height:20px;color:var(--dsw-alias-label-secondary,#bbb);word-break:break-word;display:flex;align-items:flex-start;gap:10px}
 .team-hud-task-text{flex:1;min-width:0;max-height:60px;overflow:hidden}
+/* 任务卡头行：标签 + 折叠/展开任务全文 */
+.team-hud-tasklabel{flex:none;display:inline-flex;align-items:center;height:18px;padding:0 7px;border-radius:9px;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.14));font-size:10.5px;line-height:16px;color:var(--dsw-alias-label-tertiary,#888)}
+.team-hud-task[data-open='true'] .team-hud-task-text{max-height:none}
+.team-hud-taskmore{flex:none;height:22px;padding:0 8px;border-radius:11px;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.14));background:none;font-size:11px;color:var(--dsw-alias-label-tertiary,#888);cursor:pointer;transition:color .18s ease,border-color .18s ease}
+.team-hud-taskmore:hover{color:var(--dsw-alias-label-primary,#eee);border-color:var(--dsw-alias-border-l3,rgba(255,255,255,.26))}
+/* 失败横幅：归类 + 建议 + 一键接续（HUD 与详情卡共用） */
+.team-fail{display:flex;flex-direction:column;gap:7px;padding:10px 12px;border-radius:12px;border:1px solid color-mix(in srgb,var(--dsw-alias-state-error-primary,#e0434b) 45%,transparent);background:color-mix(in srgb,var(--dsw-alias-state-error-primary,#e0434b) 8%,transparent);animation:team-fade-in .24s ease}
+.team-fail[data-kind='rate_limit'],.team-fail[data-kind='timeout'],.team-fail[data-kind='server'],.team-fail[data-kind='network'],.team-fail[data-kind='cancelled']{border-color:color-mix(in srgb,var(--dsw-alias-state-warn-primary,#e8a33d) 45%,transparent);background:color-mix(in srgb,var(--dsw-alias-state-warn-primary,#e8a33d) 8%,transparent)}
+.team-fail-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12.5px;font-weight:600;color:var(--dsw-alias-state-error-primary,#e0434b)}
+.team-fail[data-kind='rate_limit'] .team-fail-head,.team-fail[data-kind='timeout'] .team-fail-head,
+.team-fail[data-kind='server'] .team-fail-head,.team-fail[data-kind='network'] .team-fail-head,
+.team-fail[data-kind='cancelled'] .team-fail-head{color:var(--dsw-alias-state-warn-primary,#e8a33d)}
+.team-fail-msg{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#bbb);word-break:break-word;max-height:54px;overflow:auto}
+.team-fail-advice{font-size:11.5px;line-height:17px;color:var(--dsw-alias-label-tertiary,#888)}
+.team-fail-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+/* 一键接续按钮：品牌主色 + hover 掠光（用户偏好带动效） */
+.team-resume-btn{position:relative;overflow:hidden;flex:none;display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 14px;border-radius:14px;border:1px solid color-mix(in srgb,var(--dsw-alias-state-business-primary,#4176e6) 60%,transparent);background:color-mix(in srgb,var(--dsw-alias-state-business-primary,#4176e6) 16%,transparent);font-size:12px;font-weight:600;color:var(--dsw-alias-state-business-primary,#4176e6);cursor:pointer;transition:transform .16s cubic-bezier(.2,.8,.2,1),box-shadow .2s ease,background-color .2s ease}
+.team-resume-btn:hover{transform:translateY(-1px);box-shadow:0 4px 16px -4px color-mix(in srgb,var(--dsw-alias-state-business-primary,#4176e6) 55%,transparent)}
+.team-resume-btn:active{transform:translateY(0)}
+.team-resume-btn[disabled]{opacity:.55;cursor:default;transform:none;box-shadow:none}
+.team-resume-btn::after{content:'';position:absolute;inset:0;background:linear-gradient(105deg,transparent 30%,color-mix(in srgb,var(--dsw-alias-state-business-primary,#4176e6) 32%,transparent) 50%,transparent 70%);transform:translateX(-120%)}
+.team-resume-btn:hover::after{animation:team-sheen .72s ease}
+@keyframes team-sheen{from{transform:translateX(-120%)}to{transform:translateX(120%)}}
+.team-resume-spin{display:inline-block;width:11px;height:11px;border-radius:50%;border:1.6px solid currentColor;border-top-color:transparent;animation:team-spin .8s linear infinite}
+@keyframes team-spin{to{transform:rotate(360deg)}}
 
 /* 角色运行卡：包围卡片（team-surface 面板）承载整组角色，
    成员卡在内部网格排列 —— 分组容器 + 成员卡两层结构，层级清晰不散。 */
@@ -602,36 +664,75 @@ body[data-ds-dark-theme] .team-surface{background:var(--dsw-static-neutral-bluis
 /* 包围卡内的成员卡：浅填充底替代白底+投影，与外层白卡形成「面板→成员」层级 */
 .team-cards-wrap .team-card{background:var(--dsw-alias-bg-module-platform,rgba(0,0,0,.03));box-shadow:none}
 body[data-ds-dark-theme] .team-cards-wrap .team-card{background:var(--dsw-alias-bg-module-platform,rgba(255,255,255,.04))}
-/* 波次列式流：每波一列（「第 N 波」标签+划线在上、卡片在下），列宽随卡自适应；
-   列与列在同一个 flex 流里并排换行 —— 前一步列占位不大时后一步列自动并到同一排，
-   划线分割恢复但不再全幅断行（全幅断行 + 小卡 → 右侧大空洞）。 */
-.team-cards{display:flex;flex-wrap:wrap;gap:10px;justify-content:center;align-items:flex-start}
-.team-wave-col{flex:0 1 auto;min-width:0;max-width:100%;display:flex;flex-direction:column;gap:6px}
-.team-wave-cards{display:flex;flex-wrap:wrap;gap:8px;justify-content:center}
-.team-wave-cards>.team-card{flex:1 1 280px;max-width:400px}
-.team-card{display:flex;flex-direction:column;gap:6px;padding:11px 12px;box-sizing:border-box;border-radius:12px;cursor:pointer;transition:border-color .2s ease,box-shadow .2s ease,transform .12s ease}
+/* 波次时间轴：每个波次一行（左侧固定宽度的轴标 + 右侧等宽卡片网格）。
+   旧版是「每波一列、列宽随卡自适应、多列 flex 换行」——波次一多就横向拧成
+   麻花、卡片宽度各不相同、看不出先后顺序。改成上下堆叠的行式时间轴后：
+   顺序 = 从上到下，并行 = 同一行里的多张卡，卡片宽度由 grid 统一。 */
+.team-cards{display:flex;flex-direction:column;gap:0}
+.team-wave-row{display:grid;grid-template-columns:76px minmax(0,1fr);gap:10px;padding:8px 0;position:relative}
+.team-wave-row+.team-wave-row{border-top:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.08))}
+/* 轴标列：波次序号 + 并行标记 + 竖向连线（连线只在非末行画，形成时间轴） */
+.team-wave-axis{display:flex;flex-direction:column;align-items:flex-start;gap:5px;padding-top:2px;position:relative}
+.team-wave-tag{flex:none;display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:10px;background:color-mix(in srgb,var(--dsw-alias-label-dimmed,#777) 10%,transparent);border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.14));font-size:11px;font-weight:600;color:var(--dsw-alias-label-primary,#1f2328);white-space:nowrap}
+.team-wave-row[data-live='true'] .team-wave-tag{background:color-mix(in srgb,var(--dsw-alias-state-business-primary,#4176e6) 14%,transparent);border-color:color-mix(in srgb,var(--dsw-alias-state-business-primary,#4176e6) 45%,transparent);color:var(--dsw-alias-state-business-primary,#4176e6)}
+.team-wave-row[data-state='done'] .team-wave-tag{border-color:color-mix(in srgb,var(--dsw-alias-state-success-primary,#3fb96b) 40%,transparent)}
+.team-wave-par{flex:none;padding:0 6px;border-radius:8px;border:1px solid color-mix(in srgb,var(--dsw-alias-state-business-primary,#4176e6) 40%,transparent);font-size:10.5px;line-height:16px;color:var(--dsw-alias-state-business-primary,#4176e6);white-space:nowrap}
+.team-wave-count{font-size:10.5px;line-height:15px;color:var(--dsw-alias-label-tertiary,#888);font-family:ui-monospace,SFMono-Regular,monospace}
+/* 卡片网格：等宽自适应列，卡片高度由内容拉齐（stretch），行内不再参差 */
+.team-wave-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(228px,1fr));gap:8px;align-items:stretch}
+.team-card{display:flex;flex-direction:column;gap:5px;padding:10px 11px;box-sizing:border-box;border-radius:12px;cursor:pointer;transition:border-color .2s ease,box-shadow .2s ease,transform .12s cubic-bezier(.2,.8,.2,1)}
 .team-card:hover{border-color:var(--dsw-alias-border-l3,rgba(255,255,255,.22));transform:translateY(-1px)}
 .team-card[data-status='running']{border-color:color-mix(in srgb,var(--dsw-alias-state-business-primary,#4176e6) 60%,transparent);box-shadow:0 0 0 1px color-mix(in srgb,var(--dsw-alias-state-business-primary,#4176e6) 22%,transparent),var(--dsw-shadow-lv2,0 6px 24px rgba(0,0,0,.35))}
 .team-card[data-status='done']{border-color:color-mix(in srgb,var(--dsw-alias-state-success-primary,#3fb96b) 45%,transparent)}
 .team-card[data-status='error']{border-color:color-mix(in srgb,var(--dsw-alias-state-error-primary,#e0434b) 55%,transparent)}
 .team-card[data-status='skipped']{opacity:.6}
 .team-card-head{display:flex;align-items:center;gap:6px}
+.team-card .team-dot{margin-top:0}
 .team-card-icon{flex:none;display:inline-flex;width:16px;justify-content:center;font-size:12px;line-height:16px}
-.team-card-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px;font-weight:500;color:var(--dsw-alias-label-primary,#eee)}
-.team-card-idx{flex:none;font-size:11px;color:var(--dsw-alias-label-dimmed,#777);font-family:ui-monospace,SFMono-Regular,monospace}
+.team-card-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13.5px;font-weight:600;color:var(--dsw-alias-label-primary,#eee)}
+.team-card-idx{flex:none;margin-left:auto;font-size:11px;color:var(--dsw-alias-label-dimmed,#777);font-family:ui-monospace,SFMono-Regular,monospace}
 .team-card-tag{font-size:12px;line-height:17px;color:var(--dsw-alias-label-tertiary,#888);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .team-card-model{display:flex;align-items:center;gap:5px;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary,#888);min-width:0}
 .team-card-model-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,SFMono-Regular,monospace}
+.team-card-chan{flex:none;padding:0 5px;border-radius:4px;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.14));font-size:10.5px;line-height:15px}
 .team-card-src{flex:none;padding:0 5px;border:1px solid var(--dsw-alias-border-l3,rgba(255,255,255,.16));border-radius:4px;font-size:11px;line-height:15px}
 .team-card-src[data-src='team']{border-color:color-mix(in srgb,var(--dsw-alias-state-business-primary,#4176e6) 55%,transparent);color:var(--dsw-alias-state-business-primary,#4176e6)}
 .team-card-src[data-src='role']{border-color:color-mix(in srgb,#3fb96b 55%,transparent);color:#3fb96b}
 .team-card-src[data-src='run']{border-color:color-mix(in srgb,var(--dsw-alias-state-warn-primary,#e8a33d) 55%,transparent);color:var(--dsw-alias-state-warn-primary,#e8a33d)}
 .team-card-inherit{font-style:italic;opacity:.75}
-/* 角色卡上的任务清单迷你进度条 */
+/* 备用模型 / 接续徽标 */
+.team-fb-badge{flex:none;display:inline-flex;align-items:center;height:17px;padding:0 6px;border-radius:9px;border:1px solid color-mix(in srgb,var(--dsw-alias-state-warn-primary,#e8a33d) 50%,transparent);background:color-mix(in srgb,var(--dsw-alias-state-warn-primary,#e8a33d) 12%,transparent);font-size:10px;line-height:15px;color:var(--dsw-alias-state-warn-primary,#e8a33d);animation:team-fade-in .2s ease}
+.team-fb-badge[data-kind='resume']{border-color:color-mix(in srgb,var(--dsw-alias-state-business-primary,#4176e6) 50%,transparent);background:color-mix(in srgb,var(--dsw-alias-state-business-primary,#4176e6) 12%,transparent);color:var(--dsw-alias-state-business-primary,#4176e6)}
+/* 槽位③ 阶段行：running=蓝、error=红、done/pending=次要色 */
+.team-card-phase{display:flex;align-items:center;gap:6px;min-width:0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,#888)}
+.team-card-phase[data-phase='thinking'],.team-card-phase[data-phase='writing'],.team-card-phase[data-phase='tooling'],
+.team-card-phase[data-phase='dispatch'],.team-card-phase[data-phase='resolving'],.team-card-phase[data-phase='saving']{color:var(--dsw-alias-state-business-primary,#4176e6)}
+.team-card-phase[data-phase='retrying']{color:var(--dsw-alias-state-warn-primary,#e8a33d)}
+.team-card-phase[data-phase='error']{color:var(--dsw-alias-state-error-primary,#e0434b)}
+.team-card-phase[data-phase='done']{color:var(--dsw-alias-state-success-primary,#3fb96b)}
+.team-card-phase-name{flex:none;font-weight:500;white-space:nowrap}
+.team-card-phase-note{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-tertiary,#888)}
+.team-card-phase-since{flex:none;margin-left:auto;font-family:ui-monospace,SFMono-Regular,monospace;color:var(--dsw-alias-label-dimmed,#777)}
+/* 失败归类徽标 */
+.team-card-kind{flex:none;display:inline-flex;align-items:center;height:18px;padding:0 7px;border-radius:9px;border:1px solid color-mix(in srgb,var(--dsw-alias-state-error-primary,#e0434b) 50%,transparent);background:color-mix(in srgb,var(--dsw-alias-state-error-primary,#e0434b) 12%,transparent);font-size:10.5px;line-height:16px;color:var(--dsw-alias-state-error-primary,#e0434b)}
+.team-card-kind[data-kind='rate_limit'],.team-card-kind[data-kind='timeout'],.team-card-kind[data-kind='server'],.team-card-kind[data-kind='network']{border-color:color-mix(in srgb,var(--dsw-alias-state-warn-primary,#e8a33d) 50%,transparent);background:color-mix(in srgb,var(--dsw-alias-state-warn-primary,#e8a33d) 12%,transparent);color:var(--dsw-alias-state-warn-primary,#e8a33d)}
+/* 槽位④ 进度条：有 todo 用真实比例；无 todo 且运行中用不确定态流光 */
+.team-card-bar{position:relative;height:4px;border-radius:2px;background:var(--dsw-alias-border-l1,rgba(255,255,255,.1));overflow:hidden;flex:none}
+.team-card-bar-fill{position:absolute;inset:0 auto 0 0;width:0;border-radius:2px;background:var(--dsw-alias-state-business-primary,#4176e6);transition:width .35s cubic-bezier(.2,.8,.2,1)}
+.team-card[data-status='done'] .team-card-bar-fill{background:var(--dsw-alias-state-success-primary,#3fb96b)}
+.team-card[data-status='error'] .team-card-bar-fill{background:var(--dsw-alias-state-error-primary,#e0434b)}
+.team-card-bar[data-indeterminate='true'] .team-card-bar-fill{width:38%;animation:team-bar-sweep 1.5s ease-in-out infinite}
+@keyframes team-bar-sweep{0%{transform:translateX(-110%)}100%{transform:translateX(300%)}}
+/* 槽位⑤ 焦点文本：定高两行 + 底部淡出遮罩（不因内容长短撑卡） */
+.team-card-focus{position:relative;height:34px;overflow:hidden;font-size:11.5px;line-height:17px;color:var(--dsw-alias-label-secondary,#aaa);word-break:break-word;white-space:pre-wrap}
+.team-card-focus::after{content:'';position:absolute;left:0;right:0;bottom:0;height:12px;background:linear-gradient(transparent,var(--dsw-alias-bg-module-platform,rgba(0,0,0,.03)))}
+body[data-ds-dark-theme] .team-card-focus::after{background:linear-gradient(transparent,var(--dsw-alias-bg-module-platform,rgba(255,255,255,.04)))}
+.team-card-focus[data-kind='error']{color:var(--dsw-alias-state-error-primary,#e0434b)}
+.team-card-focus[data-kind='live']{color:var(--dsw-alias-label-primary,#eee)}
 .team-card-todos{position:relative;height:16px;border-radius:8px;background:var(--dsw-alias-border-l1,rgba(255,255,255,.1));overflow:hidden;flex:none}
 .team-card-todos-fill{position:absolute;inset:0 auto 0 0;background:color-mix(in srgb,var(--dsw-alias-state-success-primary,#3fb96b) 60%,transparent);border-radius:8px;transition:width .3s ease}
 .team-card-todos-text{position:relative;display:flex;align-items:center;justify-content:center;height:16px;font-size:10px;line-height:16px;color:var(--dsw-alias-label-secondary,#bbb)}
-.team-card-time{font-size:11px;line-height:16px;color:var(--dsw-alias-label-dimmed,#777);font-family:ui-monospace,SFMono-Regular,monospace}
+.team-card-time{flex:none;font-size:11px;line-height:16px;color:var(--dsw-alias-label-dimmed,#777);font-family:ui-monospace,SFMono-Regular,monospace}
 /* 执行中计时：品牌蓝，区别于完成态的时刻戳 */
 .team-card-time[data-live='true']{color:var(--dsw-alias-state-business-primary,#4176e6)}
 .team-card-time[data-state='done']{color:var(--dsw-alias-state-success-primary,#3fb96b)}
@@ -660,6 +761,9 @@ body[data-ds-dark-theme] .team-cards-wrap .team-card{background:var(--dsw-alias-
   .team-toast,.team-hud,.team-pop,.team-pill,.team-drawer,.team-mask,.team-gen-card,.team-gen-mask,
   .team-canvas-layer,.team-editor-card,.team-editor-mask,.team-ask,.team-ask-mask{animation:none}
   .team-dot[data-status='running'],.team-hud-pip[data-status='running'],.team-card-live-dot{animation:none}
+  .team-fbchain-row{animation:none}
+  .team-card-bar[data-indeterminate='true'] .team-card-bar-fill{animation:none;width:100%;opacity:.5}
+  .team-resume-btn::after{animation:none}
   .team-toggle-btn,.team-toggle-chevron,.team-pop-item,.team-pop-check,.team-chevron,.team-progress-fill,.team-role-card-grid,.team-hud{transition:none!important}
   .team-pop,.team-pop-check{animation:none!important}
   /* 中心光晕过场退化为硬切换 */

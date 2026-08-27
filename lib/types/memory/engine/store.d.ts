@@ -100,6 +100,33 @@ export declare class MemoryStore {
     patchEntry(id: string, patch: Partial<Omit<MemoryEntry, 'id' | 'createdAt'>>): Promise<MemoryEntry | undefined>;
     /** 删除条目。返回是否删除成功。 */
     removeEntry(id: string): Promise<boolean>;
+    /**
+     * 软废弃一条记忆（retire，无后继）：数据保留但默认不再检索/注入/编译。
+     * 已废弃条目重复 retire 是幂等 no-op。
+     */
+    retireEntry(id: string, reason?: string): Promise<MemoryEntry | undefined>;
+    /**
+     * 修订一条记忆（revise，软废弃 + 后继）：把旧内容软废弃，写入新内容作为后继。
+     * 参考 opencontext 的 oc_memory_revise 语义：{ deprecatedId, newId }。
+     *
+     * 后继条目复用 upsertEntry 的稳定 id 派生：新内容与库中已有条目撞 id 时
+     * 直接复用（不重复插入）；旧条目标记 supersededBy 指向后继。
+     * 内容未变化时视为 no-op（不产生废弃条目）。
+     */
+    reviseEntry(input: {
+        id: string;
+        content: string;
+        reason?: string;
+        tags?: string[];
+        importance?: number;
+        kind?: MemoryKind;
+    }): Promise<{
+        deprecatedId: string;
+        newId: string;
+        entry: MemoryEntry;
+    } | undefined>;
+    /** 复活一条已废弃的记忆（undo retire / undo revise 的后继侧）。 */
+    restoreEntry(id: string): Promise<MemoryEntry | undefined>;
     /** 注入命中刷新（原子）：给命中的条目加分并刷新 lastHitAt，返回刷新条数。 */
     applyHits(hitIds: Set<string>, bonus: number): Promise<number>;
     /** 原子替换全部条目（ticker 每日编译等批量场景；fn 返回新数组）。 */

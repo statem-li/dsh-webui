@@ -32,6 +32,12 @@ export const cls = {
   spinner: 'wsh-spinner',
   hint: 'wsh-hint',
   error: 'wsh-error',
+  editBar: 'wsh-edit-bar',
+  editHint: 'wsh-edit-hint',
+  editCount: 'wsh-edit-count',
+  editSpacer: 'wsh-edit-spacer',
+  editor: 'wsh-editor',
+  frame: 'wsh-frame',
   foot: 'wsh-foot',
   meta: 'wsh-meta',
   actions: 'wsh-actions',
@@ -89,6 +95,23 @@ const SHEET = `
 .wsh-hint{display:flex;flex-direction:column;align-items:center;gap:10px;font-size:13px;color:var(--dsw-alias-label-tertiary,#888)}
 .wsh-error{max-width:520px;font-size:13px;line-height:1.6;color:var(--dsw-alias-state-error-primary,#e5484d);text-align:center;word-break:break-word}
 
+/* ── 元素删除编辑模式 ── */
+/* 编辑中：选项条整体减淡并禁止交互（改了选项会脱离编辑，需要先退出重渲染）。 */
+.wsh-panel[data-editing] .wsh-bar{opacity:.55;pointer-events:none}
+/* 编辑工具条：吸附在预览台顶部，滑入动画（减少动态偏好时直接显示）。 */
+.wsh-edit-bar{position:sticky;top:-18px;z-index:5;flex:none;box-sizing:border-box;width:100%;display:flex;align-items:center;gap:10px;margin:-18px 0 14px;padding:9px 14px;background:var(--dsw-specific-menu,var(--dsw-alias-bg-layer-2,#16181d));border-bottom:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.08));animation:wsh-editbar-in 180ms ease}
+@keyframes wsh-editbar-in{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
+.wsh-edit-hint{font-size:12px;line-height:1.5;color:var(--dsw-alias-label-secondary,#bbb);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wsh-edit-count{flex:none;font-size:12px;color:var(--dsw-alias-label-tertiary,#888);white-space:nowrap}
+.wsh-edit-count[data-n]{color:var(--dsw-alias-state-error-primary,#e5484d)}
+.wsh-edit-spacer{flex:1}
+/* 编辑画布：iframe 内是真实宽度的页面，容器负责横纵滚动。 */
+.wsh-editor{flex:none;box-sizing:border-box;width:100%;overflow:auto;border:1px solid var(--dsw-alias-border-l2,#333);border-radius:10px;background:var(--dsw-alias-bg-module-platform,rgba(255,255,255,.02));scrollbar-width:thin}
+.wsh-editor::-webkit-scrollbar{width:8px;height:8px}
+.wsh-editor::-webkit-scrollbar-thumb{background:var(--dsw-alias-scrollbar-bg-l2,#333);border-radius:4px}
+.wsh-frame{display:block;box-sizing:border-box;width:100%;height:1600px;border:none;background:#fff}
+.wsh-frame:focus{outline:none}
+
 /* ── 底栏 ── */
 .wsh-foot{flex:none;display:flex;align-items:center;gap:12px;padding:12px 16px;border-top:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.08))}
 .wsh-meta{flex:1;min-width:0;font-size:12px;color:var(--dsw-alias-label-tertiary,#888);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -103,6 +126,7 @@ const SHEET = `
 @media (prefers-reduced-motion:reduce){
   .wsh-panel{animation:none!important}
   .wsh-spinner{animation:none}
+  .wsh-edit-bar{animation:none}
 }
 `
 

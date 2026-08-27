@@ -45,6 +45,16 @@ export interface MemoryEntry {
   provenance?: { sessionId?: string; turn?: number; snippet?: string }
   /** 嵌入向量（Retrieval 层缓存；未算则缺省）。 */
   embedding?: number[]
+
+  // ── schema v3（软废弃链 / revise-retire 支持）────────────────────
+  /** 软废弃标记（true = 已废弃，默认不检索/不注入/不编译）。 */
+  deprecated?: boolean
+  /** 软废弃时间 ISO。 */
+  deprecatedAt?: string
+  /** 软废弃原因。 */
+  deprecatedReason?: string
+  /** 后继条目 id（revise 时指向新条目）。 */
+  supersededBy?: string
 }
 
 /** 显式记忆类型（compile 按此分组，不再靠标签硬猜）。 */
@@ -54,8 +64,8 @@ export type MemoryKind = 'identity' | 'preference' | 'fact' | 'decision' | 'gotc
 export interface ChangeRecord {
   /** 变更记录自身 id（时间戳+随机）。 */
   id: string
-  /** add=新增；update=更新；promote=升长期；delete=删除。 */
-  action: 'add' | 'update' | 'promote' | 'delete'
+  /** add=新增；update=更新；promote=升长期；delete=删除；revise=软废弃+后继；retire=软废弃。 */
+  action: 'add' | 'update' | 'promote' | 'delete' | 'revise' | 'retire'
   /** 关联记忆条目 id。 */
   entryId: string
   scope: 'global' | 'project'
@@ -142,6 +152,22 @@ export interface MemoryConfig {
   injectTopK: number
   /** 全局条目数上限（超限按 importance + recency 淘汰低分条目）。 */
   entryLimit: number
+
+  // ── schema v3：语义检索（embedding）配置 ────────────────────────────
+  /**
+   * 语义检索后端：off=关闭（hybrid 回退）；http=OpenAI 兼容 embedding API；
+   * local=本地 ONNX 模型（@xenova/transformers，需先安装该依赖）。
+   * 默认 off——DSH 无 embedding 接口，纯本地 n-gram 已够用；需要更强语义时开启。
+   */
+  embeddingProvider: 'off' | 'http' | 'local'
+  /** embedding API 地址（OpenAI 兼容，如 https://api.openai.com/v1）。 */
+  embeddingBaseUrl: string
+  /** embedding 模型名（http：如 text-embedding-3-small；local：如 Xenova/all-MiniLM-L6-v2）。 */
+  embeddingModel: string
+  /** embedding API 密钥（http 模式；也可用环境变量 DSH_MEMORY_EMBEDDING_API_KEY）。 */
+  embeddingApiKey: string
+  /** embedding 向量维度（http 模式必须与模型一致；local 自动检测）。 */
+  embeddingDimensions: number
 }
 
 /** 默认配置。 */
@@ -162,6 +188,11 @@ export const DEFAULT_CONFIG: MemoryConfig = {
   logApiRequests: false,
   injectTopK: 8,
   entryLimit: 500,
+  embeddingProvider: 'off',
+  embeddingBaseUrl: '',
+  embeddingModel: 'text-embedding-3-small',
+  embeddingApiKey: '',
+  embeddingDimensions: 0,
 }
 
 /** LLM 整理操作（consolidate.ts 的 LLM 输出结构）。 */
@@ -243,6 +274,12 @@ const CONFIG_BOOLEAN_KEYS = ['dailyCompileEnabled', 'consolidateEnabled', 'logAp
 /** 可调布尔字段名。 */
 export type ConfigBooleanKey = (typeof CONFIG_BOOLEAN_KEYS)[number]
 
+/** 可选字符串配置字段（embedding 连接信息，留空=未配置）。 */
+export type ConfigStringKey = 'embeddingBaseUrl' | 'embeddingModel' | 'embeddingApiKey'
+
+/** 可调 embedding provider 值。 */
+export type EmbeddingProviderMode = MemoryConfig['embeddingProvider']
+
 /**
  * 应用配置覆盖（原地更新 config；返回实际应用的字段子集，供持久化）。
  * 数值按 CONFIG_NUMBER_BOUNDS 钳制到合法域（越界钳制而非静默丢弃——
@@ -270,6 +307,26 @@ export function applyConfigOverrides(config: MemoryConfig, candidate: unknown): 
       ;(applied as unknown as Record<string, unknown>)[key] = value
     }
   }
+  // 字符串配置（embedding 连接信息）：仅在明确传入字符串时覆盖，空串=清空。
+  for (const key of CONFIG_STRING_KEYS) {
+    if (typeof raw[key] === 'string') {
+      ;(config as unknown as Record<string, unknown>)[key] = raw[key]
+      ;(applied as unknown as Record<string, unknown>)[key] = raw[key]
+    }
+  }
+  // embedding provider 枚举：非法值忽略。
+  const provider = raw.embeddingProvider
+  if (provider === 'off' || provider === 'http' || provider === 'local') {
+    ;(config as unknown as Record<string, unknown>).embeddingProvider = provider
+    ;(applied as unknown as Record<string, unknown>).embeddingProvider = provider
+  }
+  // embeddingDimensions：0 或正整数。
+  const dims = raw.embeddingDimensions
+  if (typeof dims === 'number' && Number.isFinite(dims) && dims >= 0) {
+    const rounded = Math.round(dims)
+    ;(config as unknown as Record<string, unknown>).embeddingDimensions = rounded
+    ;(applied as unknown as Record<string, unknown>).embeddingDimensions = rounded
+  }
   return applied
 }
 
@@ -278,5 +335,11 @@ export function publicConfig(config: MemoryConfig): Partial<MemoryConfig> {
   const out: Record<string, unknown> = {}
   for (const key of CONFIG_NUMBER_KEYS) out[key] = config[key]
   for (const key of CONFIG_BOOLEAN_KEYS) out[key] = config[key]
+  for (const key of CONFIG_STRING_KEYS) out[key] = config[key]
+  out.embeddingProvider = config.embeddingProvider
+  out.embeddingDimensions = config.embeddingDimensions
   return out as Partial<MemoryConfig>
 }
+
+/** 可覆盖的字符串配置字段列表。 */
+const CONFIG_STRING_KEYS = ['embeddingBaseUrl', 'embeddingModel', 'embeddingApiKey'] as const satisfies readonly ConfigStringKey[]

@@ -21,7 +21,10 @@ import { ensureTeamStyles } from './styles.ts'
 import { RoleRunCard } from './RoleRunCard.tsx'
 import { MarkstreamMarkdown } from '../markdown/renderer.tsx'
 import { SOURCE_LABEL, type Run, type RunStep } from './types.ts'
-import { elapsedOf, formatClock, formatDuration, runStatusText, shortModel, stepIcon, stepStatusText } from './util.ts'
+import {
+  elapsedOf, errorKindAdvice, errorKindText, formatClock, formatDuration, phaseIcon, phaseText,
+  runStatusText, shortModel, stepIcon, stepStatusText,
+} from './util.ts'
 
 /** 轮询间隔。 */
 const POLL_ACTIVE_MS = 1200
@@ -55,12 +58,15 @@ const COMPOSER_SELECTORS = [
   'form',
 ]
 
-/** 面板占视口高度的比例（底部三分之一）。 */
-const DOCK_RATIO = 1 / 3
+/** 面板占视口高度的比例（可切档：紧凑=底部三分之一，放大=三分之二）。 */
+const DOCK_RATIO_COMPACT = 1 / 3
+const DOCK_RATIO_TALL = 2 / 3
 /** 面板与各边的安全间距。 */
 const DOCK_GAP = 12
 /** 面板最小可用高度（低于此值就不值得展开了）。 */
 const DOCK_MIN_HEIGHT = 190
+/** 高度档位持久化键。 */
+const TALL_KEY = 'dsh-webui.team.hud.tall'
 
 function readExpanded(): boolean {
   try { return window.localStorage.getItem(EXPAND_KEY) !== '0' } catch { return true }
@@ -68,6 +74,14 @@ function readExpanded(): boolean {
 
 function writeExpanded(value: boolean): void {
   try { window.localStorage.setItem(EXPAND_KEY, value ? '1' : '0') } catch { /* ignore */ }
+}
+
+function readTall(): boolean {
+  try { return window.localStorage.getItem(TALL_KEY) === '1' } catch { return false }
+}
+
+function writeTall(value: boolean): void {
+  try { window.localStorage.setItem(TALL_KEY, value ? '1' : '0') } catch { /* ignore */ }
 }
 
 /** 取第一个"够大"的命中元素矩形。 */
@@ -121,10 +135,10 @@ function contentColumn(): { left: number, right: number } | null {
 /**
  * 计算停靠矩形：
  * **横向**严格跟随对话框内容列（textarea 所在竖列），左右边缘与对话框对齐；
- * **纵向**取「对话区自身」的下三分之一，并停在输入框上方 —— 面板顶边落在
- * 对话区高度的 2/3 处，不覆盖对话框也不压住左侧导航。
+ * **纵向**取「对话区自身」的下 1/3（紧凑）或下 2/3（放大档），并停在输入框上方 ——
+ * 波次多的时候紧凑档只能看到一两波，放大档一屏看全，档位由用户切换并持久化。
  */
-function dockRect(): DockLayout | null {
+function dockRect(ratio: number): DockLayout | null {
   const conversation = firstRect(CONVERSATION_SELECTORS, 200, 100)
   const sidebar = firstRect(SIDEBAR_SELECTORS, 80, 200)
   const composer = firstRect(COMPOSER_SELECTORS, 200, 24)
@@ -137,15 +151,15 @@ function dockRect(): DockLayout | null {
   const width = rightRaw - leftRaw
   if (width < 260) return null
 
-  // 纵向不变：下边界绝不越过输入区上沿，上边界取对话区的 2/3 处。
+  // 纵向不变：下边界绝不越过输入区上沿，上边界取对话区的 (1-ratio) 处。
   const composerTop = composer !== null ? composer.top : window.innerHeight
   const bottom = Math.min(conversation?.bottom ?? window.innerHeight, composerTop) - DOCK_GAP
 
   const areaTop = conversation?.top ?? 0
   const areaHeight = bottom - areaTop
   const top = areaHeight > 0
-    ? Math.max(DOCK_GAP, Math.round(areaTop + areaHeight * (1 - DOCK_RATIO)))
-    : Math.max(DOCK_GAP, Math.round(window.innerHeight * (1 - DOCK_RATIO)))
+    ? Math.max(DOCK_GAP, Math.round(areaTop + areaHeight * (1 - ratio)))
+    : Math.max(DOCK_GAP, Math.round(window.innerHeight * (1 - ratio)))
 
   const height = bottom - top
   if (height < DOCK_MIN_HEIGHT) return null
@@ -194,11 +208,17 @@ export function RunHud({ ctx }: { ctx: ClientContext }): JSX.Element | null {
   const [runs, setRuns] = useState<Run[]>([])
   const [finished, setFinished] = useState<Run | null>(null)
   const [expanded, setExpanded] = useState<boolean>(() => readExpanded())
+  /** 高度档位：false=底部 1/3（紧凑），true=底部 2/3（放大，波次多时一屏看全）。 */
+  const [tall, setTall] = useState<boolean>(() => readTall())
   const [now, setNow] = useState(() => Date.now())
   const [layout, setLayout] = useState<DockLayout | null>(null)
   /** 打开的详情卡：step=角色执行详情（跟随轮询实时刷新），final=最终交付物全文。 */
   const [viewing, setViewing] = useState<{ kind: 'step', runId: string, index: number } | { kind: 'final', runId: string } | null>(null)
   const [collapsedPill, setCollapsedPill] = useState(false)
+  /** 正在请求接续的 run id（禁用按钮 + 转圈）。 */
+  const [resuming, setResuming] = useState('')
+  /** 接续失败的提示（轮询不会自己清，点一下横幅或再次点击才消失）。 */
+  const [resumeError, setResumeError] = useState('')
   const lingerTimer = useRef(0)
 
   const active = runs.length > 0
@@ -271,7 +291,7 @@ export function RunHud({ ctx }: { ctx: ClientContext }): JSX.Element | null {
     if (shown.length === 0) return
     const measure = (): void => {
       setLayout((previous) => {
-        const next = dockRect()
+        const next = dockRect(tall ? DOCK_RATIO_TALL : DOCK_RATIO_COMPACT)
         if (previous !== null && next !== null &&
             previous.left === next.left && previous.width === next.width &&
             previous.top === next.top && previous.height === next.height &&
@@ -289,7 +309,7 @@ export function RunHud({ ctx }: { ctx: ClientContext }): JSX.Element | null {
       window.clearInterval(timer)
       window.removeEventListener('resize', measure)
     }
-  }, [shown.length])
+  }, [shown.length, tall])
 
   useEffect(() => () => { window.clearTimeout(lingerTimer.current) }, [])
 
@@ -308,6 +328,28 @@ export function RunHud({ ctx }: { ctx: ClientContext }): JSX.Element | null {
   const openFinal = useCallback((run: Run): void => {
     setViewing({ kind: 'final', runId: run.id })
   }, [])
+
+  /**
+   * 一键接续：在同一个 run 上重跑未完成步骤。
+   * 成功后立刻把返回的 run 塞进 runs（不等下一次轮询），HUD 马上回到运行态；
+   * 失败把原因显示在失败横幅下方，不静默吞掉。
+   */
+  const resume = useCallback(async (run: Run): Promise<void> => {
+    if (resuming !== '') return
+    setResuming(run.id)
+    setResumeError('')
+    try {
+      const data = await api.resumeRun(run.id, sessionId)
+      setFinished(null)
+      setCollapsedPill(false)
+      setExpanded(true)
+      setRuns([data.run])
+    } catch (error) {
+      setResumeError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setResuming('')
+    }
+  }, [resuming, sessionId])
 
   if (shown.length === 0) return null
 
@@ -335,6 +377,7 @@ export function RunHud({ ctx }: { ctx: ClientContext }): JSX.Element | null {
   // 收起为胶囊：同样**在对话框列内居中**、悬浮在对话框上方，与折叠条位置一致。
   if (collapsedPill && !active) {
     const run = shown[0]
+    const canResume = run.resumable ?? run.steps.some(step => step.status !== 'done')
     const pillStyle: React.CSSProperties = layout !== null
       ? {
           left: layout.colLeft,
@@ -355,6 +398,19 @@ export function RunHud({ ctx }: { ctx: ClientContext }): JSX.Element | null {
       >
         <span>👥 {run.teamName}</span>
         <span className="team-status-text" data-status={run.status}>{runStatusText(run.status)}</span>
+        {/* 失败/中断收起后也能直接接续，不用先展开面板 */}
+        {canResume && run.status !== 'done' ? (
+          <button
+            type="button"
+            className="team-resume-btn"
+            style={{ height: 20, padding: '0 9px', fontSize: 11 }}
+            disabled={resuming === run.id}
+            title="只重跑未完成的步骤"
+            onClick={(event) => { event.stopPropagation(); void resume(run) }}
+          >
+            {resuming === run.id ? <span className="team-resume-spin" aria-hidden="true" /> : '↻'} 接续
+          </button>
+        ) : null}
       </div>,
       document.body,
     )
@@ -364,6 +420,13 @@ export function RunHud({ ctx }: { ctx: ClientContext }): JSX.Element | null {
   const totalDone = shown.reduce((sum, run) => sum + run.steps.filter(s => s.status === 'done').length, 0)
   const totalSteps = shown.reduce((sum, run) => sum + run.steps.length, 0)
   const state = active ? 'running' : primary.status
+  /** 折叠态也要能看到「现在谁在干什么」：取运行中的步骤做一行摘要。 */
+  const liveSteps = shown.flatMap(run => run.steps).filter(step => step.status === 'running')
+  const liveSummary = liveSteps.length === 0
+    ? ''
+    : liveSteps.length === 1
+      ? `${liveSteps[0].roleName} · ${phaseIcon(liveSteps[0].phase)} ${phaseText(liveSteps[0].phase)}`
+      : `${liveSteps.length} 个角色并行：${liveSteps.map(step => step.roleName).join('、')}`
 
   return createPortal(
     <>
@@ -372,7 +435,13 @@ export function RunHud({ ctx }: { ctx: ClientContext }): JSX.Element | null {
           <span className="team-hud-title">
             👥 {shown.length > 1 ? `${shown.length} 个团队运行中` : primary.teamName}
           </span>
-          {shown.length === 1 ? <span className="team-hud-chain">{primary.chainName}</span> : null}
+          {/* 折叠态优先显示实时摘要（谁在干什么），空闲时才退回链名 */}
+          {liveSummary !== '' ? (
+            <span className="team-hud-live">
+              <span className="team-card-live-dot" aria-hidden="true" />
+              <span className="team-hud-live-text">{liveSummary}</span>
+            </span>
+          ) : shown.length === 1 ? <span className="team-hud-chain">{primary.chainName}</span> : null}
           <span className="team-hud-pips">
             {(shown.length === 1 ? primary.steps : []).map(step => (
               <span key={step.index} className="team-hud-pip" data-status={step.status} />
@@ -382,6 +451,20 @@ export function RunHud({ ctx }: { ctx: ClientContext }): JSX.Element | null {
           <span className="team-hud-time">
             ⏱ {formatDuration(elapsedOf(primary.startedAt, active ? undefined : primary.finishedAt, now))}
           </span>
+          {/* 高度档位：波次多时切「放大」一屏看全（点击不触发折叠，需阻止冒泡） */}
+          {expanded ? (
+            <button
+              type="button"
+              className="team-hud-sizebtn"
+              data-on={tall ? 'true' : 'false'}
+              title={tall ? '收窄面板（占对话区下 1/3）' : '放大面板（占对话区下 2/3）'}
+              aria-label={tall ? '收窄面板' : '放大面板'}
+              onClick={(event) => {
+                event.stopPropagation()
+                setTall((value) => { writeTall(!value); return !value })
+              }}
+            >{tall ? '⇱' : '⇲'}</button>
+          ) : null}
           <span className="team-chevron" data-open={expanded} style={{ marginLeft: 4 }}>
             <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
               <path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
@@ -391,15 +474,24 @@ export function RunHud({ ctx }: { ctx: ClientContext }): JSX.Element | null {
 
         {expanded ? (
           <div className="team-hud-body">
+            {resumeError !== '' ? (
+              <div className="team-fail" data-kind="unknown" role="alert" onClick={() => setResumeError('')}>
+                <div className="team-fail-head">接续失败</div>
+                <div className="team-fail-msg">{resumeError}</div>
+                <div className="team-fail-advice">点此关闭；修正后可再次点「一键接续」。</div>
+              </div>
+            ) : null}
             {shown.map(run => (
               <RunSegment
                 key={run.id}
                 run={run}
                 now={now}
                 multi={shown.length > 1}
+                busy={resuming === run.id}
                 onOpenStep={step => void openStep(run, step)}
                 onOpenFinal={() => void openFinal(run)}
                 onCancel={() => { void api.cancelRun(run.id, sessionId).catch(() => {}) }}
+                onResume={() => { void resume(run) }}
               />
             ))}
           </div>
@@ -436,6 +528,11 @@ function groupStepsByWave(steps: readonly RunStep[]): RunStep[][] {
 
 /**
  * 执行详情卡：点角色卡弹出，展示该角色的完整执行过程。
+ *
+ * 布局：**左过程 / 右输出**双栏（窄屏自动堆叠）。左栏回答「这一步经历了什么」——
+ * 当前阶段、任务清单、每次尝试的轨迹（含失败归类与降级模型）、上游输入；右栏是
+ * 产出正文。旧版把这些全部竖着堆在输出上方，运行中要滚很久才能看到输出。
+ *
  * 内容从 shown（轮询实时数据）取 —— 运行中的输出快照会随 1.2s 轮询自动刷新；
  * 步骤完成（有产物文件）或查看最终交付物时，额外拉取全文。
  */
@@ -478,11 +575,20 @@ function StepDetailCard({ viewing, shown, now, onClose }: {
 
   const title = viewing.kind === 'final'
     ? `最终交付物 · ${run.teamName}`
-    : `${step?.roleName ?? '角色'} · 第 ${(step?.index ?? 0) + 1} 步`
+    : `${step?.roleName ?? '角色'} · 第 ${(step?.wave ?? step?.index ?? 0) + 1} 波`
+  const todos = step?.todos ?? []
+  const attempts = step?.attempts ?? []
 
   return (
     <div className="team-step-mask" onClick={onClose}>
-      <div className="team-step-card" role="dialog" aria-modal="true" aria-label={title} onClick={event => event.stopPropagation()}>
+      <div
+        className="team-step-card"
+        data-view={viewing.kind}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        onClick={event => event.stopPropagation()}
+      >
         <div className="team-step-head">
           {step !== null ? (
             <span className="team-card-icon" aria-hidden="true">{stepIcon(step.status)}</span>
@@ -499,147 +605,209 @@ function StepDetailCard({ viewing, shown, now, onClose }: {
         </div>
 
         {step !== null ? (
-          <>
-            {/* 元信息徽标行 */}
-            <div className="team-step-meta">
-              <span className="team-step-badge" data-status={step.status}>{stepStatusText(step.status)}</span>
-              {shortModel(step.modelUsed) !== '' ? (
-                <span className="team-step-badge team-step-badge-model" title={`${step.modelUsed.provider}/${step.modelUsed.model}`}>
-                  {shortModel(step.modelUsed)}
-                  <em className="team-card-src" data-src={step.modelSource}>{SOURCE_LABEL[step.modelSource]}</em>
-                </span>
-              ) : null}
-              {step.channel !== undefined ? (
-                <span className="team-step-badge">{step.channel === 'subagent' ? 'subagent · 继承会话模型' : 'llm 直跑'}</span>
-              ) : null}
-              <span className="team-step-badge team-step-time" data-state={step.status}>
-                {/* 与运行卡一致：执行中显示执行时间走秒，完成后显示完成时刻（不再显示耗时） */}
-                {step.status === 'running'
-                  ? `⏱ ${step.startedAt !== undefined ? formatDuration(elapsedOf(step.startedAt, step.finishedAt, now)) : '--:--'} · 输出中…`
-                  : step.status === 'done'
-                    ? `✓ ${formatClock(step.finishedAt) || formatClock(new Date(now).toISOString())} 完成`
-                    : step.status === 'error'
-                      ? `✕ ${formatClock(step.finishedAt) || formatClock(new Date(now).toISOString())}`
-                      : step.status === 'skipped'
-                        ? '已跳过'
-                        : '待办'}
+          /* 元信息徽标行：状态 · 阶段 · 模型（含备用标记）· 通道 · 计时 */
+          <div className="team-step-meta">
+            <span className="team-step-badge" data-status={step.status}>{stepStatusText(step.status)}</span>
+            {step.status === 'running' ? (
+              <span className="team-step-badge" data-status="running">
+                {phaseIcon(step.phase)} {phaseText(step.phase)}
+                {step.phaseSince !== undefined && step.phaseSince !== ''
+                  ? ` · ${formatDuration(elapsedOf(step.phaseSince, undefined, now))}`
+                  : ''}
               </span>
-            </div>
-
-            {/* 子 agent 任务清单：实时展示已完成/进行中/未开始 */}
-            {step.todos !== undefined && step.todos.length > 0 ? (
-              <div className="team-step-todos">
-                <div className="team-step-todos-head">📋 任务清单 · {step.todos.filter(t => t.status === 'completed').length}/{step.todos.length} 完成</div>
-                <ul className="team-step-todos-list">
-                  {step.todos.map((todo, i) => (
-                    <li key={i} data-status={todo.status}>
-                      <span className="team-step-todos-box" aria-hidden="true">
-                        {todo.status === 'completed' ? '✓' : todo.status === 'in_progress' ? '●' : ''}
-                      </span>
-                      <span className="team-step-todos-text">{todo.content}</span>
-                      <span className="team-step-todos-tag">
-                        {todo.status === 'completed' ? '已完成' : todo.status === 'in_progress' ? '进行中' : '未开始'}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
             ) : null}
-
-            {/* 上游输入快照 */}
-            {step.inputSnapshot !== '' ? (
-              <details className="team-step-section">
-                <summary>收到的任务（上游输入摘要）</summary>
-                <pre className="team-step-pre">{step.inputSnapshot}</pre>
-              </details>
+            {step.status === 'error' && errorKindText(step.errorKind) !== '' ? (
+              <span className="team-card-kind" data-kind={step.errorKind}>{errorKindText(step.errorKind)}</span>
             ) : null}
-
-            {/* 装配与警告 */}
-            {(step.warning !== undefined && step.warning !== '') || step.capabilities !== undefined ? (
-              <div className="team-step-notes">
-                {step.capabilities !== undefined ? (
-                  <span>装配：{step.capabilities.toolMode === 'inherit' ? '工具继承' : `工具 ${step.capabilities.tools.length} 项`}
-                    {step.capabilities.skillMode !== 'inherit' ? ` · 技能 ${step.capabilities.skills.length} 项` : ''}</span>
-                ) : null}
-                {step.warning !== undefined && step.warning !== '' ? <span>{step.warning}</span> : null}
-              </div>
+            {shortModel(step.modelUsed) !== '' ? (
+              <span className="team-step-badge team-step-badge-model" title={`${step.modelUsed.provider}/${step.modelUsed.model}`}>
+                {shortModel(step.modelUsed)}
+                <em className="team-card-src" data-src={step.modelSource}>{SOURCE_LABEL[step.modelSource]}</em>
+                {step.fallbackUsed === true ? <em className="team-fb-badge">备用</em> : null}
+              </span>
             ) : null}
-
-            {/* 失败原因 */}
-            {step.status === 'error' && step.error !== undefined && step.error !== '' ? (
-              <div className="team-step-err">
-                {step.error}
-                {step.retries !== undefined && step.retries > 0 ? `（重试 ${step.retries} 次后仍失败）` : ''}
-              </div>
+            {step.channel !== undefined ? (
+              <span className="team-step-badge">{step.channel === 'subagent' ? 'subagent · 继承会话模型' : 'llm 直跑'}</span>
             ) : null}
-          </>
-        ) : null}
-
-        {/* 输出区：默认 Markdown 渲染（角色产出即 markdown，流式实时长出来），
-            可切「原文」看纯文本便于复制。全文拉取失败降级快照并注明。 */}
-        <div className="team-step-output-wrap">
-          <div className="team-step-output-label">
-            <span>输出</span>
-            <span className="team-step-viewtoggle" role="group" aria-label="输出显示方式">
-              <button type="button" data-on={!rawMode} onClick={() => setRawMode(false)}>渲染</button>
-              <button type="button" data-on={rawMode} onClick={() => setRawMode(true)}>原文</button>
+            <span className="team-step-badge team-step-time" data-state={step.status}>
+              {step.status === 'running'
+                ? `⏱ ${step.startedAt !== undefined ? formatDuration(elapsedOf(step.startedAt, step.finishedAt, now)) : '--:--'}`
+                : step.status === 'done'
+                  ? `✓ ${formatClock(step.finishedAt) || formatClock(new Date(now).toISOString())} 完成`
+                  : step.status === 'error'
+                    ? `✕ ${formatClock(step.finishedAt) || formatClock(new Date(now).toISOString())}`
+                    : step.status === 'skipped'
+                      ? '已跳过'
+                      : '待办'}
             </span>
           </div>
-          {(() => {
-            const text = full !== null && !full.failed && full.text !== '' ? full.text : (step?.output ?? '')
-            const streaming = step?.status === 'running'
-            if (text === '') {
-              const waiting = step !== null && step.status === 'running'
-              return (
-                <div className="team-step-empty">
-                  {step === null
-                    ? (full === null && file !== null ? '正在加载全文…' : '暂无内容')
-                    : step.status === 'pending'
-                      ? '尚未开始执行'
-                      : step.status === 'skipped'
-                        ? '本步被跳过（上游失败或运行取消）'
-                        : waiting
-                          ? (step.channel === 'subagent'
-                            ? '子 agent 正在独立执行，正在跟踪它的思考与输出…（通常需 1~3 分钟）'
-                            : '模型正在生成…')
-                          : (full === null && file !== null ? '正在加载全文…' : '本步没有产出文本')}
+        ) : null}
+
+        {/* 失败横幅：归类 + 建议（接续入口在 HUD 主面板上，这里只解释怎么办） */}
+        {step !== null && step.status === 'error' && step.error !== undefined && step.error !== '' ? (
+          <div className="team-fail" data-kind={step.errorKind ?? 'unknown'}>
+            <div className="team-fail-head">
+              <span>本步失败</span>
+              {errorKindText(step.errorKind) !== '' ? (
+                <span className="team-card-kind" data-kind={step.errorKind}>{errorKindText(step.errorKind)}</span>
+              ) : null}
+              {step.retries !== undefined && step.retries > 0 ? (
+                <span style={{ fontWeight: 400, color: 'var(--dsw-alias-label-tertiary,#888)' }}>已重试 {step.retries} 次</span>
+              ) : null}
+            </div>
+            <div className="team-fail-msg">{step.error}</div>
+            {errorKindAdvice(step.errorKind) !== '' ? (
+              <div className="team-fail-advice">{errorKindAdvice(step.errorKind)}</div>
+            ) : null}
+          </div>
+        ) : null}
+
+        {/* 双栏主体：左=过程，右=输出。
+            最终交付物视图没有 step（无过程栏）→ 必须切成单栏，否则输出会被挤进
+            左侧 320px 轨道、右边空一大片（grid 轨道即使无子元素也占宽）。 */}
+        <div className="team-step-cols" data-cols={step !== null ? 'two' : 'one'}>
+          {step !== null ? (
+            <div className="team-step-side">
+              {/* 任务清单 */}
+              {todos.length > 0 ? (
+                <div className="team-step-todos">
+                  <div className="team-step-todos-head">
+                    📋 任务清单 · {todos.filter(t => t.status === 'completed').length}/{todos.length} 完成
+                  </div>
+                  <ul className="team-step-todos-list">
+                    {todos.map((todo, i) => (
+                      <li key={i} data-status={todo.status}>
+                        <span className="team-step-todos-box" aria-hidden="true">
+                          {todo.status === 'completed' ? '✓' : todo.status === 'in_progress' ? '●' : ''}
+                        </span>
+                        <span className="team-step-todos-text">{todo.content}</span>
+                        <span className="team-step-todos-tag">
+                          {todo.status === 'completed' ? '已完成' : todo.status === 'in_progress' ? '进行中' : '未开始'}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
                 </div>
-              )
-            }
-            if (rawMode) {
+              ) : null}
+
+              {/* 尝试轨迹：每次调用用了哪个模型、失败归类、退避多久 */}
+              {attempts.length > 0 ? (
+                <div className="team-step-todos">
+                  <div className="team-step-todos-head">🧪 尝试轨迹 · {attempts.length} 次</div>
+                  <ul className="team-attempts">
+                    {attempts.map(item => (
+                      <li key={item.attempt} data-status={item.status}>
+                        <span className="team-attempt-no">#{item.attempt}</span>
+                        <span className="team-attempt-model" title={`${item.model.provider}/${item.model.model}`}>
+                          {item.model.model}
+                        </span>
+                        {item.fallback ? <span className="team-fb-badge">备用</span> : null}
+                        {item.status === 'error' && errorKindText(item.errorKind) !== '' ? (
+                          <span className="team-card-kind" data-kind={item.errorKind}>{errorKindText(item.errorKind)}</span>
+                        ) : (
+                          <span className="team-attempt-ok">成功</span>
+                        )}
+                        <span className="team-attempt-dur">
+                          {formatDuration(elapsedOf(item.startedAt, item.finishedAt, now))}
+                          {item.backoffMs !== undefined ? ` · 退避 ${Math.round(item.backoffMs / 1000)}s` : ''}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+
+              {/* 装配与警告 */}
+              {(step.warning !== undefined && step.warning !== '') || step.capabilities !== undefined ? (
+                <div className="team-step-notes">
+                  {step.capabilities !== undefined ? (
+                    <span>装配：{step.capabilities.toolMode === 'inherit' ? '工具继承' : `工具 ${step.capabilities.tools.length} 项`}
+                      {step.capabilities.skillMode !== 'inherit' ? ` · 技能 ${step.capabilities.skills.length} 项` : ''}</span>
+                  ) : null}
+                  {step.warning !== undefined && step.warning !== '' ? <span>{step.warning}</span> : null}
+                </div>
+              ) : null}
+
+              {/* 上游输入快照 */}
+              {step.inputSnapshot !== '' ? (
+                <details className="team-step-section">
+                  <summary>收到的任务（上游输入摘要）</summary>
+                  <pre className="team-step-pre">{step.inputSnapshot}</pre>
+                </details>
+              ) : null}
+            </div>
+          ) : null}
+
+          {/* 输出区：默认 Markdown 渲染（角色产出即 markdown，流式实时长出来），
+              可切「原文」看纯文本便于复制。全文拉取失败降级快照并注明。 */}
+          <div className="team-step-output-wrap">
+            <div className="team-step-output-label">
+              <span>输出{step?.outputChars !== undefined && step.outputChars > 0 ? ` · ${step.outputChars} 字` : ''}</span>
+              <span className="team-step-viewtoggle" role="group" aria-label="输出显示方式">
+                <button type="button" data-on={!rawMode} onClick={() => setRawMode(false)}>渲染</button>
+                <button type="button" data-on={rawMode} onClick={() => setRawMode(true)}>原文</button>
+              </span>
+            </div>
+            {(() => {
+              const text = full !== null && !full.failed && full.text !== '' ? full.text : (step?.output ?? '')
+              const streaming = step?.status === 'running'
+              if (text === '') {
+                const waiting = step !== null && step.status === 'running'
+                return (
+                  <div className="team-step-empty">
+                    {step === null
+                      ? (full === null && file !== null ? '正在加载全文…' : '暂无内容')
+                      : step.status === 'pending'
+                        ? '尚未开始执行'
+                        : step.status === 'skipped'
+                          ? '本步被跳过（上游失败或运行取消）'
+                          : waiting
+                            ? `${phaseText(step.phase)}${step.phaseNote !== undefined && step.phaseNote !== '' ? ` · ${step.phaseNote}` : ''}…`
+                            : (full === null && file !== null ? '正在加载全文…' : '本步没有产出文本')}
+                  </div>
+                )
+              }
+              if (rawMode) {
+                return (
+                  <>
+                    <pre className="team-step-pre team-step-pre-full">{text}</pre>
+                    {file !== null && full?.failed === true ? <div className="team-step-note">全文加载失败，以上为尾部快照。</div> : null}
+                  </>
+                )
+              }
               return (
                 <>
-                  <pre className="team-step-pre team-step-pre-full">{text}</pre>
+                  <div className="team-step-md">
+                    <MarkstreamMarkdown text={text} streaming={streaming === true} />
+                  </div>
+                  {step !== null && step.status === 'running' ? (
+                    <div className="team-step-streaming">
+                      <span className="team-dot" data-status="running" />
+                      {phaseText(step.phase)}，内容实时刷新…
+                    </div>
+                  ) : null}
                   {file !== null && full?.failed === true ? <div className="team-step-note">全文加载失败，以上为尾部快照。</div> : null}
                 </>
               )
-            }
-            return (
-              <>
-                <div className="team-step-md">
-                  <MarkstreamMarkdown text={text} streaming={streaming === true} />
-                </div>
-                {step !== null && step.status === 'running' ? (
-                  <div className="team-step-streaming"><span className="team-dot" data-status="running" />正在生成，内容实时刷新…</div>
-                ) : null}
-                {file !== null && full?.failed === true ? <div className="team-step-note">全文加载失败，以上为尾部快照。</div> : null}
-              </>
-            )
-          })()}
+            })()}
+          </div>
         </div>
       </div>
     </div>
   )
 }
 
-/** 单个 Run 的分段（任务 + 进度条 + 角色卡网格 + 产物/取消）。 */
-function RunSegment({ run, now, multi, onOpenStep, onOpenFinal, onCancel }: {
+/** 单个 Run 的分段（任务 + 进度条 + 波次时间轴 + 失败横幅 + 产物/取消）。 */
+function RunSegment({ run, now, multi, busy, onOpenStep, onOpenFinal, onCancel, onResume }: {
   run: Run
   now: number
   multi: boolean
+  /** 接续请求进行中（禁用按钮 + 转圈）。 */
+  busy: boolean
   onOpenStep: (step: RunStep) => void
   onOpenFinal: () => void
   onCancel: () => void
+  onResume: () => void
 }): JSX.Element {
   const done = run.steps.filter(s => s.status === 'done').length
   const running = run.steps.filter(s => s.status === 'running').length
@@ -651,6 +819,15 @@ function RunSegment({ run, now, multi, onOpenStep, onOpenFinal, onCancel }: {
   /** 按波次分组（同波次即并行执行）；旧快照无 wave 时退化为每步一波。 */
   const waveGroups = useMemo(() => groupStepsByWave(run.steps), [run.steps])
   const layered = waveGroups.length > 1 || waveGroups.some(group => group.length > 1)
+  /** 任务全文展开（长任务默认折叠三行，点「全文」展开）。 */
+  const [taskOpen, setTaskOpen] = useState(false)
+  const taskLong = run.task.length > 150
+
+  /** 能否一键接续：服务端给的 resumable 优先，缺省时本地按同一规则兜底。 */
+  const resumable = run.resumable ?? (!live && run.steps.some(step => step.status !== 'done'))
+  const failKind = run.errorKind ?? run.steps.find(step => step.errorKind !== undefined)?.errorKind
+  const showFail = !live && (run.status === 'error' || run.status === 'cancelled'
+    || run.status === 'interrupted' || failed > 0)
 
   return (
     <div className="team-hud-seg">
@@ -666,8 +843,14 @@ function RunSegment({ run, now, multi, onOpenStep, onOpenFinal, onCancel }: {
 
       {/* 任务 + 进度：一张独立卡片 */}
       <div className="team-hud-meta team-surface">
-        <div className="team-hud-task">
-          <span className="team-hud-task-text">任务：{run.task}</span>
+        <div className="team-hud-task" data-open={taskOpen ? 'true' : 'false'}>
+          <span className="team-hud-tasklabel">任务</span>
+          <span className="team-hud-task-text">{run.task}</span>
+          {taskLong ? (
+            <button type="button" className="team-hud-taskmore" onClick={() => setTaskOpen(value => !value)}>
+              {taskOpen ? '收起' : '全文'}
+            </button>
+          ) : null}
           {live ? (
             <button type="button" className="team-btn team-btn-danger" style={{ flex: 'none' }} onClick={onCancel}>取消运行</button>
           ) : null}
@@ -690,23 +873,57 @@ function RunSegment({ run, now, multi, onOpenStep, onOpenFinal, onCancel }: {
           {pending > 0 ? <span>{pending} 待办</span> : null}
           {failed > 0 ? <span style={{ color: 'var(--dsw-alias-state-error-primary, #e0434b)' }}>{failed} 异常</span> : null}
           {layered ? <span>{waveGroups.length} 波次</span> : null}
+          {run.resumeCount !== undefined && run.resumeCount > 0 ? <span>已接续 {run.resumeCount} 次</span> : null}
           <span style={{ marginLeft: 'auto' }} className="team-status-text" data-status={run.status}>{runStatusText(run.status)}</span>
         </div>
       </div>
 
-      {/* 角色卡：每波一列（「第 N 波」标签+划线在上、卡在下），列宽随卡自适应；
-          列与列在同一个 flex 流里并排换行 —— 前一步列占位不大时后一步列自动并到
-          同一排；划线分割保留但不再用全幅分隔线把每波断成独占一行。 */}
+      {/* 失败横幅：归类 + 原因 + 处置建议 + 一键接续（只重跑未完成步骤） */}
+      {showFail ? (
+        <div className="team-fail" data-kind={failKind ?? 'unknown'}>
+          <div className="team-fail-head">
+            <span>{run.status === 'cancelled' ? '运行已取消' : run.status === 'interrupted' ? '运行被中断' : '运行未完成'}</span>
+            {errorKindText(failKind) !== '' ? <span className="team-card-kind" data-kind={failKind}>{errorKindText(failKind)}</span> : null}
+            <span style={{ marginLeft: 'auto', fontWeight: 400, color: 'var(--dsw-alias-label-tertiary,#888)' }}>
+              {done}/{run.steps.length} 已完成，{run.steps.length - done} 步待补
+            </span>
+          </div>
+          {run.error !== undefined && run.error !== '' ? <div className="team-fail-msg">{run.error}</div> : null}
+          {errorKindAdvice(failKind) !== '' ? <div className="team-fail-advice">{errorKindAdvice(failKind)}</div> : null}
+          <div className="team-fail-actions">
+            {resumable ? (
+              <button type="button" className="team-resume-btn" disabled={busy} onClick={onResume}>
+                {busy ? <span className="team-resume-spin" aria-hidden="true" /> : <span aria-hidden="true">↻</span>}
+                {busy ? '接续中…' : '一键接续（只重跑未完成步骤）'}
+              </button>
+            ) : null}
+            <span className="team-fail-advice">已完成步骤的产物会保留，不会重复消耗。</span>
+          </div>
+        </div>
+      ) : null}
+
+      {/* 波次时间轴：一波一行（左轴标 + 右等宽卡片网格）。
+          顺序自上而下 = 执行先后；同一行里的多张卡 = 并行同时跑。 */}
       <div className="team-cards-wrap team-surface">
         <div className="team-cards">
           {waveGroups.map((group, i) => {
             const waveLive = group.some(step => step.status === 'running')
+            const waveDone = group.every(step => step.status === 'done')
+            const waveFailed = group.some(step => step.status === 'error')
+            const state = waveLive ? 'running' : waveFailed ? 'error' : waveDone ? 'done' : 'pending'
             return (
-              <div key={`wave-${i}`} className="team-wave-col">
-                <div className="team-wave-sep" data-live={waveLive ? 'true' : 'false'}>
+              <div
+                key={`wave-${i}`}
+                className="team-wave-row"
+                data-live={waveLive ? 'true' : 'false'}
+                data-state={state}
+              >
+                <div className="team-wave-axis">
                   <span className="team-wave-tag">第 {i + 1} 波</span>
-                  {group.length > 1 ? <span className="team-wave-par">‖ {group.length} 个并行</span> : null}
-                  <span className="team-wave-sep-line" />
+                  {group.length > 1 ? <span className="team-wave-par">‖ {group.length} 并行</span> : null}
+                  <span className="team-wave-count">
+                    {group.filter(step => step.status === 'done').length}/{group.length}
+                  </span>
                 </div>
                 <div className="team-wave-cards">
                   {group.map(step => (
@@ -725,13 +942,12 @@ function RunSegment({ run, now, multi, onOpenStep, onOpenFinal, onCancel }: {
         </div>
       </div>
 
-      {files > 0 || run.finalFile !== undefined || run.error !== undefined ? (
+      {files > 0 || run.finalFile !== undefined ? (
         <div className="team-hud-foot team-surface">
           {files > 0 ? <span>产物 {files} 个步骤文件</span> : null}
           {run.finalFile !== undefined ? (
             <button type="button" className="team-btn team-btn-primary" onClick={onOpenFinal}>打开最终交付物</button>
           ) : null}
-          {run.error !== undefined ? <span style={{ color: 'var(--dsw-alias-state-error-primary, #e0434b)' }}>{run.error}</span> : null}
         </div>
       ) : null}
     </div>

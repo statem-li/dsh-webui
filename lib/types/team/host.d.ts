@@ -16,6 +16,7 @@
  *   GET  /runs/<id>                 → 运行快照
  *   GET  /runs/<id>/output?name=    → 单步完整产出（name=steps 文件名，或 final）
  *   POST /runs/<id>/cancel          → 取消运行
+ *   POST /runs/<id>/resume          → 一键接续（同一个 run 上重跑未完成步骤）
  *   POST /runs/<id>/remove          → 删除运行记录
  */
 /** 注入服务均为运行时动态注册，类型上放宽。 */

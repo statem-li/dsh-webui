@@ -43,6 +43,47 @@ export function monthTokens(days: UsageDay[], year: number, month: number): Usag
   return days.filter(d => d.date.startsWith(prefix))
 }
 
+/** 模型排行行：label = provider/model，value = tokens，hitRate 为该模型在范围内
+ * 重算的聚合缓存命中率（prompt 侧口径：cacheRead / (input + cacheRead + cacheWrite)），
+ * 与日级/总级口径一致，避免简单平均被小样本天带偏；无 prompt 数据时为 null。 */
+export interface ModelRankRow {
+  label: string
+  value: number
+  hitRate: number | null
+}
+
+/** 范围内按模型聚合的消耗排行（含命中率），按 tokens 降序。 */
+export function modelRank(days: UsageDay[]): ModelRankRow[] {
+  const map = new Map<string, { tokens: number; input: number; cacheRead: number; cacheWrite: number }>()
+  for (const d of days) {
+    for (const m of d.models ?? []) {
+      const row = map.get(m.model) ?? { tokens: 0, input: 0, cacheRead: 0, cacheWrite: 0 }
+      row.tokens += m.tokens ?? 0
+      row.input += m.inputTokens ?? 0
+      row.cacheRead += m.cacheReadTokens ?? 0
+      row.cacheWrite += m.cacheWriteTokens ?? 0
+      map.set(m.model, row)
+    }
+  }
+  return [...map.entries()]
+    .map(([label, row]) => {
+      const prompt = row.input + row.cacheRead + row.cacheWrite
+      return {
+        label,
+        value: row.tokens,
+        hitRate: prompt > 0 ? (row.cacheRead / prompt) * 100 : null,
+      }
+    })
+    .sort((a, b) => b.value - a.value)
+}
+
+/** 提供商与模型名拆分：`provider/model` → { provider, model }；无斜杠时整体归 provider。 */
+export function splitModelKey(model: string): { provider: string; model: string } {
+  const slash = model.indexOf('/')
+  if (slash <= 0) return { provider: model, model }
+  return { provider: model.slice(0, slash), model: model.slice(slash + 1) }
+}
+
 export function providerShare(days: UsageDay[]): Array<{ provider: string; tokens: number }> {
   const map = new Map<string, number>()
   for (const d of days) {

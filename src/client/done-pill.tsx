@@ -17,6 +17,7 @@ import { IconFolderOpenOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ClientContext, SessionId } from '@deepseek-ai/dsh-client-runtime/client'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
+import { isMobileViewport } from './responsive'
 
 export type DonePillProps = PropsRuntime<'shell.overlay'>
 
@@ -79,6 +80,14 @@ interface PillAnchor { xc: number; yc: number }
 
 function clamp01(v: number): number {
   return Math.min(1, Math.max(0, v))
+}
+
+/**
+ * 未拖拽时胶囊的默认纵向位置：移动端避让左上角菜单按钮（44px 浮钮，
+ * top 8 + 高 44 → 底缘 52），胶囊从 60 起（间隔 8px）；桌面维持 40。
+ */
+function defaultShellTop(): number {
+  return isMobileViewport() ? 60 : 40
 }
 
 /** 把位置夹回视口内并取整（防拖出屏幕；非整数像素会让文字发糊）。
@@ -579,7 +588,7 @@ const wrapStyle = (dragging: boolean, pos: PillPos | null, scale: number, fontSt
   // translateX(-50%) 居中会落在半像素上，文字亚像素渲染发糊。
   // null 仅存在于首帧（绘制前即被 useLayoutEffect 修正）。
   ...(pos === null
-    ? { top: 40, left: '50%', transform: 'translateX(-50%)' }
+    ? { top: defaultShellTop(), left: '50%', transform: 'translateX(-50%)' }
     : { top: pos.y, left: pos.x }),
   zIndex: 9400,
   cursor: dragging ? 'grabbing' : 'grab',
@@ -1327,7 +1336,7 @@ export function DonePill(props: DonePillProps): JSX.Element | null {
     if (autoCenterRef.current) {
       const x = Math.max(8, Math.round((window.innerWidth - w) / 2))
       setPos(prev => {
-        const next = { x, y: prev?.y ?? 40 }
+        const next = { x, y: prev?.y ?? defaultShellTop() }
         return prev !== null && prev.x === next.x && prev.y === next.y ? prev : next
       })
       return

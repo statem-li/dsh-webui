@@ -32,6 +32,7 @@ import { ModelSelect } from './ModelSelect.tsx'
 import { GenerateModal } from './GenerateModal.tsx'
 import { GuideCard } from './GuideCard.tsx'
 import { RoleEditorModal } from './RoleEditorModal.tsx'
+import { FallbackEditor } from './FallbackEditor.tsx'
 import { useDialogs } from './Dialog.tsx'
 import {
   GROUP_META, SOURCE_LABEL,
@@ -39,7 +40,8 @@ import {
   type Team, type TeamGlobals, type TeamSummary,
 } from './types.ts'
 import {
-  elapsedOf, formatDuration, formatTime, runStatusText, shortModel, stepStatusText,
+  elapsedOf, errorKindAdvice, errorKindText, formatDuration, formatTime, phaseIcon, phaseText,
+  runStatusText, shortModel, stepStatusText,
 } from './util.ts'
 
 const RELOAD_MS = 20_000
@@ -220,6 +222,8 @@ function TeamPanel({ onClose, ctx }: { onClose: () => void, ctx: ClientContext }
   const [showOverrides, setShowOverrides] = useState(false)
   const [currentRun, setCurrentRun] = useState<Run | null>(null)
   const [starting, setStarting] = useState(false)
+  /** 一键接续请求进行中。 */
+  const [resuming, setResuming] = useState(false)
   const [history, setHistory] = useState<RunSummary[]>([])
   const [now, setNow] = useState(() => Date.now())
 
@@ -421,6 +425,18 @@ function TeamPanel({ onClose, ctx }: { onClose: () => void, ctx: ClientContext }
     await saveTeam({ ...team, model: binding ?? { provider: '', model: '' } })
   }
 
+  /** 团队级备用模型链（角色未单独配置时继承）。 */
+  const setTeamFallback = async (next: ModelBinding[] | undefined): Promise<void> => {
+    if (team === null) return
+    if (next === undefined) {
+      const copy = { ...team }
+      delete copy.fallbackModels
+      await saveTeam(copy)
+      return
+    }
+    await saveTeam({ ...team, fallbackModels: next })
+  }
+
   const saveRole = async (next: Role): Promise<void> => {
     if (team === null) return
     await saveTeam({ ...team, roles: team.roles.map(role => (role.id === next.id ? next : role)) })
@@ -607,6 +623,21 @@ function TeamPanel({ onClose, ctx }: { onClose: () => void, ctx: ClientContext }
       notify('已请求取消')
     } catch (err) {
       fail(err)
+    }
+  }
+
+  /** 一键接续：同一个 run 上重跑未完成步骤（面板运行页入口）。 */
+  const resumeRun = async (): Promise<void> => {
+    if (currentRun === null || resuming) return
+    setResuming(true)
+    try {
+      const data = await api.resumeRun(currentRun.id, sessionId)
+      setCurrentRun(data.run)
+      notify('已接续：正在重跑未完成的步骤')
+    } catch (err) {
+      fail(err)
+    } finally {
+      setResuming(false)
     }
   }
 
@@ -799,6 +830,13 @@ function TeamPanel({ onClose, ctx }: { onClose: () => void, ctx: ClientContext }
           {error !== null ? <div className="team-error" role="alert">{error}</div> : null}
           {readonlyIssue !== undefined ? <div className="team-error">{readonlyIssue}</div> : null}
 
+          {/* 团队级备用模型链：主模型失败且「换模型有救」时按序降级；角色可单独覆盖 */}
+          <FallbackEditor
+            value={team.fallbackModels}
+            providers={providers}
+            onChange={(next) => { void setTeamFallback(next) }}
+          />
+
           <div className="team-section-title">角色（{team.roles.length}）</div>
           {team.roles.length === 0 ? (
             <div className="team-empty">
@@ -951,6 +989,8 @@ function TeamPanel({ onClose, ctx }: { onClose: () => void, ctx: ClientContext }
                 <RunTimeline
                   run={currentRun}
                   now={now}
+                  resuming={resuming}
+                  onResume={() => void resumeRun()}
                   onOpenOutput={(name, title) => void openOutput(currentRun.id, name, title)}
                 />
               ) : null}
@@ -1071,6 +1111,7 @@ function TeamPanel({ onClose, ctx }: { onClose: () => void, ctx: ClientContext }
         <RoleEditorModal
           role={editingRole}
           teamModel={team.model}
+          teamFallback={team.fallbackModels ?? []}
           providers={providers}
           catalog={catalog}
           links={(linksByRole[editingRole.id] ?? []).map(link => ({
@@ -1109,9 +1150,12 @@ function TeamPanel({ onClose, ctx }: { onClose: () => void, ctx: ClientContext }
 }
 
 /** 运行步骤时间线（面板内）。 */
-function RunTimeline({ run, now, onOpenOutput }: {
+function RunTimeline({ run, now, resuming, onResume, onOpenOutput }: {
   run: Run
   now: number
+  /** 接续请求进行中。 */
+  resuming?: boolean
+  onResume?: () => void
   onOpenOutput: (name: string, title: string) => void
 }): JSX.Element {
   const done = run.steps.filter(s => s.status === 'done').length
@@ -1131,6 +1175,10 @@ function RunTimeline({ run, now, onOpenOutput }: {
     const label = new Map(ordered.map((wave, i) => [wave, i + 1]))
     return { waveOf, sizes, label, total: ordered.length }
   }, [run.steps])
+  /** 失败归类与可接续性（服务端 resumable 优先，缺省本地兜底）。 */
+  const runKind = run.errorKind ?? run.steps.find(step => step.errorKind !== undefined)?.errorKind
+  const live = run.status === 'running' || run.status === 'queued'
+  const resumable = run.resumable ?? (!live && run.steps.some(step => step.status !== 'done'))
   return (
     <>
       <div className="team-section-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -1192,11 +1240,28 @@ function RunTimeline({ run, now, onOpenOutput }: {
                       <span className="team-card-src" data-src={step.modelSource}>{SOURCE_LABEL[step.modelSource]}</span>
                     </>
                   ) : null}
+                  {step.fallbackUsed === true ? <span className="team-fb-badge">备用</span> : null}
                   {step.channel !== undefined ? <span>{step.channel}</span> : null}
                   {step.retries !== undefined && step.retries > 0 ? <span>重试 {step.retries}</span> : null}
+                  {step.status === 'error' && errorKindText(step.errorKind) !== '' ? (
+                    <span className="team-card-kind" data-kind={step.errorKind}>{errorKindText(step.errorKind)}</span>
+                  ) : null}
                 </div>
+                {/* 实时阶段：这一步现在在干什么（准备/思考/输出/调工具/退避重试） */}
+                {step.status === 'running' ? (
+                  <div className="team-card-phase" data-phase={step.phase ?? 'dispatch'}>
+                    <span className="team-card-live-dot" aria-hidden="true" />
+                    <span className="team-card-phase-name">{phaseIcon(step.phase)} {phaseText(step.phase)}</span>
+                    {step.phaseNote !== undefined && step.phaseNote !== '' ? (
+                      <span className="team-card-phase-note">{step.phaseNote}</span>
+                    ) : null}
+                    {step.phaseSince !== undefined && step.phaseSince !== '' ? (
+                      <span className="team-card-phase-since">{formatDuration(elapsedOf(step.phaseSince, undefined, now))}</span>
+                    ) : null}
+                  </div>
+                ) : null}
                 {step.warning !== undefined ? <div className="team-card-inherit" style={{ fontSize: 11 }}>{step.warning}</div> : null}
-                {step.error !== undefined ? <div className="team-card-err">{step.error}</div> : null}
+                {step.error !== undefined && step.error !== '' ? <div className="team-card-err">{step.error}</div> : null}
                 {step.output !== '' ? <div className="team-step-out">{step.output}</div> : null}
                 {step.outputFile !== undefined ? (
                   <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
@@ -1221,7 +1286,30 @@ function RunTimeline({ run, now, onOpenOutput }: {
           </button>
         </div>
       ) : null}
-      {run.error !== undefined ? <div className="team-error">{run.error}</div> : null}
+      {/* 失败/中断横幅：归类 + 建议 + 一键接续（只重跑未完成步骤，已完成产物保留） */}
+      {run.status !== 'running' && run.status !== 'queued'
+        && (run.status === 'error' || run.status === 'cancelled' || run.status === 'interrupted' || failed > 0) ? (
+          <div className="team-fail" data-kind={runKind ?? 'unknown'}>
+            <div className="team-fail-head">
+              <span>{run.status === 'cancelled' ? '运行已取消' : run.status === 'interrupted' ? '运行被中断' : '运行未完成'}</span>
+              {errorKindText(runKind) !== '' ? <span className="team-card-kind" data-kind={runKind}>{errorKindText(runKind)}</span> : null}
+              <span style={{ marginLeft: 'auto', fontWeight: 400, color: 'var(--dsw-alias-label-tertiary,#888)' }}>
+                {done}/{run.steps.length} 已完成
+              </span>
+            </div>
+            {run.error !== undefined && run.error !== '' ? <div className="team-fail-msg">{run.error}</div> : null}
+            {errorKindAdvice(runKind) !== '' ? <div className="team-fail-advice">{errorKindAdvice(runKind)}</div> : null}
+            {resumable && onResume !== undefined ? (
+              <div className="team-fail-actions">
+                <button type="button" className="team-resume-btn" disabled={resuming === true} onClick={onResume}>
+                  {resuming === true ? <span className="team-resume-spin" aria-hidden="true" /> : <span aria-hidden="true">↻</span>}
+                  {resuming === true ? '接续中…' : '一键接续（只重跑未完成步骤）'}
+                </button>
+                <span className="team-fail-advice">已完成步骤的产物会保留。</span>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
     </>
   )
 }
@@ -1335,6 +1423,18 @@ function SettingsTab({ globals, providers, onPatch }: {
         />
         某步失败即终止整链（关闭则跳过失败步继续）
       </label>
+      <label className="team-check">
+        <input
+          type="checkbox"
+          checked={globals.autoFallback}
+          onChange={(e) => { void onPatch({ autoFallback: e.target.checked }) }}
+        />
+        主模型失败时自动降级到备用模型（角色备用链 → 团队备用链）
+      </label>
+      <div className="team-pop-hint">
+        自动降级只在「换模型有救」的失败上触发：鉴权失败、额度不足、模型不存在、限流、上游 5xx、超时、网络异常。
+        内容策略拒绝与用户取消不会换模型。限流与 5xx 会先做指数退避重试（上游给了 Retry-After 就按它等）。
+      </div>
     </>
   )
 }

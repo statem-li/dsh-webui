@@ -36,6 +36,12 @@ const ANIM_SHEET = `
 .dsh-area-chart { animation: var(--dsh-chart-anim, dsh-area-rise .5s cubic-bezier(.2,.8,.2,1)); }
 .dsh-area-chart .dsh-area-hover { opacity: 0; transition: opacity .15s ease; }
 .dsh-area-chart:hover .dsh-area-hover { opacity: 1; }
+/* ── 移动端：图例允许换行，tooltip 数值行 min-width 归零（不撑破视口）。
+    内联 minWidth 需 !important 压过；本块注释未写出「星号紧跟正斜杠」序列。 ── */
+@media (max-width: 767.98px) {
+  .dsh-area-legend { flex-wrap: wrap; gap: 6px; font-size: 10px; }
+  .dsh-chart-tip-row { min-width: 0 !important; flex-wrap: wrap; }
+}
 `
 
 function ensureAreaChartStyles(): void {
@@ -146,7 +152,7 @@ export function AreaChart({ data, height = 240, colors = DEFAULT_COLORS }: AreaC
   return (
     <div ref={wrapRef} className="dsh-area-chart" style={{ position: 'relative', paddingTop: 16 }}>
       {/* 图例 */}
-      <div style={{ position: 'absolute', top: 0, right: 0, display: 'flex', gap: 14, pointerEvents: 'none' }}>
+      <div className="dsh-area-legend" style={{ position: 'absolute', top: 0, right: 0, display: 'flex', gap: 14, pointerEvents: 'none' }}>
         {(['input', 'output', 'cache'] as const).map(k => (
           <span key={k} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'var(--dsw-alias-label-secondary)' }}>
             <span style={{ width: 8, height: 8, borderRadius: 2, background: colors[k], flex: 'none' }} />
@@ -219,7 +225,7 @@ export function AreaChart({ data, height = 240, colors = DEFAULT_COLORS }: AreaC
         <ChartTooltip x={hover.x} y={hover.y} placement={hover.y < 180 ? 'bottom' : 'top'}>
           <div style={{ fontWeight: 600, color: 'var(--dsw-alias-label-primary)', marginBottom: 4 }}>{hoverPoint.label}</div>
           {(['input', 'output', 'cache'] as const).map(k => (
-            <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 170 }}>
+            <div key={k} className="dsh-chart-tip-row" style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 170 }}>
               <span style={{ width: 8, height: 8, borderRadius: 2, background: colors[k], flex: 'none' }} />
               <span style={{ color: 'var(--dsw-alias-label-secondary)' }}>{SERIES_NAME[k]}</span>
               <span style={{ marginLeft: 'auto', color: 'var(--dsw-alias-label-primary)', fontFamily: 'ui-monospace, monospace' }}>
@@ -227,7 +233,7 @@ export function AreaChart({ data, height = 240, colors = DEFAULT_COLORS }: AreaC
               </span>
             </div>
           ))}
-          <div style={{ borderTop: '1px solid var(--dsw-alias-border-l1)', marginTop: 5, paddingTop: 5, display: 'flex', alignItems: 'center', gap: 8, minWidth: 170 }}>
+          <div className="dsh-chart-tip-row" style={{ borderTop: '1px solid var(--dsw-alias-border-l1)', marginTop: 5, paddingTop: 5, display: 'flex', alignItems: 'center', gap: 8, minWidth: 170 }}>
             <span style={{ color: 'var(--dsw-alias-label-secondary)' }}>合计</span>
             <span style={{ marginLeft: 'auto', fontWeight: 600, color: 'var(--dsw-alias-label-primary)', fontFamily: 'ui-monospace, monospace' }}>
               {formatUnits(hoverTotal)} <span style={{ color: 'var(--dsw-alias-label-tertiary)', fontSize: 11 }}>({formatExact(hoverTotal)})</span>

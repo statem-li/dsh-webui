@@ -20,7 +20,7 @@ import { URL } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
 import { buildCardHtml, deriveTitle, type ShotMessage } from './card.js'
 import { shotAspectRatio, shotPreset } from './presets.js'
-import { configureRenderer, renderPng, shutdownRenderer } from './renderer.js'
+import { configureRenderer, renderPng, shutdownRenderer, diagnoseEngine } from './renderer.js'
 import { canvasPad, canvasPadY, type ShotTheme } from './theme.js'
 
 interface WebServerRoute {
@@ -149,7 +149,11 @@ function safeFileName(title: string): string {
 
 // ── 路由处理 ────────────────────────────────────────────────────────────────
 
-/** POST /render：渲染并放入预览缓存（不落盘）。 */
+/**
+ * POST /render：渲染并放入预览缓存（不落盘）。
+ * body.html 存在时视为「编辑后的完整 HTML 文档」（跳过 buildCardHtml），
+ * 供面板的「元素删除」编辑模式把改好的页面重新渲染成 PNG。
+ */
 async function handleRender(req: IncomingMessage, res: ServerResponse): Promise<void> {
   let body: Record<string, unknown>
   try {
@@ -158,8 +162,9 @@ async function handleRender(req: IncomingMessage, res: ServerResponse): Promise<
     json(res, 400, { ok: false, error: error instanceof Error ? error.message : String(error) })
     return
   }
+  const editedHtml = typeof body.html === 'string' && body.html.trim() !== '' ? body.html : null
   const messages = parseMessages(body.messages)
-  if (messages.length === 0) {
+  if (editedHtml === null && messages.length === 0) {
     json(res, 400, { ok: false, error: '没有可截图的消息内容' })
     return
   }
@@ -177,29 +182,36 @@ async function handleRender(req: IncomingMessage, res: ServerResponse): Promise<
   const cardMinHeight = padY !== null
     ? Math.max(120, targetHeight - padY.top - padY.bottom)
     : preset.minHeight
-  const title = typeof body.title === 'string' && body.title.trim() !== ''
-    ? body.title.trim()
-    : deriveTitle(messages[0]!.text, messages[0]!.role)
-  const label = typeof body.label === 'string' ? body.label : ''
   try {
-    const card = await buildCardHtml({ messages, theme, width: preset.cssWidth, minHeight: cardMinHeight, title, label })
+    // 编辑模式：直接用前端传来的 HTML（已由面板删除过元素）；否则组装卡片。
+    const html = editedHtml !== null
+      ? editedHtml
+      : (await buildCardHtml({
+        messages, theme, width: preset.cssWidth, minHeight: cardMinHeight,
+        title: typeof body.title === 'string' && body.title.trim() !== ''
+          ? body.title.trim()
+          : deriveTitle(messages[0]!.text, messages[0]!.role),
+        label: typeof body.label === 'string' ? body.label : '',
+      })).html
     const base64 = await renderPng({
-      html: card.html,
+      html,
       width: viewportWidth,
       height: targetHeight,
       scale: preset.scale,
-      needsMermaid: card.needsMermaid,
+      needsMermaid: editedHtml === null && html.includes('class="mermaid"'),
     })
     const png = Buffer.from(base64, 'base64')
     const size = pngSize(png)
     const id = `shot-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
-    cachePut(id, { png, ...size, title, at: Date.now() })
+    cachePut(id, { png, ...size, title: typeof body.title === 'string' ? body.title : '', at: Date.now() })
     json(res, 200, {
       ok: true,
       id,
       imageUrl: `${ROUTE}/image?id=${encodeURIComponent(id)}`,
       bytes: png.length,
       aspectLocked: size.height === targetHeight * preset.scale,
+      // 回传本次渲染用的完整 HTML，面板的「元素删除」编辑模式从这里取页面。
+      html,
       ...size,
     })
   } catch (error) {
@@ -242,6 +254,17 @@ async function handleReveal(res: ServerResponse): Promise<void> {
     const command = process.platform === 'win32' ? 'explorer.exe' : process.platform === 'darwin' ? 'open' : 'xdg-open'
     spawn(command, [dir], { detached: true, stdio: 'ignore' }).unref()
     json(res, 200, { ok: true, dir })
+  } catch (error) {
+    json(res, 500, { ok: false, error: error instanceof Error ? error.message : String(error) })
+  }
+}
+
+/** GET /diagnose：引擎健康诊断——实例是否存在、CDP 是否可探活、重启后
+ *  版本信息。排查「CDP 连接已关闭」不再靠猜。 */
+async function handleDiagnose(_req: IncomingMessage, res: ServerResponse): Promise<void> {
+  try {
+    const report = await diagnoseEngine()
+    json(res, 200, { ok: true, at: new Date().toISOString(), ...report })
   } catch (error) {
     json(res, 500, { ok: false, error: error instanceof Error ? error.message : String(error) })
   }
@@ -291,6 +314,7 @@ export function applyScreenshot(ctx: Context): void {
       if (req.method === 'POST' && tail === '/save') { void handleSave(req, res); return }
       if (req.method === 'POST' && tail === '/reveal') { void handleReveal(res); return }
       if (req.method === 'GET' && tail === '/image') { void handleImage(req, res); return }
+      if (req.method === 'GET' && tail === '/diagnose') { void handleDiagnose(req, res); return }
       json(res, 404, { ok: false, error: '未知的截图接口' })
     },
   }), 'webui: screenshot routes')

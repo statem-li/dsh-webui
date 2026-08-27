@@ -20,7 +20,7 @@ export interface ChromeRuntime {
  * @param port CDP 端口（调用方先 findFreePort）
  * @param args 附加参数（如 ['--app=about:blank']：无地址栏应用窗口，供内嵌贴合）
  */
-export declare function launchChrome(chromePath: string, profileDir: string, port: number, args?: string[]): ChromeRuntime;
+export declare function launchChrome(chromePath: string, profileDir: string, port: number, args?: string[], logFile?: string): ChromeRuntime;
 export declare function killChrome(runtime: ChromeRuntime | null, force?: boolean): void;
 /** 根据 session 标识生成 profile 目录名 */
 export declare function profileDirFor(rootDir: string, key: string): string;

@@ -92,6 +92,11 @@ const SHEET = `
 .auto-switch[aria-checked='true']::after{transform:translateX(16px);background:#fff}
 .auto-switch:disabled{opacity:.5;cursor:default}
 
+/* 卡片内联提示：校验失败等就地显示（不弹全局 toast 顶到视口顶部，
+   避免「页面被往上顶一下」的观感）。点击开关就近可见、4s 后自行淡出。 */
+.auto-inline-notice{flex:none;display:flex;align-items:center;gap:7px;margin:0 12px 10px;padding:7px 10px;border-radius:8px;background:color-mix(in srgb,var(--dsw-alias-state-error-primary,#e0434b) 12%,transparent);color:var(--dsw-alias-state-error-primary,#e0434b);font-size:12px;line-height:18px;animation:auto-notice-in .22s cubic-bezier(.2,.8,.2,1)}
+@keyframes auto-notice-in{from{opacity:0;transform:translateY(-5px)}to{opacity:1;transform:translateY(0)}}
+
 /* 展开编辑面 */
 .auto-editor{margin:0 8px 8px;padding:12px 14px;display:flex;flex-direction:column;gap:12px;background:var(--dsw-alias-bg-module-platform,rgba(255,255,255,.03));border-radius:12px}
 .auto-field{display:flex;flex-direction:column;gap:5px;min-width:0}
@@ -210,6 +215,7 @@ body[data-ds-dark-theme] .auto-model-pop,html[data-dsh-glass] body[data-ds-dark-
 
 @media (prefers-reduced-motion:reduce){
   .auto-toast{animation:none}
+  .auto-inline-notice{animation:none}
   .auto-switch,.auto-switch::after,.auto-chevron,.auto-chip,.auto-btn{transition:none!important}
   .auto-running svg,.auto-icon-btn[data-spin='true'] svg{animation:none!important}
   .auto-model-pop,.auto-model-models,.auto-model-check,.auto-model-chevron{animation:none!important}

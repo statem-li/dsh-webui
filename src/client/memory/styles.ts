@@ -62,6 +62,8 @@ export const css = {
   changeBadgeAdd: 'dsh-memory-change-badge-add',
   changeBadgeDelete: 'dsh-memory-change-badge-delete',
   changeBadgePromote: 'dsh-memory-change-badge-promote',
+  changeBadgeRevise: 'dsh-memory-change-badge-revise',
+  changeBadgeRetire: 'dsh-memory-change-badge-retire',
   changeOld: 'dsh-memory-change-old',
   changeNew: 'dsh-memory-change-new',
   changeDiff: 'dsh-memory-change-diff',
@@ -121,7 +123,9 @@ export const css = {
   miniSwitch: 'dsh-memory-mini-switch',
   miniSwitchOn: 'dsh-memory-mini-switch-on',
   itemDisabled: 'dsh-memory-item-disabled',
+  itemRetired: 'dsh-memory-item-retired',
   disabledMark: 'dsh-memory-disabled-mark',
+  retiredMark: 'dsh-memory-retired-mark',
   scopeBadge: 'dsh-memory-scope-badge',
   settingsBody: 'dsh-memory-settings-body',
   settingsGroup: 'dsh-memory-settings-group',
@@ -283,6 +287,10 @@ const SHEET = `
 .dsh-memory-change-badge-add{border-color:color-mix(in srgb,var(--dsw-alias-state-success-primary,#3aa675) 45%,transparent);color:var(--dsw-alias-state-success-primary,#3aa675);background:color-mix(in srgb,var(--dsw-alias-state-success-primary,#3aa675) 10%,transparent)}
 .dsh-memory-change-badge-promote{border-color:color-mix(in srgb,var(--dsw-alias-state-warn-primary,#e8a33d) 45%,transparent);color:var(--dsw-alias-state-warn-primary,#e8a33d);background:color-mix(in srgb,var(--dsw-alias-state-warn-primary,#e8a33d) 10%,transparent)}
 .dsh-memory-change-badge-delete{border-color:color-mix(in srgb,var(--dsw-alias-state-error-primary,#e0434b) 45%,transparent);color:var(--dsw-alias-state-error-primary,#e0434b);background:color-mix(in srgb,var(--dsw-alias-state-error-primary,#e0434b) 10%,transparent)}
+/* 修订（revise）：中性描边 + 弱紫蓝强调，表示「重写而非移除」 */
+.dsh-memory-change-badge-revise{border-color:color-mix(in srgb,var(--dsw-alias-state-info-primary,#5b9dff) 45%,transparent);color:var(--dsw-alias-state-info-primary,#5b9dff);background:color-mix(in srgb,var(--dsw-alias-state-info-primary,#5b9dff) 10%,transparent)}
+/* 软废弃（retire）：暖橙描边，表示「淡出而非消失」 */
+.dsh-memory-change-badge-retire{border-color:color-mix(in srgb,var(--dsw-alias-state-warn-primary,#e8a33d) 45%,transparent);color:var(--dsw-alias-state-warn-primary,#e8a33d);background:color-mix(in srgb,var(--dsw-alias-state-warn-primary,#e8a33d) 10%,transparent)}
 .dsh-memory-change-old{color:var(--dsw-alias-label-tertiary,#888);text-decoration:line-through;opacity:.8}
 .dsh-memory-change-new{color:var(--dsw-alias-label-primary,#eee)}
 .dsh-memory-change-diff{flex:1;min-width:0;display:flex;align-items:stretch;gap:10px}
@@ -372,7 +380,13 @@ const SHEET = `
 .dsh-memory-mini-switch-on::after{transform:translateX(12px);background:#fff}
 .dsh-memory-mini-switch:focus-visible{outline:none;box-shadow:0 0 0 2px var(--dsw-alias-border-l3,rgba(255,255,255,.16))}
 .dsh-memory-item-disabled{opacity:.55}
+/* 软废弃条目：整体淡化 + 删除线过渡（禁用=冻结，废弃=淡出；hover 微反馈） */
+.dsh-memory-item-retired{opacity:.6;transition:opacity .2s ease}
+.dsh-memory-item-retired:hover{opacity:.85}
+.dsh-memory-item-retired .dsh-memory-item-title-text{text-decoration:line-through;text-decoration-color:var(--dsw-alias-state-warn-primary,#e8a33d);text-decoration-thickness:1px}
 .dsh-memory-disabled-mark{flex:none;margin-left:2px;padding:0 5px;border:1px solid var(--dsw-alias-border-l3,rgba(255,255,255,.18));border-radius:4px;font-size:10px;line-height:14px;color:var(--dsw-alias-label-tertiary,#999);white-space:nowrap}
+/* 软废弃徽标（retired）：与禁用同款几何，暖橙描边区分「已淡出」状态 */
+.dsh-memory-retired-mark{flex:none;margin-left:2px;padding:0 5px;border:1px solid color-mix(in srgb,var(--dsw-alias-state-warn-primary,#e8a33d) 45%,transparent);border-radius:4px;font-size:10px;line-height:14px;color:var(--dsw-alias-state-warn-primary,#e8a33d);background:color-mix(in srgb,var(--dsw-alias-state-warn-primary,#e8a33d) 10%,transparent);white-space:nowrap}
 /* 行内作用域徽章（全局/项目名）：中性色紧凑版，图标+短名，超长省略 */
 .dsh-memory-scope-badge{flex:none;display:inline-flex;align-items:center;gap:3px;max-width:88px;padding:0 5px;border:1px solid var(--dsw-alias-border-l3,rgba(255,255,255,.16));border-radius:4px;font-size:10px;line-height:15px;color:var(--dsw-alias-label-tertiary,#999);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .dsh-memory-scope-badge svg{flex:none}

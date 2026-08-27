@@ -65,6 +65,13 @@ export interface RoleCapabilities {
 }
 /** 能力装配默认值（完全继承会话，不做任何限制）。 */
 export declare const DEFAULT_CAPABILITIES: RoleCapabilities;
+/**
+ * 备用模型链：主模型失败（且失败类型「换模型有救」，见 failure.ts shouldFallback）
+ * 时按顺序尝试。最多保留 3 个，解析时会剔除当前供应商配置里不存在的项。
+ */
+export type FallbackModels = ModelBinding[];
+/** 备用模型链最大长度。 */
+export declare const MAX_FALLBACK_MODELS = 3;
 /** 一个角色。 */
 export interface Role {
     /** 团队内唯一 id（如 'cha'）。 */
@@ -80,6 +87,11 @@ export interface Role {
     prompt: string;
     /** null = 继承团队默认模型；对象 = 本角色覆盖。 */
     model: ModelBinding | null;
+    /**
+     * 本角色的备用模型链：主模型失败且属于「换模型有救」的失败类型时按序尝试。
+     * 缺省 = 继承团队的 fallbackModels。
+     */
+    fallbackModels?: FallbackModels;
     executor: ExecutorPref;
     /** 模型短名（仅显示提示，不参与执行）。 */
     label?: string;
@@ -144,6 +156,8 @@ export interface TeamGlobals {
     outputChunkChars: number;
     /** 某步失败是否终止整链。 */
     stopOnError: boolean;
+    /** 主模型失败时自动尝试备用模型链（角色 fallbackModels → 团队 fallbackModels）。 */
+    autoFallback: boolean;
 }
 /** 团队可覆盖的执行偏好子集（不含 defaultModel / activeTeamId）。 */
 export type TeamOverrides = Partial<Omit<TeamGlobals, 'defaultModel' | 'activeTeamId'>>;
@@ -158,6 +172,8 @@ export interface Team {
     description?: string;
     /** 团队默认模型：本团队角色的默认模型（角色可覆盖）。 */
     model: ModelBinding;
+    /** 团队级备用模型链（角色未单独配置时继承本链）。 */
+    fallbackModels?: FallbackModels;
     roles: Role[];
     chains: Chain[];
     directLinks: DirectLink[];
@@ -183,8 +199,50 @@ export interface TeamSummary {
 export type RunStatus = 'queued' | 'running' | 'done' | 'error' | 'cancelled' | 'interrupted';
 /** RunStep 状态。 */
 export type StepStatus = 'pending' | 'running' | 'done' | 'error' | 'skipped';
+/**
+ * 失败归类（容错决策的唯一依据，判定逻辑见 failure.ts）。
+ *  - rate_limit   限流 / 并发超限（退避后重试有效）
+ *  - timeout      本步超时
+ *  - auth         鉴权失败（key 失效/无权限）
+ *  - quota        额度/余额不足
+ *  - network      网络层错误（DNS/连接/TLS/代理）
+ *  - server       上游 5xx / 过载 / 未正常结束
+ *  - model_missing 模型或供应商不存在
+ *  - content      请求被拒（内容策略、参数非法、上下文超长）
+ *  - cancelled    用户取消
+ *  - unknown      未归类（保守重试）
+ */
+export type StepErrorKind = 'rate_limit' | 'timeout' | 'auth' | 'quota' | 'network' | 'server' | 'model_missing' | 'content' | 'cancelled' | 'unknown';
+/** 单次尝试的执行记录（同一步的重试/降级轨迹，供详情卡展示「为什么失败、怎么救的」）。 */
+export interface StepAttempt {
+    /** 第几次尝试（1 起）。 */
+    attempt: number;
+    /** 本次尝试实际用的模型。 */
+    model: ModelBinding;
+    /** 是否为备用模型（主模型失败后降级）。 */
+    fallback: boolean;
+    status: 'done' | 'error';
+    errorKind?: StepErrorKind;
+    error?: string;
+    startedAt: string;
+    finishedAt: string;
+    /** 失败后计划的退避毫秒（最后一次尝试无此字段）。 */
+    backoffMs?: number;
+}
 /** 触发来源。 */
 export type RunOrigin = 'panel' | 'chat-toggle' | 'tool';
+/**
+ * 步骤内的执行阶段（实时可见性的核心字段）。
+ * `status=running` 时它回答「这一步现在到底在干什么」：
+ *  - resolving  解析模型 / 装配能力
+ *  - dispatch   已下发，等上游首个字节
+ *  - thinking   正在推理（reasoning-delta 在长）
+ *  - writing    正在产出正文（text-delta 在长）
+ *  - tooling    子 agent 正在调用工具（phaseNote = 工具名）
+ *  - retrying   本次尝试失败，退避等待中（phaseNote = 原因 + 倒计时目标）
+ *  - saving     产物落盘 / 收尾
+ */
+export type StepPhase = 'resolving' | 'dispatch' | 'thinking' | 'writing' | 'tooling' | 'retrying' | 'saving';
 /** 单步运行快照。 */
 /** 子 agent 任务清单的单项（todo_write 参数的最小投影）。 */
 export interface TodoItemLite {
@@ -207,14 +265,24 @@ export interface RunStep {
      */
     wave?: number;
     status: StepStatus;
+    /** 当前执行阶段（status=running 时有意义；见 StepPhase）。 */
+    phase?: StepPhase;
+    /** 阶段补充说明（工具名 / 退避原因 / 降级说明，一行短句）。 */
+    phaseNote?: string;
+    /** 阶段进入时间（UI 用它显示「本阶段已持续 N 秒」）。 */
+    phaseSince?: string;
     /** 截断后的输入快照。 */
     inputSnapshot: string;
     /** 截断后的输出（运行中为流式增量尾部）。 */
     output: string;
+    /** 累计输出字符数（流式进度指示，快照截断不影响它）。 */
+    outputChars?: number;
     /** 完整输出文件名（steps/ 目录下）。 */
     outputFile?: string;
     modelUsed: ModelBinding;
     modelSource: ModelSource;
+    /** 本步是否降级到了备用模型（true = modelUsed 是 fallback 链里的）。 */
+    fallbackUsed?: boolean;
     /** 实际执行通道。 */
     channel?: 'llm' | 'subagent';
     /** 本步实际生效的能力装配（无装配时缺省）。 */
@@ -238,8 +306,17 @@ export interface RunStep {
     startedAt?: string;
     finishedAt?: string;
     error?: string;
+    /** 失败归类（容错决策依据 + UI 徽标）。 */
+    errorKind?: StepErrorKind;
     /** 已重试次数。 */
     retries?: number;
+    /** 每次尝试的轨迹（重试与模型降级过程，最多保留 8 条）。 */
+    attempts?: StepAttempt[];
+    /**
+     * 本步是否由「一键接续」重跑产生（resume 计数，0/缺省 = 首轮运行）。
+     * 接续时会保留已完成步骤的产物，只重跑 error/skipped/pending 步骤。
+     */
+    resumeRound?: number;
 }
 /** 一次运行的完整快照（run.json）。 */
 export interface Run {
@@ -265,6 +342,17 @@ export interface Run {
     finishedAt?: string;
     steps: RunStep[];
     error?: string;
+    /** run 级失败归类（取第一个失败步骤的归类，或 run 级异常的归类）。 */
+    errorKind?: StepErrorKind;
+    /** 已执行的「一键接续」轮数（0/缺省 = 只跑过首轮）。 */
+    resumeCount?: number;
+    /** 最近一次接续时间。 */
+    resumedAt?: string;
+    /**
+     * 是否可一键接续：存在 error/skipped/pending 步骤且运行已结束。
+     * 由服务端在返回快照时计算（UI 不用自己推断状态机）。
+     */
+    resumable?: boolean;
     /** 最终交付物文件名（final-deliverable.md）。 */
     finalFile?: string;
 }
@@ -346,6 +434,11 @@ export declare class TeamError extends Error {
 }
 /** 归一化模型绑定；provider/model 皆空时返回 null。 */
 export declare function normalizeBinding(input: unknown): ModelBinding | null;
+/**
+ * 归一化备用模型链：逐项过滤非法绑定、去重（provider/model 同值只留一个）、限长。
+ * 空链返回 undefined（不写进文件，保持编制文件干净）。
+ */
+export declare function normalizeFallbackModels(input: unknown): FallbackModels | undefined;
 /**
  * 归一化能力装配；完全等价于默认值时返回 undefined（不写进文件，保持编制文件干净）。
  * allow/deny 模式但名单为空视为无意义 → 回退 inherit（避免"白名单空 = 屏蔽全部工具"的坑）。

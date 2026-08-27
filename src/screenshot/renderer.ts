@@ -70,6 +70,32 @@ let idleTimer: NodeJS.Timeout | null = null
 let chain: Promise<unknown> = Promise.resolve()
 /** 工作目录提供者（由 applyScreenshot 注入，指向 storages 下的 .engine）。 */
 let baseDirProvider: () => string = () => join(process.cwd(), '.dsh-shot-engine')
+/**
+ * 浏览器候选游标：默认从 0（Edge 优先，用户偏好）开始；渲染失败重试时
+ * 顺延到下一个候选（如 Edge 151 无头不稳 → Chrome 152），全部候选都失败
+ * 才上报。空闲回收后重置回 0，保持「默认 Edge、坏了自动换」。
+ */
+let candidateOffset = 0
+
+/** 取截图引擎专用的浏览器可执行文件：**Chrome 硬编码最优先**（本机
+ *  Chrome 152 无头验证稳定；Edge 151 无头必现「CDP 连接已关闭」，只作兜底）。
+ *  候选游标轮换仅用于「Chrome 不在场」时的 Edge/其他候选中循环。 */
+function pickChromeCandidate(): string {
+  const PREFERRED = [
+    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+  ]
+  for (const candidate of PREFERRED) {
+    if (existsSync(candidate)) return candidate
+  }
+  const usable = DEFAULT_CHROME_CANDIDATES.filter(candidate => existsSync(candidate))
+  if (usable.length === 0) {
+    throw new Error('未找到 Chrome/Edge 可执行文件')
+  }
+  const chromeFirst = [...usable].sort((a, b) => Number(/chrome/i.test(b)) - Number(/chrome/i.test(a)))
+  const pick = chromeFirst[candidateOffset % chromeFirst.length] as string
+  return pick
+}
 
 /**
  * 配置渲染引擎的工作目录。
@@ -79,10 +105,14 @@ export function configureRenderer(baseDir: () => string): void {
   baseDirProvider = baseDir
 }
 
-/** 重置空闲回收计时（每次渲染后调用）。 */
+/** 重置空闲回收计时（每次渲染后调用）。空闲回收关停实例时把浏览器候选
+ *  游标一并重置——下一次冷启动仍从 Chrome 开始（Edge 只是兜底）。 */
 function touchIdle(): void {
   if (idleTimer !== null) clearTimeout(idleTimer)
-  idleTimer = setTimeout(() => { void shutdownRenderer() }, IDLE_TTL_MS)
+  idleTimer = setTimeout(() => {
+    candidateOffset = 0
+    void shutdownRenderer()
+  }, IDLE_TTL_MS)
   // 不阻塞进程退出：空闲回收只为省内存，不该拖住 DSH 关停。
   idleTimer.unref?.()
 }
@@ -95,17 +125,38 @@ export async function shutdownRenderer(): Promise<void> {
   if (current === null) return
   try { current.conn.close() } catch { /* 已断开 */ }
   killChrome(current.runtime, true)
+  // 给进程树一点退出时间：Windows 上文件句柄释放有延迟，profile 锁未释放
+  // 就重建会撞上「用户数据目录被占用」→ 新实例连接后即断开（CDP 连接已关闭）。
+  await new Promise(resolve => setTimeout(resolve, 300))
   await rm(join(current.dir, 'page'), { recursive: true, force: true }).catch(() => {})
+  await rm(join(current.dir, 'profile'), { recursive: true, force: true }).catch(() => {})
+}
+
+/** 取得可用实例：已存在且连接健康则复用，否则重建。
+ *  健康判定不止 ws readyState——连接可能假死（ws 开着但浏览器已无响应），
+ *  这里多发一个轻量 Browser.getVersion 探活，任何异常都走重建。 */
+async function ensureEngine(): Promise<Engine> {
+  if (engine !== null && engine.conn.connected) {
+    try {
+      await engine.conn.send('Browser.getVersion', {}, undefined, 5000)
+      return engine
+    } catch {
+      // 假死连接：按失活处理，走下方重建。
+    }
+  }
+  await shutdownRenderer()
+  engine = await launch()
+  return engine
 }
 
 /** 启动一个新的常驻实例。 */
 async function launch(): Promise<Engine> {
-  const chromePath = resolveChromePath(DEFAULT_CHROME_CANDIDATES)
+  const chromePath = pickChromeCandidate()
   const port = await findFreePort(9400)
   const dir = baseDirProvider()
   const profileDir = join(dir, 'profile')
   await mkdir(profileDir, { recursive: true })
-  const runtime = launchChrome(chromePath, profileDir, port, ['--headless=new', '--disable-gpu', '--hide-scrollbars'])
+  const runtime = launchChrome(chromePath, profileDir, port, ['--headless=new'], join(dir, 'engine.log'))
   try {
     const wsUrl = await fetchBrowserWsUrl(port, 20000)
     const conn = new CdpConnection(wsUrl)
@@ -114,16 +165,11 @@ async function launch(): Promise<Engine> {
     return { runtime, conn, session, dir }
   } catch (error) {
     killChrome(runtime, true)
+    // 启动失败（可能是残留进程占着 profile）：等退出后清掉目录，下次全新启动。
+    await new Promise(resolve => setTimeout(resolve, 300))
+    await rm(profileDir, { recursive: true, force: true }).catch(() => {})
     throw error
   }
-}
-
-/** 取得可用实例：已存在且连接健康则复用，否则重建。 */
-async function ensureEngine(): Promise<Engine> {
-  if (engine !== null && engine.conn.connected) return engine
-  await shutdownRenderer()
-  engine = await launch()
-  return engine
 }
 
 /** 页面稳定脚本：字体就绪 + 图片解码完成（最多等 waitMs，超时按现状截）。 */
@@ -210,6 +256,46 @@ async function waitMermaid(session: CdpSession): Promise<void> {
   ).catch(() => null)
 }
 
+/**
+ * 引擎健康诊断：逐步探测「实例状态 → CDP 探活 → 冷启动新实例 → 版本信息」，
+ * 并报告浏览器候选与游标。供 /api/webui-screenshot/diagnose 调用，排查
+ * 「CDP 连接已关闭」不再靠猜。
+ */
+export async function diagnoseEngine(): Promise<Record<string, unknown>> {
+  const out: Record<string, unknown> = {
+    hasEngine: engine !== null,
+    candidateOffset,
+    browser: engine?.runtime.proc.spawnfile ?? null,
+    candidates: DEFAULT_CHROME_CANDIDATES.filter(candidate => existsSync(candidate)),
+  }
+  if (engine !== null) {
+    out.connected = engine.conn.connected
+    if (engine.conn.connected) {
+      try {
+        const version = await engine.conn.send('Browser.getVersion', {}, undefined, 5000)
+        out.version = version
+      } catch (error) {
+        out.probeError = String((error as Error)?.message ?? error)
+      }
+    }
+  }
+  try {
+    const started = await ensureEngine()
+    out.engineReady = true
+    out.port = started.runtime.port
+    out.browser = started.runtime.proc.spawnfile
+    try {
+      const version = await started.conn.send('Browser.getVersion', {}, undefined, 5000)
+      out.version = version
+    } catch (error) {
+      out.versionError = String((error as Error)?.message ?? error)
+    }
+  } catch (error) {
+    out.engineError = String((error as Error)?.message ?? error)
+  }
+  return out
+}
+
 /** 一次渲染（内部：假定已在串行队列内、实例已就绪）。 */
 async function renderOnce(target: Engine, input: RenderInput): Promise<string> {
   const scale = input.scale ?? 2
@@ -293,14 +379,20 @@ export function renderPng(input: RenderInput): Promise<string> {
   const task = async (): Promise<string> => {
     try {
       return await renderOnce(await ensureEngine(), input)
-    } catch {
-      // 实例可能已被外部杀掉或崩溃：整体重建一次再试，仍失败才上报。
+    } catch (firstError) {
+      // 实例可能已被外部杀掉或崩溃：重建一次再试，且**换下一个浏览器候选**
+      //（Chrome 失败 → Edge 兜底），排除单一浏览器无头模式的偶发问题。
+      const firstBrowser = engine?.runtime.proc.spawnfile ?? 'unknown'
+      console.warn('[webui-screenshot] render failed, engine will be rebuilt with next browser candidate:',
+        `${firstBrowser}:`, String((firstError as Error)?.message ?? firstError))
+      candidateOffset += 1
       await shutdownRenderer()
       try {
         return await renderOnce(await ensureEngine(), input)
       } catch (retryError) {
         await shutdownRenderer()
-        throw retryError instanceof Error ? retryError : new Error(String(retryError))
+        const message = retryError instanceof Error ? retryError.message : String(retryError)
+        throw new Error(`${message}（截图引擎已自动重建并换用备用浏览器重试仍失败；可再点一次「重新渲染」触发全新实例）`)
       }
     } finally {
       touchIdle()

@@ -15,6 +15,8 @@ export interface MemoryEntryView {
   pinned: boolean
   /** true = 已禁用（保留但不参与注入/编译）。 */
   disabled: boolean
+  /** true = 已软废弃（retire / revise）。 */
+  deprecated?: boolean
   importance: number
   layer: 'short' | 'long'
   source: 'extract' | 'manual'
@@ -49,7 +51,7 @@ export interface ProjectView {
 /** 变更记录。 */
 export interface ChangeView {
   id: string
-  action: 'add' | 'update' | 'promote' | 'delete'
+  action: 'add' | 'update' | 'promote' | 'delete' | 'revise' | 'retire'
   entryId: string
   scope: 'global' | 'project'
   projectHash: string | null
@@ -78,6 +80,7 @@ export interface MemorySummaryResponse {
    */
   pinnedCount?: number
   disabledCount?: number
+  deprecatedCount?: number
   longtermCount?: number
   globalCount?: number
 }
@@ -130,6 +133,12 @@ export interface MemoryConfigView {
   dailyCompileEnabled?: boolean
   consolidateEnabled?: boolean
   logApiRequests?: boolean
+  /** 语义检索后端（schema v3）。 */
+  embeddingProvider?: 'off' | 'http' | 'local'
+  embeddingBaseUrl?: string
+  embeddingModel?: string
+  embeddingApiKey?: string
+  embeddingDimensions?: number
 }
 
 interface ApiError {
@@ -151,6 +160,7 @@ function normalizeEntry(entry: MemoryEntryView): MemoryEntryView {
     ...entry,
     tags: Array.isArray(entry.tags) ? entry.tags : [],
     disabled: entry.disabled === true,
+    deprecated: entry.deprecated === true,
     pinned: entry.pinned === true,
     importance: Number.isFinite(entry.importance) ? entry.importance : 0,
     version: Number.isFinite(entry.version) ? entry.version : 1,
@@ -205,7 +215,7 @@ async function sendJson<T>(path: string, payload: unknown): Promise<T> {
 
 /** 面板 API 面（slots inject 提供）。 */
 export interface MemoryApi {
-  list: (params?: { scope?: string; project?: string; q?: string; tag?: string }) => Promise<MemoryListResponse>
+  list: (params?: { scope?: string; project?: string; q?: string; tag?: string; includeDeprecated?: boolean }) => Promise<MemoryListResponse>
   projects: () => Promise<{ projects: ProjectView[] }>
   tags: () => Promise<MemoryTagsResponse>
   changes: (date?: string) => Promise<MemoryChangesResponse>
@@ -244,6 +254,12 @@ export interface MemoryApi {
   setConfig: (patch: Partial<MemoryConfigView>) => Promise<{ ok: boolean; config: MemoryConfigView }>
   /** 恢复引擎默认配置（清空 config.json 覆盖层）。 */
   resetConfig: () => Promise<{ ok: boolean; config: MemoryConfigView }>
+  /** 修订记忆：软废弃旧条目 + 写入后继条目。 */
+  revise: (entryId: string, input: { content: string; reason?: string; tags?: string[]; importance?: number }) => Promise<{ ok: boolean; deprecatedId: string; newId: string; entry: MemoryEntryView }>
+  /** 软废弃记忆（数据保留，退出检索/注入）。 */
+  retire: (entryId: string, reason?: string) => Promise<{ ok: boolean; entry: MemoryEntryView }>
+  /** 复活已废弃记忆。 */
+  restore: (entryId: string) => Promise<{ ok: boolean; entry: MemoryEntryView }>
 }
 
 /** 构造面板 API 面。 */
@@ -255,6 +271,7 @@ export function createMemoryApi(): MemoryApi {
       if (params.project !== undefined && params.project !== '') query.set('project', params.project)
       if (params.q !== undefined && params.q !== '') query.set('q', params.q)
       if (params.tag !== undefined && params.tag !== '') query.set('tag', params.tag)
+      if (params.includeDeprecated === true) query.set('includeDeprecated', '1')
       const suffix = query.toString() === '' ? '' : `?${query.toString()}`
       return getJson<MemoryListResponse>(`/list${suffix}`).then(response => ({
         ...response,
@@ -283,5 +300,8 @@ export function createMemoryApi(): MemoryApi {
     getConfig: () => getJson<{ config: MemoryConfigView }>('/config'),
     setConfig: (patch) => sendJson<{ ok: boolean; config: MemoryConfigView }>('/config', patch),
     resetConfig: () => sendJson<{ ok: boolean; config: MemoryConfigView }>('/config', { reset: true }),
+    revise: (entryId, input) => sendJson<{ ok: boolean; deprecatedId: string; newId: string; entry: MemoryEntryView }>('/revise', { entryId, ...input }).then(withEntry) as Promise<{ ok: boolean; deprecatedId: string; newId: string; entry: MemoryEntryView }>,
+    retire: (entryId, reason) => sendJson<{ ok: boolean; entry: MemoryEntryView }>('/retire', { entryId, reason }).then(withEntry),
+    restore: (entryId) => sendJson<{ ok: boolean; entry: MemoryEntryView }>('/restore', { entryId }).then(withEntry),
   }
 }

@@ -552,6 +552,18 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
     void run(() => apiRef.current.deleteEntry(entry.id))
   }
 
+  /** 软废弃（retire）：数据保留，退出活跃生命周期。 */
+  const handleRetire = (entry: MemoryEntryView): void => {
+    if (!window.confirm(t('retireConfirm'))) return
+    void run(() => apiRef.current.retire(entry.id))
+  }
+
+  /** 恢复已废弃条目（undo retire）。 */
+  const handleRestore = (entry: MemoryEntryView): void => {
+    if (!window.confirm(t('restoreConfirm'))) return
+    void run(() => apiRef.current.restore(entry.id))
+  }
+
   /** 一键整理（Memory Dream）：当前筛选为某项目时只整理该项目，否则全量。 */
   const handleConsolidate = (): void => {
     if (!window.confirm(t('consolidateConfirm'))) return
@@ -790,6 +802,7 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
     const selected = !selecting && entry.id === selectedId
     const checked = checkedIds.has(entry.id)
     const enabled = entry.disabled !== true
+    const retired = entry.deprecated === true
     return (
       <li key={entry.id} className={css.itemRow}>
         <button
@@ -798,6 +811,7 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
             css.item,
             (selecting ? checked : selected) ? css.itemSelected : '',
             enabled ? '' : css.itemDisabled,
+            retired ? css.itemRetired : '',
           ].filter(Boolean).join(' ')}
           data-selected={(selecting ? checked : selected) || undefined}
           aria-pressed={selecting ? checked : undefined}
@@ -820,6 +834,7 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
                 {entry.scope === 'global' ? t('scopeGlobal') : projectName(entry.projectHash, projects)}
               </span>
               {!enabled && <span className={css.disabledMark}>{t('disabledTag')}</span>}
+              {retired && <span className={css.retiredMark}>{t('retiredTag')}</span>}
             </span>
             <span className={css.itemSnippet}>{entrySnippet(entry.content)}</span>
             <span className={css.itemFoot}>
@@ -858,6 +873,7 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
   /** 详情区头部操作钮组。 */
   const detailActions = (entry: MemoryEntryView): JSX.Element => {
     const enabled = entry.disabled !== true
+    const retired = entry.deprecated === true
     return (
       <div className={css.cardActions}>
         <Tooltip label={entry.pinned ? t('unpin') : t('pin')} side="bottom" delayMs={500}>
@@ -886,6 +902,20 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
             <IconFolderOpenOutline16 size={14} />
           </button>
         </Tooltip>
+        {/* schema v3：soft retire（保留数据）/ restore（复活已废弃）——与彻底删除并排。 */}
+        {retired ? (
+          <Tooltip label={t('restore')} side="bottom" delayMs={500}>
+            <button type="button" className={css.iconAction} aria-label={t('restore')} disabled={busy} onClick={() => { handleRestore(entry) }}>
+              <IconRefreshOutline14 size={14} />
+            </button>
+          </Tooltip>
+        ) : (
+          <Tooltip label={t('retire')} side="bottom" delayMs={500}>
+            <button type="button" className={css.iconAction} aria-label={t('retire')} disabled={busy} onClick={() => { handleRetire(entry) }}>
+              <PowerIcon size={14} dim />
+            </button>
+          </Tooltip>
+        )}
         <Tooltip label={t('delete')} side="bottom" delayMs={500}>
           <button type="button" className={`${css.iconAction} ${css.iconActionDanger}`} aria-label={t('delete')} disabled={busy} onClick={() => { handleDelete(entry) }}>
             <IconTrashOutline16 size={14} />
@@ -1416,6 +1446,11 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
                         {t('tabPinned')}
                       </span>
                     )}
+                    {detail.deprecated === true && (
+                      <span className={`${css.metaBadge} ${css.metaBadgeWarn}`} title={t('retire')}>
+                        {t('retiredTag')}
+                      </span>
+                    )}
                     {detail.verified
                       ? <span className={css.metaBadge} title={t('verified')}><VerifiedIcon />{t('verified')}</span>
                       : <span className={`${css.metaBadge} ${css.metaBadgeMuted}`} title={t('unverified')}>{t('unverified')}</span>}
@@ -1530,7 +1565,11 @@ export function MemoryPanel({ open, closing = false, onClose, initialTab, anchor
         ? `${css.changeBadge} ${css.changeBadgeAdd}`
         : change.action === 'promote'
           ? `${css.changeBadge} ${css.changeBadgePromote}`
-          : css.changeBadge
+          : change.action === 'revise'
+            ? `${css.changeBadge} ${css.changeBadgeRevise}`
+            : change.action === 'retire'
+              ? `${css.changeBadge} ${css.changeBadgeRetire}`
+              : css.changeBadge
     return (
       <li key={change.id} className={css.changeRow}>
         <span className={badgeClass}>{changeActionLabel(change.action, t)}</span>
@@ -1571,5 +1610,7 @@ export function changeActionLabel(action: ChangeView['action'], t: MemoryT): str
     case 'update': return t('changeUpdate')
     case 'promote': return t('changePromote')
     case 'delete': return t('changeDelete')
+    case 'revise': return t('changeRevise')
+    case 'retire': return t('changeRetire')
   }
 }

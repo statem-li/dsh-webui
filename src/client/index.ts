@@ -59,6 +59,8 @@ import { applyApprovalNotifier } from './approval-notify'
 import {
   BetterAssistantNodeView, DshCodeBlockNode, DshImageNode, DshInlineCodeNode, DshLinkNode,
   MarkdownImageStrip,
+  WebuiHtmlBlockNode,
+  WebuiHtmlInlineNode,
 } from './markdown/renderer'
 // 图表渲染（mermaid 围栏 → 图，引擎按需加载）：模块开关。
 import { DiagramBlock, setDiagramEnabled } from './markdown/diagram'
@@ -85,6 +87,19 @@ import { applyMessageDeliverables } from './message-deliverables/index'
 // workspace 外产物的读取授权仍依赖它；卡片本体（message-deliverables/）留档不挂载。
 // 移动端响应式：手机断点识别 + DSH 设置面板单列化等全局覆盖。
 import { injectResponsiveStyles } from './responsive'
+// 移动端全局覆盖（触控/字号/头部收起/消息窄胶囊）+ 输入框属性兜底。
+import { injectMobileOverrides, applyMobileInputAttributes } from './mobile-overrides'
+// 移动端「回到顶部」浮钮（conversation.composer.dock 槽，order=100 置顶）。
+import { BackToTopButton } from './back-to-top'
+// 移动端「APP 一般体验」层（meta 沉浸化/质感样式/波纹+震动）+ 底部标签栏（P0-App-1..4、P1-App-5）。
+import { applyMobileAppShell } from './mobile-app-shell'
+// 移动端「左上角菜单按钮 + 工作区抽屉」（P1-App-5 重构，替代 app-tabbar）。
+import { AppMenu, setMobileMenuServices } from './mobile-menu'
+// 移动端「极简模式」：窄屏只留内容区与必要入口，把冗余 UI 收进左上菜单抽屉（纯样式注入）。
+import { injectMobileMinimal } from './mobile-minimal'
+// React 渲染底座：createRoot 挂移动端标签栏（index.ts 为 .ts 无 JSX，用 createElement 装配）。
+import { createElement } from 'react'
+import { createRoot } from 'react-dom/client'
 // 壳子窗口控制按钮共存：详情面板头部为右上角「最小化/最大化/关闭」让位。
 import { injectShellTitlebarStyles } from './shell-titlebar'
 // 技能 slash 源（替代内核 ui-skill）：输入 / 先选集合再选技能 + 技能工具行。
@@ -119,8 +134,31 @@ export function apply(ctx: ClientContext): void {
   const on = (key: WebuiModuleKey): boolean => isModuleEnabled(moduleOverrides, key)
   syncServerModules()
 
+  // ---- 注入移动端菜单抽屉的运行时服务（会话列表 / 新建会话 / 切换需要）----
+  // 与 session-pin 的模块级 setter 同款先例；apply 先注入，AppMenu 挂载 effect 再读。
+  setMobileMenuServices(ctx.sessions, ctx.workspaces)
+
   // ---- 移动端响应式：全局覆盖样式（DSH 设置面板单列化等），随插件生命周期清理 ----
   ctx.effect(() => injectResponsiveStyles(), 'webui: responsive styles')
+
+  // ---- 移动端全局覆盖（触控/字号/头部收起/消息窄胶囊）+ 输入框属性兜底 ----
+  // 与 injectResponsiveStyles 同生命周期；幂等 + 返回移除函数，卸载时清理。
+  ctx.effect(() => injectMobileOverrides(), 'webui: mobile overrides')
+  ctx.effect(() => applyMobileInputAttributes(), 'webui: mobile input attrs')
+  // ---- 移动端「APP 一般体验」层：meta 沉浸化 + 质感样式 + 波纹/震动（P0-App-1..4）----
+  ctx.effect(() => applyMobileAppShell(), 'webui: mobile app shell')
+  // ---- 移动端「极简模式」：窄屏只留内容区+必要入口，把冗余 UI 收进 TabBar（Wave B 挂载）----
+  ctx.effect(() => injectMobileMinimal(), 'webui: mobile minimal')
+
+  // ---- 回到顶部浮钮：conversation.composer.dock 槽（StatsLineShadow 同槽，
+  //      id=webui-back-to-top / order=100，二者并存不冲突）。 ----
+  ctx.slots.inject('conversation.composer.dock', () =>
+    ctx.slots.register({
+      name: 'conversation.composer.dock',
+      id: 'webui-back-to-top',
+      order: 100,
+      locale: 'conversation',
+    }, BackToTopButton))
 
   // ---- 壳子标题栏共存：详情面板头部为右上角窗口按钮让位（同一行对齐）----
   ctx.effect(() => injectShellTitlebarStyles(), 'webui: shell titlebar styles')
@@ -194,6 +232,11 @@ export function apply(ctx: ClientContext): void {
       image: DshImageNode,
       inline_code: DshInlineCodeNode,
       link: DshLinkNode,
+      // 原始 HTML（htmlPolicy=trusted）渲染：覆写 markstream 内置的 html_block /
+      // html_inline（其结构化渲染会把模型输出的整篇 HTML 误解析成代码块堆），
+      // 改用净化后的 HTML 直接交给浏览器原生解析（见 renderer.tsx）。
+      html_block: WebuiHtmlBlockNode,
+      html_inline: WebuiHtmlInlineNode,
       // 回复正文里连续出现的生图结果图片（![]() 引用）聚合条：多张并排缩略图、
       // 单张小图、点击全屏 Lightbox（替代原先一张占满整行宽的大图）。
       image_strip: MarkdownImageStrip,
@@ -332,4 +375,19 @@ export function apply(ctx: ClientContext): void {
 
   // ---- 团队编排：侧边栏「团队」面板 + 对话框团队开关 + 对话流执行 HUD --------
   if (on('team')) applyTeamClient(ctx)
+
+  // ---- 移动端左上菜单按钮 + 工作区抽屉：自建挂载点（P1-App-5，createRoot 渲染 AppMenu）----
+  // 桌面端组件内部 useIsMobile() 判端 return null（零渲染）；挂载点常驻不插槽。
+  // 组件内部会 createPortal 到 document.body（fixed 全屏弹层红线），holder 仅作渲染锚点。
+  ctx.effect(() => {
+    const holder = document.createElement('div')
+    holder.id = 'webui-mobile-menu-host'
+    document.body.appendChild(holder)
+    const root = createRoot(holder)
+    root.render(createElement(AppMenu))
+    return () => {
+      root.unmount()
+      holder.remove()
+    }
+  }, 'webui: mobile menu')
 }

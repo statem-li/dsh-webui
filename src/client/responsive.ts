@@ -59,6 +59,16 @@ const STYLE_ID = 'dsh-webui-responsive-styles'
  * 通用对话框行为；插件自有弹窗的移动端规则在各组件 styles 里。
  */
 const SHEET = `
+/* ── 移动端安全区变量：桌面 env()=0，无副作用；供全屏 sheet/浮钮/底部固定元素取用 ── */
+:root {
+  --webui-safe-top: env(safe-area-inset-top, 0px);
+  --webui-safe-right: env(safe-area-inset-right, 0px);
+  --webui-safe-bottom: env(safe-area-inset-bottom, 0px);
+  --webui-safe-left: env(safe-area-inset-left, 0px);
+}
+/* 本文件所有注入注释内严禁写出「星号紧跟正斜杠」组合，否则会提前闭合注释、
+   拖垮后续规则；描述此风险时仅用文字，切勿真正写出该两字符序列。 */
+
 @media (max-width: 767.98px) {
   /* 遮罩容器去掉 24px 留白，让内部对话框真正贴边全屏。 */
   [role="presentation"]:has(> [role="dialog"][aria-modal="true"]) {

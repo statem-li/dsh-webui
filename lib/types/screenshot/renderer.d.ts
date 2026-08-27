@@ -18,6 +18,12 @@ export interface RenderInput {
     needsMermaid?: boolean;
 }
 /**
+ * 引擎健康诊断：逐步探测「实例状态 → CDP 探活 → 冷启动新实例 → 版本信息」，
+ * 并报告浏览器候选与游标。供 /api/webui-screenshot/diagnose 调用，排查
+ * 「CDP 连接已关闭」不再靠猜。
+ */
+export declare function diagnoseEngine(): Promise<Record<string, unknown>>;
+/**
  * 渲染 HTML 为 PNG（base64）。串行执行；实例失效时自动重建并重试一次。
  * @param input - HTML 与视口尺寸。
  * @returns PNG 的 base64 数据（不含 data: 前缀）。

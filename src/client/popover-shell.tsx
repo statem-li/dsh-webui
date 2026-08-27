@@ -55,6 +55,27 @@ html[data-dsh-glass] body[data-ds-dark-theme] .psh-card[data-solid]{
 .psh-close:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.06));color:var(--dsw-alias-label-primary,#eee)}
 /* 卡片主体滚动区 */
 .psh-body{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
+/* ── 移动端：任何模式强制全屏 sheet（100vw / 100dvh，radius 0）。
+    参考 tool-summary .dts__modal 的 767.98px 写法；!important 压过组件内联
+    left/top/width/height（popover 模式用内联定位，必须覆盖到 0/全屏）。
+    transform:none 仅作静态兜底，滑入/滑出动画的 keyframe transform 仍优先播放；
+    本块注释内容未写出「星号紧跟正斜杠」两字符序列。 ── */
+@media (max-width: 767.98px){
+  .psh-card{
+    left:0 !important;
+    top:0 !important;
+    right:auto !important;
+    bottom:auto !important;
+    width:100vw !important;
+    max-width:100vw !important;
+    height:100vh !important;
+    height:100dvh !important;
+    max-height:100vh !important;
+    max-height:100dvh !important;
+    border-radius:0 !important;
+    transform:none !important;
+  }
+}
 @media (prefers-reduced-motion:reduce){
   .psh-mask,.psh-card{animation:none!important}
   .psh-card{transition:none!important}

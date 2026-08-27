@@ -48,6 +48,47 @@ function Row({ label, hint, children }: { label: string; hint?: string; children
   )
 }
 
+/** 文本输入行：本地草稿 + 失焦/Enter 提交（与 NumberRow 同款防中间态）。 */
+function TextRow({ label, hint, value, placeholder, disabled, type = 'text', onCommit }: {
+  label: string
+  hint?: string
+  value: string | undefined
+  placeholder?: string
+  disabled?: boolean
+  type?: 'text' | 'password'
+  onCommit: (next: string) => void
+}): JSX.Element {
+  const [draft, setDraft] = useState(value ?? '')
+  useEffect(() => { setDraft(value ?? '') }, [value])
+
+  const commit = (): void => {
+    const trimmed = draft.trim()
+    if (trimmed !== (value ?? '')) onCommit(trimmed)
+  }
+
+  return (
+    <Row label={label} hint={hint}>
+      <input
+        type={type}
+        className={css.inlineInput}
+        style={{ width: 200 }}
+        aria-label={label}
+        placeholder={placeholder}
+        value={draft}
+        disabled={disabled}
+        onChange={event => { setDraft(event.currentTarget.value) }}
+        onBlur={commit}
+        onKeyDown={event => {
+          if (event.key === 'Enter') {
+            event.preventDefault()
+            commit()
+          }
+        }}
+      />
+    </Row>
+  )
+}
+
 /** 开关行。 */
 function SwitchRow({ label, hint, value, disabled, onChange }: {
   label: string
@@ -145,8 +186,11 @@ export function SettingsTab({ config, busy = false, t, onPatch, onReset }: {
 
   const num = (field: NumberKey): number | undefined => config[field]
   const bool = (field: BooleanKey): boolean => config[field] === true
+  const str = (field: 'embeddingBaseUrl' | 'embeddingModel' | 'embeddingApiKey'): string | undefined => config[field]
   const setNum = (field: NumberKey) => (next: number): void => { onPatch({ [field]: next } as Partial<MemoryConfigView>) }
   const setBool = (field: BooleanKey) => (next: boolean): void => { onPatch({ [field]: next } as Partial<MemoryConfigView>) }
+  const setStr = (field: 'embeddingBaseUrl' | 'embeddingModel' | 'embeddingApiKey') => (next: string): void => { onPatch({ [field]: next } as Partial<MemoryConfigView>) }
+  const embeddingOn = config.embeddingProvider !== undefined && config.embeddingProvider !== 'off'
 
   return (
     <div className={css.settingsBody}>
@@ -178,6 +222,33 @@ export function SettingsTab({ config, busy = false, t, onPatch, onReset }: {
         <SwitchRow label={t('cfgConsolidate')} hint={t('consolidateHint')} value={bool('consolidateEnabled')} disabled={busy} onChange={setBool('consolidateEnabled')} />
         <NumberRow label={t('cfgConsolidateMax')} field="consolidateMaxEntries" value={num('consolidateMaxEntries')} t={t} onCommit={setNum('consolidateMaxEntries')} />
         <NumberRow label={t('cfgConsolidateTimeout')} field="consolidateTimeoutMs" value={num('consolidateTimeoutMs')} t={t} onCommit={setNum('consolidateTimeoutMs')} />
+      </section>
+
+      <section className={css.settingsGroup}>
+        <h4 className={css.settingsGroupTitle}>{t('settingsGroupEmbedding')}</h4>
+        <Row label={t('cfgEmbeddingProvider')} hint={t('cfgEmbeddingProviderHint')}>
+          <select
+            className={css.tagSelect}
+            aria-label={t('cfgEmbeddingProvider')}
+            value={config.embeddingProvider ?? 'off'}
+            disabled={busy}
+            onChange={event => { onPatch({ embeddingProvider: event.currentTarget.value as 'off' | 'http' | 'local' }) }}
+          >
+            <option value="off">{t('cfgEmbeddingOff')}</option>
+            <option value="http">{t('cfgEmbeddingHttp')}</option>
+            <option value="local">{t('cfgEmbeddingLocal')}</option>
+          </select>
+        </Row>
+        {embeddingOn && (
+          <>
+            <TextRow label={t('cfgEmbeddingBaseUrl')} hint={t('cfgEmbeddingBaseUrlHint')} value={str('embeddingBaseUrl')} placeholder="https://api.openai.com/v1" disabled={busy} onCommit={setStr('embeddingBaseUrl')} />
+            <TextRow label={t('cfgEmbeddingModel')} hint={t('cfgEmbeddingModelHint')} value={str('embeddingModel')} placeholder="text-embedding-3-small" disabled={busy} onCommit={setStr('embeddingModel')} />
+            <TextRow label={t('cfgEmbeddingApiKey')} hint={t('cfgEmbeddingApiKeyHint')} value={str('embeddingApiKey')} placeholder={t('cfgEmbeddingApiKeyPlaceholder')} type="password" disabled={busy} onCommit={setStr('embeddingApiKey')} />
+            {config.embeddingProvider === 'local' && (
+              <div className={css.settingsHint}>{t('cfgEmbeddingLocalHint')}</div>
+            )}
+          </>
+        )}
       </section>
 
       <section className={css.settingsGroup}>
