@@ -115,6 +115,7 @@ curl -X POST http://127.0.0.1:3080/api/webui-modules \
 | 会话切换柔和过渡 | 内容区淡入上浮、面包屑轻淡入、侧边栏高亮 FLIP 式滑动；`prefers-reduced-motion` 自动禁用 |
 | 消息气泡宽度 | 「发送对话宽度」拖动条（px/% 单位，settings.yaml 持久化），只作用于本人消息气泡 |
 | 输入框增强 | Ctrl+Enter 换行；移动端响应式 |
+| 移动端适配 | 窄屏自动切换 App Shell 布局：底部 Tab 栏（app-tabbar）、折叠式菜单（mobile-menu）、极简视图（mobile-minimal）、返回顶部按钮（back-to-top），响应式样式覆盖（mobile-overrides）；详见 docs/mobile-adaptation-plan.md |
 | 提示词优化 | 对话框「优化提示词」图标：点击开面板，用当前选中模型改写草稿；均衡/精简/详尽三档风格可换档重跑，结果先在面板预览、点「应用到输入框」才写回草稿（可选包成 `/goal`）。模型输出会去掉解释文字/围栏/「主要改动」段落后才落地（loopback-only API，仅本地可调） |
 | 中文思考开关 | 设置页「中文思考」 |
 | MOOD 自述 | Agent 在思考结束、正式回答之前先写一段第一人称自述（```mood 围栏），渲染成对话流里的 MOOD 卡片。**默认折叠**成一枚 chip（星标 + 首节摘要 + 条目数），点击展开左竖线面板（按「小节名: / 条目」自动分节）；折叠态不挂面板 DOM。设置 →「MOOD」页：总开关 + 默认人设 + 按 Agent 预设逐个配开关与专属人设（留空沿用默认，新建的 Agent 自动继承）。提示词段按当次组装的 agent 解析其 preset id 渲染，关闭时返回空串零 token |
@@ -291,6 +292,8 @@ dock 工具条「选取元素」按钮进入选取模式，点击预览画面任
   技能则把正文**内联进提示词**（按预算截断）。装配清单里当前环境缺失的名字只提示、不阻断执行。
 - **出厂编制**：主脑 brain 星见（中枢）+ architect 观月 / strategist 凛音（信息与判断）+ coder 琉夏 / tester 星乃（落地执行）+ reviewer 神代（守护支持），
   两条预设链：`full-delivery` 观月→琉夏→神代→整合、`fast-iteration` 琉夏→星乃→整合
+- **链内并行组**：ChainStep 加 `parallel: true` 标记「与上一步同批并行执行」——引擎把连续标记 parallel 的步骤归入同一波次（wave）并发启动，受 `maxParallel`（默认 2，1–5）限制；超限自动溢出到下一波
+- **主脑自主派发（autoPlan）**：`team_run` 传 `autoPlan: true` 时，主脑先用自身模型产 JSON 波次计划（`PLAN_SYSTEM` + `buildPlanPrompt`），按依赖关系编排并行组再执行，不必预定义链；解析失败（如空数组/非法 roleId）回退全串行+整合，不留半成品
 - **两条执行通道**：`llm` 直跑（精确用设定模型，无工具）/ `subagent`（完整 agent，可读写文件跑命令，模型继承会话）；
   角色 `executor` 为 `auto` 时按触发上下文自动选择（面板触发→llm，对话内触发→subagent）
 - **对话框团队开关**：输入区「团队」图标（order 4，提示词优化左侧）→ 悬浮卡选团队/链条/强制模式，
@@ -300,7 +303,7 @@ dock 工具条「选取元素」按钮进入选取模式，点击预览画面任
   展开后是**每角色一张运行卡**（状态灯呼吸 / 实际模型 + 来源徽标 / 单步计时 / 流式输出摘要 / 点开看全文），
   支持取消运行、多团队并发分段、结束后停留 15s 再收成小胶囊
 - **产物落盘**：`${DSH_HOME}/team/runs/R-<ts>-<rand>/`（`run.json` + `steps/NN-<role>.md` + `final-deliverable.md`）
-- **工具**：`team_create`（一句话生成团队）、`team_list`（列出团队与链）、`team_run`（启动并等待完成，返回最终交付物）、`team_status`（查运行状态与每步模型来源）
+- **工具**：`team_create`（一句话生成团队）、`team_list`（列出团队与链）、`team_run`（启动并等待完成，返回最终交付物；支持 `autoPlan` 自主并行派发）、`team_status`（查运行状态与每步模型来源）
 - **HTTP API**：`/api/webui-team/{teams,globals,providers,capabilities,chat-mode,runs}`（loopback-only）；
   settings 命名空间 `webui-team` 承载全局默认（超时/重试/并发/上游预算/失败即停）
 
@@ -311,7 +314,8 @@ dock 工具条「选取元素」按钮进入选取模式，点击预览画面任
 - **条目编辑**：内容 / 标签 / 重要度 / 置顶 / 记忆类型（身份·偏好·事实·决策·踩坑·会话摘要）/ 归属（全局 ⇄ 项目）在同一编辑面完成；项目可就地改别名（清空回退目录名）、按项目开关自动记忆、清空该项目记忆（置顶豁免）
 - **变更 / 修订**：变更 Tab 可切「今天 / 全部」，动作徽标按语义配色（新增绿 / 沉淀金 / 删除红），改写类变更左右并排对比；修订 Tab 列出整理前快照并可一键回滚
 - **设置 Tab**：分组行卡片（注入 / 提取 / 编译与衰减 / 整理 / 诊断），每项显示取值范围与说明，数值失焦或回车才提交（避免把「删空重打」的中间态写进配置），越界由 host 钳制，另有「恢复默认」
-- **本地 hybrid 检索引擎**（零外部依赖）：keyword 精确子串 AND 命中；hybrid（默认）= 字符 n-gram Jaccard 相似度 + 精确命中加成 + 元数据加权（verified / confidence / importance）；semantic 模式预留，待 embedding 接口可用时替换打分实现即可。**面板搜索与 `memory_search` 工具走同一套打分**，不会出现「工具搜得到、面板搜不到」
+- **本地 hybrid 检索引擎**（零外部依赖）：keyword 精确子串 AND 命中；hybrid（默认）= 字符 n-gram Jaccard 相似度 + 精确命中加成 + 元数据加权（verified / confidence / importance）。**面板搜索与 `memory_search` 工具走同一套打分**，不会出现「工具搜得到、面板搜不到」
+- **semantic 向量检索（可用）**：embedding 引擎（`src/memory/engine/embedding.ts`）双后端——`http` 走任意 OpenAI 兼容 `/v1/embeddings`（含 ollama openai 端点 / one-api / new-api 等，零额外依赖，apiKey 优先读环境变量 `DSH_MEMORY_EMBEDDING_API_KEY` 绝不写日志）；`local` 走 @xenova/transformers 本地 ONNX（默认 all-MiniLM-L6-v2，384 维），动态 import 懒加载，依赖未装时优雅降级 hybrid 不崩溃。显式 semantic 检索时才按需计算并缓存到条目（schema v2 预留），不做全量预热（性能红线）
 - **Memory Dream 记忆巩固**：每天（或手动触发）用 LLM 对记忆做语义化整理——合并近重复/强相关条目、精炼重写、删除过时/低价值、提升长期；与每日规则化衰减/折叠（处理「分数」）正交叠加，本引擎处理「语义」
 - **安全设计**：输入排除 pinned 与已禁用条目（保护用户明确标记/冻结的内容），apply 时按 id 锚定防误删；整理前写入 revisions 快照支持一键回滚；LLM 失败/超时/解析失败一律空结果，绝不阻塞每日编译
 - **回归测试**：`npm run test:memory`（`scripts/test-memory.mjs`）覆盖配置钳制、注入文本预算累积、记忆分类、条目 id 派生与合并，以及 HTTP 路由（含批量删除 / 配置合并写 / 变更全量查询 / 项目 hash 派生）——不依赖 DSH 运行时、不碰用户数据
@@ -408,6 +412,10 @@ src/
     ├── session-motion.ts     — 会话切换柔和过渡
     ├── sidebar-float*.ts(x)  — 悬浮侧边栏 client
     ├── shell-titlebar.ts     — 壳子窗口控制按钮共存样式
+    ├── mobile-app-shell.ts / mobile-menu.tsx / mobile-minimal.ts / mobile-overrides.ts
+    │                         — 移动端适配（App Shell 布局 / 底部菜单 / 极简模式 / 覆盖样式）
+    ├── app-tabbar.tsx        — 移动端底部 Tab 栏
+    ├── back-to-top.tsx       — 返回顶部按钮
     ├── tmp-cleaner-card.tsx  — 临时垃圾清理设置卡（计划 / 预览 / 立即清理）
     ├── plugin-update-card.tsx — 插件更新设置卡（检查更新 / 增量更新 / 强制重装 / 日志）
     ├── gateway-rewrite-card.tsx — 网关伪装接入设置卡（UA / 代理 规则列表）
